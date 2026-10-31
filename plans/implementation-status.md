@@ -23,6 +23,9 @@
 
 ## Remaining structural gap
 
+Two structural items remain: continuation-based suspension (below) and
+routing generations for order-independent provider handover (deviation 7).
+
 Continuation-based suspension: a task that waits for another task blocks its
 worker instead of yielding it. The migration design is in
 [`../docs/architecture.md`](../docs/architecture.md). Every semantic guarantee
@@ -157,6 +160,16 @@ implementation does not claim to eliminate.
    large values.
 6. **Effects are not supported in computations.** They are rejected for known
    macros and otherwise cached with their node, which is the documented rule.
+7. **Provider handover is ordered, not generation-based.** When one provider
+   stops defining a unit and another starts defining it in the same revision,
+   the old provider must commit its retraction before the new provider's
+   definition is applied. The composition in the tests demands the old provider
+   first, so this holds, but the guarantee is demand-order dependent. The
+   plan's routing-generation design exists to remove that dependency; until it
+   is implemented, a handover that is demanded in the opposite order is
+   diagnosed as a duplicate definition rather than silently resolved by timing.
+   That failure mode is conservative: it reports a conflict instead of
+   publishing a wrong value.
 
 ## Next work, in plan order
 
