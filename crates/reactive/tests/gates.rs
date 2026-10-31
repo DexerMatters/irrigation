@@ -1434,3 +1434,141 @@ fn async_components_are_driven_to_completion() {
         12
     );
 }
+
+// ---------------------------------------------------------------------------
+// Retired dependency scopes
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Switch {
+    flag: bool,
+    left: u64,
+    right: u64,
+}
+
+fn switch_unit(field: u16) -> reactive::UnitKey {
+    reactive::UnitKey::field(
+        <Switch as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(field),
+        reactive::UnitKind::Value,
+    )
+}
+
+/// Reads either `left` or `right` depending on `flag`, and switches its
+/// observed unit when the flag changes.
+struct Selector;
+
+impl reactive::GeneralComponent for Selector {
+    type State = (bool, u64);
+    type Output = u64;
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00AA_0004);
+    const NAME: &'static str = "tests::Selector";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<Switch as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let flag: bool = cx.read_typed(switch_unit(0))?;
+        let value: u64 = if flag {
+            cx.read_typed(switch_unit(1))?
+        } else {
+            cx.read_typed(switch_unit(2))?
+        };
+        Ok(((flag, value), value))
+    }
+
+    fn update(
+        &self,
+        cx: &mut reactive::GeneralCx,
+        state: &Self::State,
+        changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let mut flag = state.0;
+        let mut value = state.1;
+        for change in changes.changes() {
+            if change.unit == switch_unit(0) {
+                flag = cx.read_typed(switch_unit(0))?;
+                value = if flag {
+                    cx.read_typed(switch_unit(1))?
+                } else {
+                    cx.read_typed(switch_unit(2))?
+                };
+            } else if change.unit == switch_unit(1) && flag {
+                value = cx.read_typed(switch_unit(1))?;
+            } else if change.unit == switch_unit(2) && !flag {
+                value = cx.read_typed(switch_unit(2))?;
+            }
+        }
+        Ok(((flag, value), value))
+    }
+}
+
+#[test]
+fn a_switched_scope_retires_its_old_dependency() {
+    let runtime = Runtime::new();
+    runtime.install_general(Selector).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Switch>();
+            view.set_flag(false);
+            view.set_left(10);
+            view.set_right(20);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<Selector>()
+            .expect("outputs"),
+        20
+    );
+
+    // Editing the retired side must not execute the component.
+    let before = runtime.stats().executions;
+    runtime
+        .edit(|edit| {
+            edit.view::<Switch>().set_left(11);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<Selector>()
+            .expect("outputs"),
+        20
+    );
+    assert_eq!(runtime.stats().executions, before);
+
+    // Switching the flag re-reads the newly selected side.
+    runtime
+        .edit(|edit| {
+            edit.view::<Switch>().set_flag(true);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<Selector>()
+            .expect("outputs"),
+        11
+    );
+
+    // Now the other side is retired.
+    let before = runtime.stats().executions;
+    runtime
+        .edit(|edit| {
+            edit.view::<Switch>().set_right(21);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<Selector>()
+            .expect("outputs"),
+        11
+    );
+    assert_eq!(runtime.stats().executions, before);
+}
