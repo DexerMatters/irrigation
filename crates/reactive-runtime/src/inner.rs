@@ -19,7 +19,7 @@
 use std::any::Any;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
@@ -91,7 +91,7 @@ pub struct Inner {
     /// Wakes waiters when a node completes.
     pub wake: Condvar,
     /// Serializes edits against active derived-computation revisions.
-    pub gate: RwLock<()>,
+    pub gate: crate::gate::Gate,
     /// Cached revision for lock-free fast paths.
     pub(crate) revision: AtomicU64,
     /// Weak self-reference used when building frames.
@@ -119,7 +119,7 @@ impl Inner {
             config,
             state: Mutex::new(State::default()),
             wake: Condvar::new(),
-            gate: RwLock::new(()),
+            gate: crate::gate::Gate::new(),
             revision: AtomicU64::new(0),
             self_ref: OnceLock::new(),
             pool,

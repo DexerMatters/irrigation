@@ -17,6 +17,7 @@
 pub mod component;
 pub mod edit;
 pub mod field;
+pub mod gate;
 pub mod fixed_point;
 pub mod general;
 pub mod helpers;
