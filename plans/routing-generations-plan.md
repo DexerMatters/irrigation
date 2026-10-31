@@ -43,7 +43,33 @@ reachable again, which is what restages its definitions.
 Retraction invalidates the unit's dependents through the existing
 `invalidate` path, so observers see the change.
 
-## 2. Allow handover from a non-current provider
+## 2. Resolve conflicts at the end of the revision (recommended)
+
+The earlier idea of allowing handover from a "suspect" owner was implemented and
+reverted: suspectness cannot distinguish a provider that is about to retract
+from a cached authoritative one, because a branch node whose *condition* changed
+stays clean.
+
+The sound version defers the decision to the end of the demand:
+
+1. On a conflicting definition, record
+   `PendingConflict { unit, first_owner, second_owner }` and install the new
+   definition tentatively.
+2. After the root demand completes, resolve every pending conflict: if the
+   first owner is still certified for the revision and still lists the unit in
+   its `definitions`, both providers are live and the revision fails with
+   `DuplicateDefinition`. Otherwise the first owner retired the unit during the
+   same revision and the handover stands.
+3. Clear pending conflicts at the start of each demand.
+
+This keeps the conservative diagnosis for genuine collisions (both providers
+live at the end of the revision) while making handover independent of the order
+in which the two providers are demanded. It needs one new state field and a
+resolution pass in `demand_root`; the commit protocol is unchanged.
+
+### Earlier idea (reverted)
+
+Allow handover from a non-current provider
 
 In `apply_definitions`, a unit owned by another provider is a genuine conflict
 only when that provider is certified for the current revision
