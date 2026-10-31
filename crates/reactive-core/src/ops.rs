@@ -1,0 +1,274 @@
+//! The narrow interface between generated code and the runtime.
+//!
+//! Everything a component body does goes through [`eval`], [`read_unit`], and
+//! [`define`]. The runtime decides whether an evaluation may be reused, which
+//! observations were consumed, and when staged definitions commit.
+
+use std::any::Any;
+use std::sync::Arc;
+
+use crate::error::{ComputeError, Result};
+use crate::frame::{self, current_or_engine_panic, Frame};
+use crate::ids::{ComponentId, NodeId, Revision, ScopeId, SiteId, Version, ViewId};
+use crate::key::AnyKey;
+
+use crate::value::{Value, value_of};
+
+/// Operations the runtime exposes to code executing inside a computation.
+///
+/// The trait is object-safe so a frame can carry `Arc<dyn RuntimeOps>` without
+/// knowing the concrete runtime type. Only the runtime crate implements it.
+pub trait RuntimeOps: Send + Sync + 'static {
+    /// The revision currently being computed.
+    fn revision(&self) -> Revision;
+
+    /// Demands `node`, executing `compute` only if the cached result cannot be
+    /// reused. `eq` compares two concrete payloads for semantic equality.
+    fn eval(
+        &self,
+        node: NodeId,
+        compute: &mut dyn FnMut() -> Result<Value>,
+        eq: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Result<Value>;
+
+    /// Returns (creating on first use) the node for one expression site in a
+    /// scope. Identity is `(scope, site)`; it never depends on evaluation order.
+    fn site_node(&self, scope: ScopeId, site: SiteId) -> NodeId;
+
+    /// Returns (creating on first use) the node for a logical View unit.
+    fn unit_node(&self, view: ViewId, key: Arc<dyn AnyKey>) -> NodeId;
+
+    /// Returns (creating on first use) a unit node, initialized from the View's
+    /// current content when it does not exist yet.
+    fn unit_node_init(
+        &self,
+        view: ViewId,
+        key: Arc<dyn AnyKey>,
+        init: &mut dyn FnMut(&dyn Any) -> Option<Value>,
+    ) -> NodeId;
+
+    /// Reads a source or derived unit at the current revision, recording the
+    /// observation in the current frame.
+    fn read_unit(&self, node: NodeId) -> Result<Value>;
+
+    /// Derives a stable child scope from a parent scope and a discriminant.
+    fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId;
+
+    /// Fails with [`ComputeError::Cancelled`] if the owning demand was
+    /// cancelled.
+    fn check_cancelled(&self) -> Result<()>;
+
+    /// Maximum nesting depth the runtime accepts.
+    fn max_depth(&self) -> u32;
+
+    /// Returns the immutable content of a registered View.
+    fn view_content(&self, view: ViewId) -> Option<Arc<dyn Any + Send + Sync>>;
+
+    /// Returns the revision at which a node's value last changed.
+    fn changed_at(&self, node: NodeId) -> Version;
+
+    /// Records an observation of an already-certified node.
+    ///
+    /// Used by projection nodes that consume a value produced earlier in the
+    /// same demand; it never executes the observed node.
+    fn observe(&self, node: NodeId) -> Result<()>;
+
+    /// Returns (creating on first use) the body and output nodes of a component
+    /// invocation. `args_eq` compares two type-erased argument tuples.
+    fn invocation_node(
+        &self,
+        component: ComponentId,
+        args_hash: u64,
+        args: Arc<dyn Any + Send + Sync>,
+        scope: ScopeId,
+        arity: usize,
+        args_eq: &dyn Fn(&dyn Any, &dyn Any) -> bool,
+    ) -> (NodeId, Vec<NodeId>);
+}
+
+/// Panic payload used to carry an engine error through ordinary user code.
+///
+/// User code in a component is shaped like ordinary Rust and does not thread a
+/// `Result` through every expression. Engine failures (cycles, cancellation,
+/// panics) abort the current execution scope instead, and the runtime converts
+/// the payload back into a [`ComputeError`] at the node boundary.
+#[derive(Debug)]
+pub struct EnginePanic(pub ComputeError);
+
+/// Aborts the current computation with an engine error.
+pub fn panic_engine(error: ComputeError) -> ! {
+    std::panic::panic_any(EnginePanic(error))
+}
+
+/// Runs `f`, converting an engine panic into an error value.
+///
+/// Ordinary panics are reported as [`ComputeError::Panicked`].
+pub fn catch_engine<T>(f: impl FnOnce() -> T) -> Result<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => Ok(value),
+        Err(payload) => match payload.downcast::<EnginePanic>() {
+            Ok(engine) => Err(engine.0),
+            Err(payload) => Err(ComputeError::Panicked {
+                message: panic_message(payload.as_ref()),
+            }),
+        },
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        String::from("non-string panic payload")
+    }
+}
+
+/// Evaluates one lowered expression site in the current scope.
+///
+/// The value type must support exact semantic equality: an equal result keeps
+/// its change version and stops downstream work. Values are stored behind an
+/// `Arc`, so reuse does not copy the payload.
+///
+/// # Panics
+///
+/// Panics with an engine payload when no computation is running or when the
+/// runtime reports a cycle, cancellation, or another engine failure. The
+/// runtime catches the payload at the node boundary.
+pub fn eval<T, F>(site: SiteId, f: F) -> T
+where
+    T: PartialEq + Clone + Send + Sync + 'static,
+    F: FnOnce() -> T,
+{
+    let frame = current_or_engine_panic("eval");
+    let node = frame.runtime().site_node(frame.scope(), site);
+    eval_node_in(&frame, node, f)
+}
+
+/// Evaluates a known node. Used by operators that already computed identity.
+pub fn eval_node<T, F>(node: NodeId, f: F) -> T
+where
+    T: PartialEq + Clone + Send + Sync + 'static,
+    F: FnOnce() -> T,
+{
+    let frame = current_or_engine_panic("eval_node");
+    eval_node_in(&frame, node, f)
+}
+
+fn eval_node_in<T, F>(frame: &Frame, node: NodeId, f: F) -> T
+where
+    T: PartialEq + Clone + Send + Sync + 'static,
+    F: FnOnce() -> T,
+{
+    let mut compute = {
+        let mut f = Some(f);
+        move || {
+            let f = f.take().unwrap_or_else(|| {
+                panic_engine(ComputeError::internal(
+                    "node compute closure was invoked more than once",
+                ))
+            });
+            Ok(value_of(f()))
+        }
+    };
+    let eq = |left: &Value, right: &Value| match (
+        left.downcast_ref::<T>(),
+        right.downcast_ref::<T>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    };
+    match frame.runtime().eval(node, &mut compute, &eq) {
+        Ok(value) => match value.downcast_ref::<T>() {
+            Some(value) => value.clone(),
+            None => panic_engine(ComputeError::TypeMismatch {
+                expected: std::any::type_name::<T>(),
+            }),
+        },
+        Err(error) => panic_engine(error),
+    }
+}
+
+/// Reads a logical View unit and records the observation.
+///
+/// # Panics
+///
+/// Panics with an engine payload outside a computation or on engine failure.
+pub fn read_unit<T>(node: NodeId) -> T
+where
+    T: Clone + Send + Sync + 'static,
+{
+    let frame = current_or_engine_panic("read_unit");
+    let value = match frame.runtime().read_unit(node) {
+        Ok(value) => value,
+        Err(error) => panic_engine(error),
+    };
+    match value.downcast_ref::<T>() {
+        Some(value) => value.clone(),
+        None => panic_engine(ComputeError::TypeMismatch {
+            expected: std::any::type_name::<T>(),
+        }),
+    }
+}
+
+/// Reads a unit through an already-created node, recording the observation.
+pub fn read_unit_value(node: NodeId) -> Value {
+    let frame = current_or_engine_panic("read_unit_value");
+    match frame.runtime().read_unit(node) {
+        Ok(value) => value,
+        Err(error) => panic_engine(error),
+    }
+}
+
+/// Stages an item to commit atomically with the currently executing node.
+///
+/// Definitions become visible only when the node commits its value, trace, and
+/// routing change together.
+pub fn stage<T: std::any::Any + Send + Sync>(item: T) {
+    let frame = current_or_engine_panic("stage");
+    frame.stage(item);
+}
+
+/// Runs `f` in a child identity scope, used for loops and per-iteration work.
+pub fn scope<R>(discriminant: u64, label: &'static str, f: impl FnOnce() -> R) -> R {
+    frame::in_scope(discriminant, label, f)
+}
+
+/// Returns the current revision, or zero outside a computation.
+#[must_use]
+pub fn revision() -> Revision {
+    frame::current().map_or(0, |frame| frame.runtime().revision())
+}
+
+/// Returns the current runtime handle, if a computation is running.
+#[must_use]
+pub fn current_runtime() -> Option<Arc<dyn RuntimeOps>> {
+    frame::current().map(|frame| Arc::clone(frame.runtime()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_panic_round_trips_through_catch() {
+        let error = catch_engine(|| panic_engine(ComputeError::Cancelled)).unwrap_err();
+        assert_eq!(error, ComputeError::Cancelled);
+    }
+
+    #[test]
+    fn user_panic_is_reported_as_panic() {
+        let error = catch_engine(|| panic!("bad input")).unwrap_err();
+        assert!(matches!(error, ComputeError::Panicked { message } if message.contains("bad input")));
+    }
+
+    #[test]
+    fn eval_outside_a_computation_panics_with_engine_payload() {
+        let error = catch_engine(|| eval(SiteId(1), || 1u32)).unwrap_err();
+        assert!(matches!(
+            error,
+            ComputeError::OutsideComputation { operation: "eval" }
+        ));
+    }
+}
