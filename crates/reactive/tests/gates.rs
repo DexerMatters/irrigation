@@ -1256,3 +1256,55 @@ fn reduced_sequence_fields_track_their_aggregate() {
     assert_eq!(snapshot.view::<Totals>().values(), vec![20, 3]);
     assert_eq!(snapshot.view::<Totals>().values_aggregate(), 23);
 }
+
+// ---------------------------------------------------------------------------
+// Cross-thread single-flight under contention
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Seeds {
+    values: List<u32>,
+}
+
+#[reactive]
+mod contention {
+    use super::Seeds;
+
+    #[component]
+    pub fn square(n: u32) -> u64 {
+        u64::from(n) * u64::from(n)
+    }
+
+    #[component]
+    pub fn total(seeds: &Seeds) -> u64 {
+        let values = seeds.values();
+        let mapped = values.map(|n| square(*n));
+        mapped.iter().sum::<u64>()
+    }
+}
+
+#[test]
+fn parallel_members_share_one_invocation_without_deadlock() {
+    for round in 0..8 {
+        let workers = 2 + (round % 3);
+        let runtime = Runtime::with_config(reactive::RuntimeConfig {
+            workers,
+            stack_size: 32 * 1024 * 1024,
+            ..reactive::RuntimeConfig::default()
+        });
+        runtime.install(contention::Total).expect("install");
+        runtime
+            .edit(|edit| {
+                let mut seeds = edit.view::<Seeds>();
+                let mut values = seeds.values();
+                for _ in 0..32 {
+                    values.push(5);
+                }
+            })
+            .expect("edit");
+        let total = runtime
+            .read_outputs::<contention::Total>()
+            .expect("outputs");
+        assert_eq!(total, 32 * 25, "round {round} with {workers} workers");
+    }
+}

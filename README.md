@@ -216,8 +216,9 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * an incremental equi-join matches a from-scratch join while combining only changed keys;
 * cancellation publishing nothing;
 * branch reclamation followed by correct repair and reconstruction;
-* identical results across repeated schedules with 1–4 workers, and eight
-  concurrent host reads of a certified revision executing no node bodies.
+* identical results across repeated schedules with 1–4 workers, eight
+  concurrent host reads of a certified revision executing no node bodies, and
+  32 parallel members sharing one invocation under 2–4 workers without deadlock.
 
 ## Reading the plan
 
