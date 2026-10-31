@@ -396,6 +396,13 @@ impl Inner {
             return Ok(value);
         }
 
+        // Custom components run their own algorithm instead of the caller's
+        // closure; their state and output commit atomically.
+        let general_index = self.lock().node(node).general;
+        if let Some(index) = general_index {
+            return self.run_general(node, index, revision);
+        }
+
         // Execute with a fresh recorder.
         let parent = frame::current();
         let (depth, cancel) = match &parent {
@@ -432,7 +439,100 @@ impl Inner {
         }
         match result {
             Ok(Ok(value)) => {
-                let committed = self.commit(node, value, deps, definitions, eq, revision)?;
+                let committed = self.commit(node, value, deps, definitions, None, eq, revision)?;
+                let version = self.changed_at(node);
+                frame::record_dep(Dep { node, version });
+                Ok(committed)
+            }
+            Ok(Err(error)) | Err(error) => self.fail(node, error, revision),
+        }
+    }
+
+    /// Runs one custom component: initialize or update, then commit the new
+    /// state, output, trace, and definitions atomically.
+    fn run_general(
+        &self,
+        node: NodeId,
+        index: usize,
+        revision: Revision,
+    ) -> Result<Value> {
+        let (general, old_trace, old_state, scope) = {
+            let state = self.lock();
+            let record = state.node(node);
+            let general = Arc::clone(&state.generals[index]);
+            (
+                general,
+                record.trace.clone(),
+                record.general_state.clone(),
+                record.scope,
+            )
+        };
+        let changes = {
+            let state = self.lock();
+            let mut changes = Vec::new();
+            for dep in &old_trace {
+                let record = state.node(dep.node);
+                if record.changed_at != dep.version {
+                    if let Some(unit) = &record.unit {
+                        changes.push(crate::general::Change {
+                            unit: unit.clone(),
+                            previous: dep.version,
+                            current: record.changed_at,
+                        });
+                    }
+                }
+            }
+            crate::general::ChangeBatch::new(changes)
+        };
+        let parent = frame::current();
+        let (depth, cancel) = match &parent {
+            Some(parent) => (parent.depth(), parent.cancel().clone()),
+            None => (0, CancelToken::default()),
+        };
+        if depth + 1 > self.config.max_depth {
+            return self.fail(
+                node,
+                ComputeError::DepthExceeded {
+                    limit: self.config.max_depth,
+                },
+                revision,
+            );
+        }
+        // Frames are thread-local execution state; see the note in `eval`.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let frame = Arc::new(Frame::computing(
+            self.arc(),
+            node,
+            scope,
+            depth + 1,
+            cancel,
+        ));
+        let guard = FrameGuard::push(Arc::clone(&frame));
+        let mut cx = crate::general::GeneralCx::new(self.arc(), revision);
+        let use_update = general.policy() == crate::general::DependencyUpdates::Incremental
+            && old_state.is_some();
+        let result = catch_engine(|| match (&old_state, use_update) {
+            (Some(state), true) => general.update(&mut cx, state, &changes),
+            _ => general.initialize(&mut cx),
+        });
+        let definitions: Vec<DefinitionDraft> = frame.take_staged();
+        let deps = frame.take_deps();
+        drop(guard);
+        if frame_cancelled(&parent) {
+            return self.fail(node, ComputeError::Cancelled, revision);
+        }
+        match result {
+            Ok(Ok((state, output))) => {
+                let eq = |left: &Value, right: &Value| general.output_eq(left, right);
+                let committed = self.commit(
+                    node,
+                    output,
+                    deps,
+                    definitions,
+                    Some(state),
+                    &eq,
+                    revision,
+                )?;
                 let version = self.changed_at(node);
                 frame::record_dep(Dep { node, version });
                 Ok(committed)
@@ -476,12 +576,14 @@ impl Inner {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn commit(
         &self,
         node: NodeId,
         value: Value,
         deps: Vec<Dep>,
         definitions: Vec<DefinitionDraft>,
+        retained_state: Option<crate::general::ErasedState>,
         eq: &dyn Fn(&Value, &Value) -> bool,
         revision: Revision,
     ) -> Result<Value> {
@@ -521,6 +623,9 @@ impl Inner {
             record.verified_at = revision;
             record.suspect_at = 0;
             record.failure = None;
+            if let Some(retained) = retained_state {
+                record.general_state = Some(retained);
+            }
             if changed {
                 record.changed_at = revision;
             }
@@ -859,9 +964,33 @@ impl Inner {
             state.root.clone()
         };
         let Some(root) = root else {
-            return Err(ComputeError::internal(
-                "no root component installed; call `runtime.install` first",
+            let general_root = {
+                let state = self.lock();
+                state.general_root
+            };
+            let Some(general_node) = general_root else {
+                return Err(ComputeError::internal(
+                    "no root component installed; call `runtime.install` first",
+                ));
+            };
+            let runtime: Arc<dyn RuntimeOps> = self.arc();
+            // Frames are thread-local execution state; see the note in `eval`.
+            #[allow(clippy::arc_with_non_send_sync)]
+            let scope_frame = Arc::new(Frame::scoped(
+                Arc::clone(&runtime),
+                NodeId::NONE,
+                ScopeId::ROOT,
+                0,
+                cancel.clone(),
             ));
+            let _guard = FrameGuard::push(scope_frame);
+            let mut compute = || -> Result<Value> {
+                Err(ComputeError::internal(
+                    "a general component does not use a compute closure",
+                ))
+            };
+            let eq = |_: &Value, _: &Value| false;
+            return self.eval(general_node, &mut compute, &eq).map(|_| ());
         };
         let runtime: Arc<dyn RuntimeOps> = self.arc();
         // Frames are thread-local execution state; see the note in `eval`.
@@ -939,6 +1068,12 @@ impl Inner {
     }
 }
 
+fn frame_cancelled(parent: &Option<Arc<Frame>>) -> bool {
+    parent
+        .as_ref()
+        .is_some_and(|frame| frame.cancel().is_cancelled())
+}
+
 /// Returns the key used for unique-definition enforcement.
 fn owner_key(unit: &UnitKey) -> UnitKey {
     if unit.entity.is_some() {
@@ -1012,6 +1147,19 @@ impl RuntimeOps for Inner {
 
     fn read_unit(&self, node: NodeId) -> Result<Value> {
         Inner::read_unit(self, node)
+    }
+
+    fn ensure_unit(&self, unit: &UnitKey) -> Result<()> {
+        let mut state = self.lock();
+        if state.units.get(unit).is_some() {
+            return Ok(());
+        }
+        let initial = state
+            .regions
+            .get(&unit.view)
+            .and_then(|region| (region.descriptor.content.get)(&region.content, unit));
+        Self::ensure_unit_node(&mut state, unit.clone(), initial);
+        Ok(())
     }
 
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId {

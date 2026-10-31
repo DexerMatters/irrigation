@@ -18,6 +18,7 @@ pub mod component;
 pub mod edit;
 pub mod field;
 pub mod fixed_point;
+pub mod general;
 pub mod helpers;
 pub mod inner;
 pub mod param;
@@ -30,6 +31,9 @@ pub use component::{ComponentSpec, RootComponent, call_component};
 pub use edit::Edit;
 pub use field::{ScalarEditor, ScalarRef, ViewFieldHandle};
 pub use fixed_point::{FixedPoint, FixedPointProblem, Lattice, solve, solve_with_budget};
+pub use general::{
+    Change, ChangeBatch, DependencyUpdates, GeneralComponent, GeneralCx, GeneralHandle,
+};
 pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_content};
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};
 pub use param::Param;

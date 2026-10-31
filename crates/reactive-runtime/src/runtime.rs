@@ -108,6 +108,75 @@ impl Runtime {
         Ok(())
     }
 
+    /// Installs a custom incremental algorithm as the runtime's root.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a root is already installed.
+    pub fn install_general<T: crate::general::GeneralComponent>(&self, component: T) -> Result<()> {
+        let _gate = self.inner.gate.write();
+        for descriptor in T::VIEWS {
+            self.inner.register_view(descriptor);
+        }
+        let mut state = self.inner.lock();
+        if state.root.is_some() || state.general_root.is_some() {
+            return Err(ComputeError::internal(
+                "a root component is already installed on this runtime",
+            ));
+        }
+        state.generals.push(Arc::new(component));
+        let index = state.generals.len() - 1;
+        let mut record = NodeRecord::empty("general component", NodeKind::InvocationBody);
+        record.label = "general component";
+        record.general = Some(index);
+        let node = state.alloc(record);
+        state.general_root = Some(node);
+        Ok(())
+    }
+
+    /// Demands the installed `GeneralComponent` and returns its typed output.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no general component is installed or when it fails.
+    pub fn read_outputs_general<T: crate::general::GeneralComponent>(&self) -> Result<T::Output> {
+        let pool_owner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        pool_owner.pool.run(move || {
+            let cancel = CancelToken::default();
+            task.set_active_cancel(Some(cancel.clone()));
+            let result = {
+                let _gate = task.gate.read();
+                task.demand_root(&cancel).and_then(|()| {
+                    let node = {
+                        let state = task.lock();
+                        state.general_root
+                    };
+                    let Some(node) = node else {
+                        return Err(ComputeError::internal("no general component installed"));
+                    };
+                    let value = {
+                        let state = task.lock();
+                        state.node(node).value.clone()
+                    };
+                    let Some(value) = value else {
+                        return Err(ComputeError::internal(
+                            "general component produced no output",
+                        ));
+                    };
+                    value
+                        .downcast_ref::<T::Output>()
+                        .cloned()
+                        .ok_or(ComputeError::TypeMismatch {
+                            expected: std::any::type_name::<T::Output>(),
+                        })
+                })
+            };
+            task.set_active_cancel(None);
+            result
+        })
+    }
+
     /// Demands the installed root and returns an immutable snapshot.
     ///
     /// # Errors

@@ -775,3 +775,327 @@ fn missing_key_reads_are_dependencies_and_other_keys_are_isolated() {
         .expect("edit");
     assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
 }
+
+// ---------------------------------------------------------------------------
+// GeneralComponent: custom incremental algorithms
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Counter {
+    value: u64,
+}
+
+fn counter_unit() -> reactive::UnitKey {
+    reactive::UnitKey::field(
+        <Counter as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    )
+}
+
+/// Tracks the counter with an incremental update: the change batch names the
+/// unit, so the update re-reads exactly that unit.
+struct Tracker;
+
+impl reactive::GeneralComponent for Tracker {
+    type State = (u64, u64, u64);
+    type Output = (u64, u64, u64);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00AA_0001);
+    const NAME: &'static str = "tests::Tracker";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<Counter as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let value: u64 = cx.read_typed(counter_unit())?;
+        let state = (value, 1, 0);
+        Ok((state, (value * 2, 1, 0)))
+    }
+
+    fn update(
+        &self,
+        cx: &mut reactive::GeneralCx,
+        state: &Self::State,
+        changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let mut value = state.0;
+        for change in changes.changes() {
+            value = cx.read_typed(change.unit.clone())?;
+        }
+        let updates = state.2 + 1;
+        let state = (value, state.1, updates);
+        Ok((state, (value * 2, state.1, updates)))
+    }
+}
+
+/// Uses the default `Reset` policy: every invalidation reinitializes.
+struct Resetter;
+
+impl reactive::GeneralComponent for Resetter {
+    type State = u64;
+    type Output = (u64, u64);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00AA_0002);
+    const NAME: &'static str = "tests::Resetter";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<Counter as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let value: u64 = cx.read_typed(counter_unit())?;
+        Ok((value + 1, (value, 1)))
+    }
+
+    fn update(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+        _state: &Self::State,
+        _changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        panic!("the default policy must not call update");
+    }
+}
+
+#[test]
+fn general_components_initialize_update_and_commit_state() {
+    let runtime = Runtime::new();
+    runtime.install_general(Tracker).expect("install");
+    assert_eq!(
+        runtime.read_outputs_general::<Tracker>().expect("outputs"),
+        (0, 1, 0)
+    );
+
+    runtime
+        .edit(|edit| {
+            edit.view::<Counter>().set_value(5);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs_general::<Tracker>().expect("outputs"),
+        (10, 1, 1),
+        "update should run once with the change batch"
+    );
+
+    runtime
+        .edit(|edit| {
+            edit.view::<Counter>().set_value(7);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs_general::<Tracker>().expect("outputs"),
+        (14, 1, 2)
+    );
+
+    // A no-op edit publishes nothing and does not update.
+    let revision = runtime.revision();
+    runtime
+        .edit(|edit| {
+            edit.view::<Counter>().set_value(7);
+        })
+        .expect("edit");
+    assert_eq!(runtime.revision(), revision);
+    assert_eq!(
+        runtime.read_outputs_general::<Tracker>().expect("outputs"),
+        (14, 1, 2)
+    );
+}
+
+#[test]
+fn general_components_default_to_reset_on_invalidation() {
+    let runtime = Runtime::new();
+    runtime.install_general(Resetter).expect("install");
+    assert_eq!(
+        runtime.read_outputs_general::<Resetter>().expect("outputs"),
+        (0, 1)
+    );
+    runtime
+        .edit(|edit| {
+            edit.view::<Counter>().set_value(3);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs_general::<Resetter>().expect("outputs"),
+        (3, 1),
+        "reset reinitializes instead of updating"
+    );
+}
+
+#[test]
+fn general_components_publish_definitions_atomically() {
+    let runtime = Runtime::new();
+    runtime.install_general(Tracker).expect("install");
+    let snapshot = runtime.read().expect("snapshot");
+    assert_eq!(snapshot.revision(), 0);
+    assert!(snapshot.contains::<Counter>());
+}
+
+// ---------------------------------------------------------------------------
+// Incremental equi-join
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct LeftTable {
+    entries: Map<u32, u64>,
+}
+
+#[view(source)]
+pub struct RightTable {
+    entries: Map<u32, u64>,
+}
+
+static JOIN_COMBINES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+struct PairJoin;
+
+impl reactive::JoinSpec for PairJoin {
+    type Key = u32;
+    type Left = u64;
+    type Right = u64;
+    type Joined = u64;
+
+    fn left() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <LeftTable as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn right() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <RightTable as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn combine(left: &Self::Left, right: &Self::Right) -> Self::Joined {
+        JOIN_COMBINES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        left * right
+    }
+}
+
+fn from_scratch_join(
+    left: &[(u32, u64)],
+    right: &[(u32, u64)],
+) -> std::collections::BTreeMap<u32, u64> {
+    let mut joined = std::collections::BTreeMap::new();
+    for (key, left) in left {
+        if let Some((_, right)) = right.iter().find(|(other, _)| other == key) {
+            joined.insert(*key, left * right);
+        }
+    }
+    joined
+}
+
+#[test]
+fn incremental_join_matches_from_scratch_and_touches_only_changed_keys() {
+    JOIN_COMBINES.store(0, std::sync::atomic::Ordering::SeqCst);
+    let runtime = Runtime::new();
+    runtime.register_view(<LeftTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<RightTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<PairJoin>::new())
+        .expect("install");
+
+    let mut left: Vec<(u32, u64)> = vec![(1, 10), (2, 20), (3, 30)];
+    let mut right: Vec<(u32, u64)> = vec![(1, 2), (3, 4), (4, 5)];
+    runtime
+        .edit(|edit| {
+            {
+                let mut l = edit.view::<LeftTable>();
+                let mut entries = l.entries();
+                for (key, value) in &left {
+                    entries.insert(*key, *value);
+                }
+            }
+            let mut r = edit.view::<RightTable>();
+            let mut entries = r.entries();
+            for (key, value) in &right {
+                entries.insert(*key, *value);
+            }
+        })
+        .expect("edit");
+    let expected = from_scratch_join(&left, &right);
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        expected
+    );
+    assert_eq!(expected.get(&1), Some(&20));
+    assert_eq!(expected.get(&3), Some(&120));
+
+    // One right-side removal: no key is recomputed and the entry disappears.
+    right.retain(|(key, _)| *key != 3);
+    let before = JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst);
+    runtime
+        .edit(|edit| {
+            let mut r = edit.view::<RightTable>();
+            let mut entries = r.entries();
+            entries.remove(&3);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        from_scratch_join(&left, &right)
+    );
+    assert_eq!(
+        JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "a removal must not recombine surviving keys"
+    );
+
+    // One left-side insertion joins exactly one new key.
+    left.push((4, 7));
+    let before = JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst);
+    runtime
+        .edit(|edit| {
+            let mut l = edit.view::<LeftTable>();
+            let mut entries = l.entries();
+            entries.insert(4, 7);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        from_scratch_join(&left, &right)
+    );
+    assert_eq!(
+        JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst),
+        before + 1,
+        "an insertion must combine exactly one key"
+    );
+
+    // One left-side value update recomputes only that key.
+    left[0].1 = 11;
+    let before = JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst);
+    runtime
+        .edit(|edit| {
+            let mut l = edit.view::<LeftTable>();
+            let mut entries = l.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        from_scratch_join(&left, &right)
+    );
+    assert_eq!(
+        JOIN_COMBINES.load(std::sync::atomic::Ordering::SeqCst),
+        before + 1,
+        "a value update must combine exactly one key"
+    );
+}

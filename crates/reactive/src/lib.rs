@@ -14,6 +14,7 @@ pub use reactive_collections::{
     SourceListEditor, SourceListRef, SourceSet, SourceSetEditor, SourceSetRef,
 };
 pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
+pub use reactive_collections::{EquiJoin, JoinSpec};
 pub use reactive_collections::{
     BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,
     TreeNodeId, TreeValue, tree_content_vtable, tree_eq, tree_fields, tree_slots,
@@ -35,6 +36,9 @@ pub use reactive_runtime::helpers::{
     ensure_view, node_of, observe_clone, observe_local, observe_ref, values_equal,
 };
 pub use reactive_runtime::Param;
+pub use reactive_runtime::{
+    Change, ChangeBatch, DependencyUpdates, GeneralComponent, GeneralCx,
+};
 pub use reactive_runtime::fixed_point::{
     FixedPoint, FixedPointProblem, Lattice, solve as solve_fixed_point,
 };

@@ -85,7 +85,7 @@ both directions, including that an unrelated key executes no consumer work.
 | `runtime.install` / `edit` / `read` / `observe` | implemented |
 | Snapshots with typed View handles | implemented |
 | `#[tree_view]` | implemented |
-| `GeneralComponent` | pending |
+| `GeneralComponent` | implemented: retained state, change batches, `Reset`/`Incremental` policies, atomic state/output/definition commit |
 
 ## §11–§12 Architecture, correctness, cost
 
@@ -109,9 +109,9 @@ implementation does not claim to eliminate.
 |---|---|
 | 1 — sequential semantic kernel | complete for scalar/record/list/map/set Views; graph/tree pending |
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
-| 3 — all collection Views and delta operators | partial: list/map/set/graph/tree complete; indexed joins and `GeneralComponent` pending |
+| 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
 | 4 — parallel, pipelined execution | partial: pool, parallel map, invariance, deep recursion; continuation scheduling, cancellation tests, and schedule perturbation pending |
-| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, and memory accounting implemented; the full benchmark matrix is pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, and a join operator implemented; the full benchmark matrix and balanced reductions are pending |
 
 ## Known deviations, stated explicitly
 

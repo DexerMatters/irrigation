@@ -51,6 +51,10 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// observation in the current frame.
     fn read_unit(&self, node: NodeId) -> Result<Value>;
 
+    /// Ensures a unit node exists, initializing a source unit from its View's
+    /// content when it has never been written.
+    fn ensure_unit(&self, unit: &crate::descriptor::UnitKey) -> Result<()>;
+
     /// Derives a stable child scope from a parent scope and a discriminant.
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId;
 

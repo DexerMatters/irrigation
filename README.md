@@ -114,10 +114,11 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Deep recursion (10,000 levels) | implemented with large worker stacks |
 | Graph View family (topology, payloads, adjacency, node deletion) | implemented |
 | Tree View family and `#[tree_view]` enum-group macro | implemented |
-| `GeneralComponent` trait and output transactions | **pending** |
-| Indexed joins and balanced lawful reductions | **pending** |
+| `GeneralComponent` (retained state, change batches, atomic state/output commit) | implemented |
+| Incremental equi-join over map Views | implemented (`EquiJoin`, per-key deltas) |
+| Balanced lawful reductions | **pending** |
 | Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
-| Async `GeneralComponent` futures | **pending** |
+| Async `GeneralComponent` futures | **pending** (synchronous algorithm boundary) |
 
 The pending items are tracked in
 [`plans/implementation-status.md`](plans/implementation-status.md).
@@ -179,6 +180,8 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * graph topology isolation from payload edits, and node deletion retracting edges;
 * tree reads, identity-preserving replacement and subtree moves, subtree retraction, and leaf edits that do not rebuild the tree;
 * missing-key reads as dependencies, with unrelated keys executing nothing;
+* general components initialize, update from change batches, honour the default reset policy, and commit state atomically;
+* an incremental equi-join matches a from-scratch join while combining only changed keys;
 * cancellation publishing nothing;
 * branch reclamation followed by correct repair and reconstruction.
 

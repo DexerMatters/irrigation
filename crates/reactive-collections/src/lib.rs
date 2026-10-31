@@ -18,12 +18,14 @@
 #![forbid(unsafe_code)]
 
 pub mod graph;
+pub mod join;
 pub mod list;
 pub mod map;
 pub mod set;
 pub mod tree;
 
 pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
+pub use join::{EquiJoin, JoinSpec};
 pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, SourceListRef};
 pub use map::{Map, MapEditor, MapRef};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};

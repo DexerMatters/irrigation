@@ -87,6 +87,10 @@ pub struct NodeRecord {
     pub failed_at: Revision,
     /// Units this node currently defines.
     pub definitions: Vec<DefinitionRecord>,
+    /// Index into `State::generals` for a custom component node.
+    pub general: Option<usize>,
+    /// Retained state of a custom component, committed with its output.
+    pub general_state: Option<crate::general::ErasedState>,
 }
 
 impl NodeRecord {
@@ -109,6 +113,8 @@ impl NodeRecord {
             failure: None,
             failed_at: 0,
             definitions: Vec::new(),
+            general: None,
+            general_state: None,
         }
     }
 
@@ -353,6 +359,10 @@ pub struct State {
     pub next_invocation: u64,
     /// Installed root.
     pub root: Option<RootRecord>,
+    /// Installed general components, indexed by their node's `general` field.
+    pub(crate) generals: Vec<std::sync::Arc<dyn crate::general::ErasedGeneral>>,
+    /// The installed `GeneralComponent` root, if any.
+    pub general_root: Option<NodeId>,
     /// Diagnostics counters.
     pub stats: Stats,
 }
