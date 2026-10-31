@@ -1967,3 +1967,71 @@ fn branch_chosen_values_republish_every_execution() {
         );
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Branch-scoped definitions are retired with their branch
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct BranchFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct BranchSlot(Map<u32, u32>);
+
+#[reactive]
+mod branch_scope {
+    use super::{BranchFlag, BranchSlot};
+
+    #[component]
+    pub fn root(flag: &BranchFlag) -> u32 {
+        if flag.on() {
+            let _ = BranchSlot::from([(1u32, 10u32)]);
+        } else {
+            let _ = BranchSlot::from([]);
+        }
+        0
+    }
+}
+
+#[test]
+fn a_definition_inside_an_untaken_branch_is_retracted() {
+    let runtime = Runtime::new();
+    runtime.install(branch_scope::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<BranchFlag>().set_on(true);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    assert_eq!(
+        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        vec![(1, 10)]
+    );
+
+    runtime
+        .edit(|edit| {
+            edit.view::<BranchFlag>().set_on(false);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    assert_eq!(
+        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        Vec::<(u32, u32)>::new(),
+        "the retired branch's definition must be retracted"
+    );
+
+    runtime
+        .edit(|edit| {
+            edit.view::<BranchFlag>().set_on(true);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    assert_eq!(
+        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        vec![(1, 10)],
+        "the branch restages its definition when reachable again"
+    );
+}

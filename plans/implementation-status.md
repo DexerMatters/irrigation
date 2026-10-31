@@ -23,9 +23,9 @@
 
 ## Remaining structural gap
 
-Three structural items remain: continuation-based suspension (below), routing
-generations for order-independent provider handover (deviation 7), and routing
-generations for branch-scoped definitions (deviation 8).
+Two structural items remain: continuation-based suspension (below) and
+order-independent provider handover (deviation 7). Branch-scoped definitions
+(deviation 8) are fixed by unreachable-subtree retirement.
 
 Continuation-based suspension: a task that waits for another task blocks its
 worker instead of yielding it. The migration design is in
@@ -171,19 +171,14 @@ implementation does not claim to eliminate.
    diagnosed as a duplicate definition rather than silently resolved by timing.
    That failure mode is conservative: it reports a conflict instead of
    publishing a wrong value.
-8. **Definitions staged inside an untaken branch are not retracted.** A
-   definition is owned by the node that staged it and is retracted when that
-   node re-executes and no longer stages it. If a definition is staged inside a
-   conditional branch, switching the branch means the old branch node is never
-   demanded again, so its definitions are neither re-staged nor retracted.
-   Compositions that define outputs on the always-executed path are unaffected;
-   a routing decision whose providers *define* units inside branches needs the
-   plan's routing generations. Until then, place branch-dependent definitions
-   in a dispatcher that always runs and chooses values, not definitions.
-   This was found while writing a handover gate and is recorded rather than
-   half-fixed. The supported pattern is gated by
-   `branch_chosen_values_republish_every_execution`: the branch chooses a value
-   and the definition is staged on every execution.
+8. ~~Definitions staged inside an untaken branch are not retracted.~~ **Fixed.**
+   `Inner::commit` now retires observations that the new trace no longer
+   contains: an unreachable node releases its definitions and is cleared, so it
+   re-executes and restages if it becomes reachable again. View unit nodes are
+   never cleared, because they are the data store. The gate
+   `a_definition_inside_an_untaken_branch_is_retracted` covers publication,
+   retraction and restaging; the always-stage-values pattern remains gated by
+   `branch_chosen_values_republish_every_execution`.
 
 ## Next work, in plan order
 

@@ -1,5 +1,15 @@
 # Implementing routing generations
 
+> **Status (round 33): step 1 is implemented.** `Inner::commit` retires
+> observations that the new trace no longer contains, releasing their
+> definitions and clearing the node. View unit nodes are never cleared. The gate
+> `a_definition_inside_an_untaken_branch_is_retracted` passes. Step 2 (handover
+> from a suspect owner) was attempted and reverted: the owner's suspectness is
+> not the right signal because a branch node whose *condition* changed stays
+> clean, while a cached provider with no dependencies can be falsely taken over.
+> Deviation 7 therefore remains open; steps 2–3 below still describe the
+> intended direction.
+
 Deviations 7 and 8 both come from the same gap: a definition is owned by the
 node that staged it, and ownership is only released when that node commits
 again. Two consequences follow:

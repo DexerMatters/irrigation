@@ -612,6 +612,7 @@ impl Inner {
         for dep in &old_trace {
             state.remove_dependent(dep.node, node);
         }
+        let new_dependencies: HashSet<NodeId> = deps.iter().map(|dep| dep.node).collect();
         for dep in &deps {
             state.add_dependent(dep.node, node);
         }
@@ -635,12 +636,79 @@ impl Inner {
             let dependents = state.node(node).dependents.clone();
             changed_nodes.extend(dependents);
         }
+        // Retire observations that the new trace no longer contains. A retired
+        // branch must release its definitions and its value, so it re-executes
+        // and restages if it becomes reachable again.
+        let retired: Vec<NodeId> = old_trace
+            .iter()
+            .filter(|dep| !new_dependencies.contains(&dep.node))
+            .map(|dep| dep.node)
+            .collect();
+        for retired in retired {
+            self.retire_unreachable(&mut state, retired, revision, &mut changed_nodes);
+        }
         if !changed_nodes.is_empty() {
             invalidate(&mut state, changed_nodes, revision);
         }
         drop(state);
         self.wake.notify_all();
         Ok(value)
+    }
+
+    /// Releases everything a node that is no longer reachable owns.
+    ///
+    /// Shared nodes (still referenced by another trace) are left alone. The
+    /// node's value is cleared so that if it becomes reachable again it
+    /// re-executes and restages its definitions.
+    fn retire_unreachable(
+        &self,
+        state: &mut State,
+        node: NodeId,
+        revision: Revision,
+        changed_nodes: &mut Vec<NodeId>,
+    ) {
+        if node == NodeId::NONE || !state.node(node).dependents.is_empty() {
+            return;
+        }
+        if matches!(
+            state.node(node).kind,
+            NodeKind::Unit | NodeKind::RegionContent
+        ) {
+            return;
+        }
+        let definitions = state.node(node).definitions.clone();
+        for definition in definitions {
+            let view = definition.unit.view;
+            if let Some(mut region) = state.regions.remove(&view) {
+                let _ = self.retract_unit(
+                    state,
+                    &mut region,
+                    node,
+                    &definition.unit,
+                    revision,
+                    changed_nodes,
+                );
+                state.regions.insert(view, region);
+            }
+        }
+        let trace = state.node(node).trace.clone();
+        for dep in &trace {
+            state.remove_dependent(dep.node, node);
+        }
+        {
+            let record = state.node_mut(node);
+            record.value = None;
+            record.trace.clear();
+            record.definitions.clear();
+            record.state = NodeState::Vacant;
+            record.verified_at = 0;
+            record.suspect_at = 0;
+            record.changed_at = 0;
+            record.failure = None;
+        }
+        for dep in trace {
+            self.retire_unreachable(state, dep.node, revision, changed_nodes);
+        }
     }
 
     fn fail(&self, node: NodeId, error: ComputeError, revision: Revision) -> Result<Value> {
@@ -671,6 +739,18 @@ impl Inner {
     ) -> Result<()> {
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
         let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
+        if restaged.len() != drafts.len() {
+            let mut seen = HashSet::new();
+            for draft in &drafts {
+                if !seen.insert(draft.unit.clone()) {
+                    return Err(ComputeError::DuplicateDefinition {
+                        unit: format!("{:?}", draft.unit),
+                        first: draft.label.to_string(),
+                        second: draft.label.to_string(),
+                    });
+                }
+            }
+        }
 
         // Retractions first: a unit this provider defined before but no longer
         // defines must disappear atomically with the new value.
@@ -682,8 +762,14 @@ impl Inner {
             let Some(mut region) = state.regions.remove(&view) else {
                 continue;
             };
-            let outcome =
-                self.retract_unit(state, &mut region, &record.unit, revision, changed_nodes);
+            let outcome = self.retract_unit(
+                state,
+                &mut region,
+                provider,
+                &record.unit,
+                revision,
+                changed_nodes,
+            );
             state.regions.insert(view, region);
             outcome?;
         }
@@ -731,11 +817,11 @@ impl Inner {
         let mut content = Arc::clone(&region.content);
         for draft in drafts {
             let owner = owner_key(&draft.unit);
-            if let Some(owner) = region.owners.get(&owner) {
-                if owner.node != provider {
+            if let Some(existing) = region.owners.get(&owner) {
+                if existing.node != provider {
                     return Err(ComputeError::DuplicateDefinition {
                         unit: format!("{}[{:?}]", descriptor.name, draft.unit),
-                        first: owner.label.to_string(),
+                        first: existing.label.to_string(),
                         second: draft.label.to_string(),
                     });
                 }
@@ -842,12 +928,18 @@ impl Inner {
         &self,
         state: &mut State,
         region: &mut Region,
+        provider: NodeId,
         unit: &UnitKey,
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
     ) -> Result<()> {
         let descriptor = region.descriptor;
         let owner = owner_key(unit);
+        if let Some(existing) = region.owners.get(&owner) {
+            if existing.node != provider {
+                return Ok(());
+            }
+        }
         region.owners.remove(&owner);
         let mut content = Arc::clone(&region.content);
         content = (descriptor.content.retract)(&content, unit);
