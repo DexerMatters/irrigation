@@ -1909,3 +1909,61 @@ fn result_control_flow_is_tracked_like_any_other_value() {
     );
 }
 
+
+// ---------------------------------------------------------------------------
+// Supported composition: the branch chooses values, the definition always runs
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct ModeFlag {
+    strict: bool,
+}
+
+#[view(derived)]
+pub struct ModeReport(Map<u32, u32>);
+
+#[reactive]
+mod mode_report {
+    use super::{ModeFlag, ModeReport};
+
+    #[component]
+    pub fn report(flag: &ModeFlag) -> ModeReport {
+        // The routing decision chooses a value; the definition itself is staged
+        // on every execution, so a branch switch can never leave a stale unit.
+        let value = if flag.strict() { 100 } else { 200 };
+        ModeReport::from([(1u32, value)])
+    }
+}
+
+#[test]
+fn branch_chosen_values_republish_every_execution() {
+    let runtime = Runtime::new();
+    runtime.install(mode_report::Report).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<ModeFlag>().set_strict(false);
+        })
+        .expect("edit");
+    let _ = runtime
+        .read_outputs::<mode_report::Report>()
+        .expect("outputs");
+    let snapshot = runtime.read().expect("snapshot");
+    assert_eq!(snapshot.view::<ModeReport>().field0(), vec![(1, 200)]);
+
+    for (strict, expected) in [(true, 100), (false, 200), (true, 100)] {
+        runtime
+            .edit(|edit| {
+                edit.view::<ModeFlag>().set_strict(strict);
+            })
+            .expect("edit");
+        let _ = runtime
+            .read_outputs::<mode_report::Report>()
+            .expect("outputs");
+        let snapshot = runtime.read().expect("snapshot");
+        assert_eq!(
+            snapshot.view::<ModeReport>().field0(),
+            vec![(1, expected)],
+            "strict={strict}"
+        );
+    }
+}

@@ -181,7 +181,9 @@ implementation does not claim to eliminate.
    plan's routing generations. Until then, place branch-dependent definitions
    in a dispatcher that always runs and chooses values, not definitions.
    This was found while writing a handover gate and is recorded rather than
-   half-fixed.
+   half-fixed. The supported pattern is gated by
+   `branch_chosen_values_republish_every_execution`: the branch chooses a value
+   and the definition is staged on every execution.
 
 ## Next work, in plan order
 
