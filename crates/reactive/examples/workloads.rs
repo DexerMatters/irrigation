@@ -168,5 +168,19 @@ fn main() {
             after.revisions - before.revisions,
             elapsed.as_micros()
         );
+
+        // From-scratch baseline: evaluate the same sum without the runtime.
+        let values: Vec<i64> = (0..size).map(|index| index as i64).collect();
+        let started = Instant::now();
+        let mut total = 0i64;
+        for _ in 0..10 {
+            total = values.iter().sum();
+        }
+        let elapsed = started.elapsed() / 10;
+        assert_eq!(total, (0..size as i64).sum::<i64>());
+        println!(
+            "from-scratch\t{size}\t-\t-\t{}",
+            elapsed.as_micros()
+        );
     }
 }

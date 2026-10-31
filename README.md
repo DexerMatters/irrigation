@@ -178,6 +178,13 @@ first scaling criterion. The workload matrix adds:
 A tree leaf edit executes a constant number of primitives; its wall time grows
 with the validated item list (`E_v`), not with executed user code.
 
+The example also prints a from-scratch baseline for the same sum. At these
+sizes the baseline is faster: the edit validates every item node, and summing
+10,000 integers is cheaper than that walk. Incremental machinery pays off when
+the per-element computation is expensive (a type checker, a parser, a graph
+analysis), which is exactly the tradeoff the plan's cost model predicts. No
+speedup is claimed for trivial payloads.
+
 Balanced reduction (`cargo run --release --example reduction -p reactive
 cargo run --release --example workloads -p reactive`) grows
 logarithmically:
