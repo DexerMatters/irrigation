@@ -709,3 +709,69 @@ fn a_component_can_be_demanded_directly() {
         .expect("call");
     assert_eq!(again, 55);
 }
+
+// ---------------------------------------------------------------------------
+// Map keys: negative dependencies and unrelated-key isolation
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Table {
+    entries: Map<u32, u64>,
+}
+
+#[reactive]
+mod table {
+    use super::Table;
+
+    #[component]
+    pub fn lookup(table: &Table) -> Option<u64> {
+        let entries = table.entries();
+        entries.get(&1)
+    }
+}
+
+#[test]
+fn missing_key_reads_are_dependencies_and_other_keys_are_isolated() {
+    let runtime = Runtime::new();
+    runtime.install(table::Lookup).expect("install");
+    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+
+    // An unrelated key must not wake the consumer.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Table>();
+            let mut entries = view.entries();
+            entries.insert(2, 20);
+        })
+        .expect("edit");
+    let probe = reactive_test::StatsProbe::start(&runtime);
+    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+    let delta = probe.delta(&runtime);
+    assert_eq!(
+        delta.executions, 0,
+        "an unrelated key edit executed consumer work"
+    );
+
+    // Defining the observed key must wake it.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Table>();
+            let mut entries = view.entries();
+            entries.insert(1, 10);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<table::Lookup>().expect("outputs"),
+        Some(10)
+    );
+
+    // Retracting the key must be observed too.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Table>();
+            let mut entries = view.entries();
+            entries.remove(&1);
+        })
+        .expect("edit");
+    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+}

@@ -175,7 +175,11 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * independent output cutoff;
 * 10,000-deep recursion;
 * identical results across 1, 2, and 4 workers;
-* fixed points inside components across edge insertion and deletion.
+* fixed points inside components across edge insertion and deletion;
+* graph topology isolation from payload edits, and node deletion retracting edges;
+* missing-key reads as dependencies, with unrelated keys executing nothing;
+* cancellation publishing nothing;
+* branch reclamation followed by correct repair and reconstruction.
 
 ## Reading the plan
 

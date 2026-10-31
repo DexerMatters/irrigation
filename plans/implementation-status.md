@@ -28,7 +28,9 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | Tree | pending (persistent store exists; `#[tree_view]` macro not implemented) |
 
 Negative reads are dependencies: membership units default to `false` and are
-updated on insertion/removal, so `get(k) == None` wakes when `k` appears.
+updated on insertion/removal, so `get(k) == None` wakes when `k` appears. The
+gate `missing_key_reads_are_dependencies_and_other_keys_are_isolated` checks
+both directions, including that an unrelated key executes no consumer work.
 
 ## §6 Identity and shared outputs
 
