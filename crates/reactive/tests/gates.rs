@@ -1308,3 +1308,19 @@ fn parallel_members_share_one_invocation_without_deadlock() {
         assert_eq!(total, 32 * 25, "round {round} with {workers} workers");
     }
 }
+
+#[test]
+fn snapshots_can_be_taken_without_a_root() {
+    let runtime = Runtime::new();
+    runtime.register_view(<Table as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<Table>();
+            let mut entries = table.entries();
+            entries.insert(7, 70);
+        })
+        .expect("edit");
+    let snapshot = runtime.snapshot();
+    assert_eq!(snapshot.view::<Table>().entries(), vec![(7, 70)]);
+    assert_eq!(snapshot.revision(), runtime.revision());
+}

@@ -177,6 +177,20 @@ impl Runtime {
         })
     }
 
+    /// Captures the current View contents without demanding a root.
+    ///
+    /// Useful for hosts that read only source Views, and for tests that do not
+    /// install a component.
+    #[must_use]
+    pub fn snapshot(&self) -> Snapshot {
+        let pool_owner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        pool_owner.pool.run(move || {
+            let _gate = task.gate.read();
+            task.capture_snapshot()
+        })
+    }
+
     /// Demands the installed root and returns an immutable snapshot.
     ///
     /// # Errors
