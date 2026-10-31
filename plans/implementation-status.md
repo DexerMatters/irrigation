@@ -11,27 +11,28 @@
 | §6 identity, unique definitions, routing | implemented: unique definitions, atomic definition commit, unreachable-subtree retirement, and end-of-revision conflict resolution make handover order-independent | duplicate-definition, handover and branch-retraction gates |
 | §7 component compilation and lowering | implemented for the documented subset | end-to-end and macro tests |
 | §8 revisions, validation, invalidation, publication | implemented | kernel tests, cutoff gates |
-| §8.5–§8.7 concurrency, progress, failure, cancellation | partial: pool, single-flight, wait graph, cancellation, panic isolation, contention; continuation suspension pending | concurrency gates |
+| §8.5–§8.7 concurrency, progress, failure, cancellation | implemented: pool, suspension, single-flight, wait graph on task identities, cancellation, panic isolation, progress counters, contention | suspension and concurrency gates |
 | §9 recursion and transient parameters | implemented | recursion gates |
 | §9.5 fixed points | implemented | fixed-point gates |
 | §10 public API | implemented (`#[view]`, `#[component]`, `#[reactive]`, `#[tree_view]`, `GeneralComponent` sync/async, observers with change summaries, explanations) | end-to-end tests |
 | §11 architecture, effects, explainability | implemented (explain_node, docs/architecture.md) | explanation gate |
 | §12 correctness and cost model | exercised by gates; measured by examples | workload matrix |
 | §13 verification | randomized oracle and counterexample gates | gates file |
-| §14 phases and benchmarks | phases 1–3 complete for the implemented surface; phase 4 partial; phase 5 partial | examples |
+| §14 phases and benchmarks | phases 1–4 complete for the implemented surface; phase 5 partial (external baselines) | examples |
 | §15 final recommendation | followed: typed graph language hosted in Rust | — |
 
-## Remaining structural gap
+## Remaining gaps
 
-One structural item remains: continuation-based suspension (below). Both
-routing deviations (7 and 8) are fixed — handover by end-of-revision conflict
-resolution, branch-scoped definitions by unreachable-subtree retirement.
+No structural gap remains in the runtime. What is left is comparative evidence:
+Salsa and Differential Dataflow baselines cannot be built offline, so the
+workload matrix reports from-scratch and whole-function memoization baselines
+instead.
 
-Continuation-based suspension: a task that waits for another task blocks its
-worker instead of yielding it. The migration design is in
-[`../docs/architecture.md`](../docs/architecture.md). Every semantic guarantee
-the gates exercise is already satisfied by the blocking implementation; what is
-missing is throughput when many workers wait at once.
+A waiting demand now yields its worker: the attempt ends with a suspension
+record, the task is queued again when the awaited node completes, and the
+demand restarts from its root against nodes that are already committed. The
+design, its restart semantics, and the gates are in
+[`../docs/architecture.md`](../docs/architecture.md).
 
 This file records, section by section, what the workspace implements, where the
 evidence is, and what remains. It is deliberately conservative: a feature is
@@ -95,9 +96,9 @@ both directions, including that an unrelated key executes no consumer work.
 | Demand algorithm: verify, validate in order, execute, commit | implemented |
 | Reverse subscriptions for invalidation | implemented |
 | Worker pool, no user code under metadata locks | implemented (`scheduler.rs`) |
-| Suspended continuations / work stealing | partially: waiting threads block on the metadata condvar; queued work is not stolen. Nested demand runs inline instead of yielding |
+| Suspended continuations / work stealing | implemented: a waiting task records the wait and its attempt ends, so its worker takes queued work. One shared ready queue makes stealing unnecessary; there are no per-worker deque. Nested demand still runs inline |
 | Glitch-free publication | implemented (dependency certification precedes use; cutoff keeps versions) |
-| Progress accounting, cancellation, failure | partially: failures are cached per revision, cycles are detected, and cancellation is enforced; explicit progress/frontier accounting is not implemented |
+| Progress accounting, cancellation, failure | implemented: `RuntimeStats::tasks` counts queued, running, and waiting tasks; a demand is complete only when its task left the table. Failures are cached per revision, cycles are detected, cancellation is checked at claim and commit and wakes suspended tasks |
 
 ## §9 Recursion and fixed points
 
@@ -144,7 +145,7 @@ implementation does not claim to eliminate.
 | 1 — sequential semantic kernel | complete for scalar/record/list/map/set Views; graph/tree pending |
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
 | 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
-| 4 — parallel, pipelined execution | partial: pool, parallel map, worker-count and repeated-schedule invariance, concurrent host reads, cross-thread single-flight contention, deep recursion, cancellation; continuation-based suspension is not implemented |
+| 4 — parallel, pipelined execution | complete for the implemented surface: pool, suspended demand, parallel map, worker-count and repeated-schedule invariance, concurrent host reads, cross-thread single-flight contention, deep recursion, cancellation, progress counters |
 | 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, and a workload matrix implemented; from-scratch and whole-function memoization baselines are reported in the workload matrix; Salsa and Differential Dataflow baselines are pending |
 
 ## Known deviations, stated explicitly
@@ -153,10 +154,15 @@ implementation does not claim to eliminate.
    identity is not invented from content equality.
 2. **Worker stack size substitutes for heap frames.** `stack_size` defaults to
    256 MiB; `max_depth` converts exhaustion into `DepthExceeded`.
-3. **Waiting blocks a worker** rather than suspending a continuation. Nested
-   demand runs inline, so a one-worker pool cannot deadlock.
+3. **A suspended demand restarts from its root** instead of resuming the
+   compute closure at the suspended expression. Closures are ordinary Rust and
+   cannot be interrupted mid-body, so the attempt is abandoned and replayed;
+   committed nodes are clean and are reused. Nested demand runs inline on its
+   worker and parks that worker when it waits, so a one-worker pool cannot
+   deadlock.
 4. **Parallel operators use scoped threads** so closures can borrow their
-   environment; this is real parallelism without a custom continuation runtime.
+   environment; those threads evaluate with a detached task identity and reuse
+   the same claim and cycle bookkeeping.
 5. **Tracked locals clone on use**, which is cheap for handles and visible for
    large values.
 6. **Effects are not supported in computations.** They are rejected for known
@@ -181,10 +187,10 @@ implementation does not claim to eliminate.
 
 ## Next work, in plan order
 
-1. `GeneralComponent` with output transactions, dependency scopes, and update
-   batches.
-2. Indexed joins and the bilinear delta rule.
-4. Indexed joins and lawful balanced reductions.
-5. Continuation-based scheduling, cancellation API, and schedule perturbation
-   tests.
-6. The full benchmark matrix (joins, trees, fixed points, worker scaling).
+1. External comparative baselines (Salsa, Differential Dataflow) where the
+   crates are available; the workload matrix currently reports from-scratch and
+   memoized baselines.
+2. A full benchmark matrix for joins, tree edits, fixed points, and worker
+   scaling beyond the current examples.
+3. Heap-owned frames instead of large worker stacks, if stack depth ever
+   matters more than throughput.

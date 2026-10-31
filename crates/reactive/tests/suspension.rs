@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use reactive::{Runtime, RuntimeConfig, reactive};
+use reactive::{Runtime, RuntimeConfig, TaskCounts, reactive};
 
 /// The probes below are process-wide, so the gates that use them take turns.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -237,4 +237,30 @@ fn concurrent_demands_share_an_invocation_across_suspensions() {
             });
         }
     });
+}
+
+#[test]
+fn progress_accounting_shows_and_drains_in_flight_demands() {
+    let _serial = serial();
+    reset_probes();
+    let runtime = two_workers();
+    std::thread::scope(|scope| {
+        let slow = scope.spawn(|| {
+            runtime
+                .call::<yielding::__SleepyOnceSpec>(yielding::__SleepyOnceArgs { tag: 11 })
+                .expect("sleeping demand")
+        });
+        probe::wait_until(&SLOW_STARTED);
+        let running = runtime.stats().tasks;
+        assert!(
+            running.running >= 1,
+            "a demand blocked in its own computation must be counted as running, got {running:?}"
+        );
+        assert_eq!(slow.join().expect("slow thread"), 1);
+    });
+    assert_eq!(
+        runtime.stats().tasks,
+        TaskCounts::default(),
+        "every demand released its task"
+    );
 }

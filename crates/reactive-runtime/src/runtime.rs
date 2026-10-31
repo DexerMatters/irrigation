@@ -406,12 +406,22 @@ impl Runtime {
     #[must_use]
     pub fn stats(&self) -> RuntimeStats {
         let state = self.inner.lock();
+        let mut tasks = TaskCounts::default();
+        for slot in state.tasks.values() {
+            match slot.status {
+                crate::task::TaskStatus::Queued => tasks.queued += 1,
+                crate::task::TaskStatus::Running => tasks.running += 1,
+                crate::task::TaskStatus::Waiting(_) => tasks.waiting += 1,
+                crate::task::TaskStatus::Done => {}
+            }
+        }
         RuntimeStats {
             nodes_created: state.stats.nodes_created.load(Ordering::Relaxed),
             executions: state.stats.executions.load(Ordering::Relaxed),
             validations: state.stats.validations.load(Ordering::Relaxed),
             revisions: state.stats.revisions.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
+            tasks,
         }
     }
 
@@ -619,6 +629,21 @@ impl Drop for Subscription {
     }
 }
 
+/// How many demand tasks are queued, running, or suspended.
+///
+/// A demand is complete only when it is in none of these sets. The counts are
+/// the runtime's progress accounting: a task that waits stays in `waiting`
+/// even when every worker is idle, and it leaves only by completing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskCounts {
+    /// Tasks waiting for a worker.
+    pub queued: usize,
+    /// Tasks with an attempt executing.
+    pub running: usize,
+    /// Tasks suspended on another task's node.
+    pub waiting: usize,
+}
+
 /// Snapshot of runtime counters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RuntimeStats {
@@ -632,6 +657,8 @@ pub struct RuntimeStats {
     pub revisions: u64,
     /// Nodes currently allocated.
     pub nodes: usize,
+    /// In-flight demand tasks.
+    pub tasks: TaskCounts,
 }
 
 /// Why one node changed.

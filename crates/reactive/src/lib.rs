@@ -47,6 +47,7 @@ pub use reactive_runtime::fixed_point::{
 pub use reactive_runtime::{
     ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, Runtime, RuntimeConfig,
     DependencyExplanation, Explanation, MemoryReport, ReclaimStats, RuntimeStats, Snapshot,
+    TaskCounts,
     ChangeSummary, SourceView, Subscription, ViewSchema, call_component, define_unit,
     read_unit_value, try_read_unit_value, view_content,
 };

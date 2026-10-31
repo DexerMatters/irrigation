@@ -3,8 +3,12 @@
 //! A public read turns into one task. The task runs attempts on a worker; an
 //! attempt that needs a node owned by another task suspends instead of parking
 //! the worker, and the task is queued again when that node completes. The
-//! demand root restarts, but every node committed before the suspension is
-//! clean, so the restart reuses that work.
+//! demand restarts from its root, but every node committed before the
+//! suspension is clean, so the restart reuses that work.
+//!
+//! A demand that runs on its calling thread — because the runtime has no
+//! workers, or because it is nested in an attempt that is already on one —
+//! cannot yield that thread. It is marked inline and its waits park instead.
 
 use std::sync::mpsc::sync_channel;
 
@@ -21,9 +25,14 @@ impl Inner {
         cancel: CancelToken,
         body: impl FnMut() -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        if self.pool.workers() == 0 || crate::scheduler::on_worker() {
+        if crate::scheduler::on_worker() {
+            // The enclosing task already holds the gate and the worker.
             let mut body = body;
-            return self.demand_inline(cancel, &mut body);
+            return self.demand_inline(cancel, &mut body, false);
+        }
+        if self.pool.workers() == 0 {
+            let mut body = body;
+            return self.demand_inline(cancel, &mut body, true);
         }
         let (sender, receiver) = sync_channel(1);
         self.gate.enter_read();
@@ -41,53 +50,35 @@ impl Inner {
         match receiver.recv() {
             Ok(result) => result,
             Err(_) => {
-                self.abort_task(id);
+                self.close_task(id);
                 Err(ComputeError::Panicked {
-                    message: String::from("a demand task panicked"),
+                    message: String::from("a demand panicked outside its computation"),
                 })
             }
         }
     }
 
-    /// Runs a demand on the calling thread, blocking when it has to wait.
+    /// Runs a demand on the calling thread, parking it when it has to wait.
     fn demand_inline<T>(
         &self,
         cancel: CancelToken,
         body: &mut dyn FnMut() -> Result<T>,
+        hold_gate: bool,
     ) -> Result<T> {
+        if hold_gate {
+            self.gate.enter_read();
+        }
         let id = {
             let mut state = self.lock();
-            let id = state.alloc_task(None, TaskMode::Inline, false, cancel);
+            let id = state.alloc_task(None, TaskMode::Inline, hold_gate, cancel);
             let slot = state.tasks.get_mut(&id).expect("task was just allocated");
             slot.status = TaskStatus::Running;
             id
         };
         self.set_active_task(Some(id));
-        let result = {
-            let _enter = task::enter(id);
-            body()
-        };
-        self.finish_inline(id);
-        self.clear_active_task(id);
-        result
-    }
-
-    fn finish_inline(&self, id: TaskId) {
-        let (queued, gate) = {
-            let mut state = self.lock();
-            let Some(mut slot) = state.tasks.remove(&id) else {
-                return;
-            };
-            state.wait_graph.remove(&id);
-            let held = std::mem::take(&mut slot.held);
-            let queued = Self::release_claims(&mut state, id, &held);
-            (queued, slot.gate)
-        };
-        self.wake.notify_all();
-        self.enqueue(queued);
-        if gate {
-            self.gate.exit_read();
-        }
+        let _close = InlineTask { inner: self, id };
+        let _enter = task::enter(id);
+        body()
     }
 
     /// Queues one task for a worker.
@@ -136,6 +127,11 @@ impl Inner {
         };
         slot.body = Some(body);
         if attempt == Attempt::Suspended {
+            debug_assert!(
+                slot.status == TaskStatus::Queued
+                    || matches!(slot.status, TaskStatus::Waiting(_)),
+                "a suspended attempt must leave its task waiting"
+            );
             let requeue = slot.status == TaskStatus::Queued;
             drop(state);
             if requeue {
@@ -143,38 +139,32 @@ impl Inner {
             }
             return;
         }
-        let held = std::mem::take(&mut slot.held);
-        let queued = Self::release_claims(&mut state, id, &held);
-        let mut slot = state.tasks.remove(&id).expect("task is present");
         drop(state);
-        self.wake.notify_all();
-        self.enqueue(queued);
-        self.clear_active_task(id);
-        if slot.gate {
-            self.gate.exit_read();
-        }
-        if let Some(body) = slot.body.take() {
+        if let Some(body) = self.close_task(id) {
             body.deliver();
         }
     }
 
-    /// Releases a task that never delivered a result.
-    fn abort_task(&self, id: TaskId) {
-        let (queued, gate) = {
+    /// Removes a finished task and releases everything it held.
+    ///
+    /// Returns the body when the task still has one, so the caller can deliver
+    /// its result outside the metadata lock.
+    fn close_task(&self, id: TaskId) -> Option<Box<dyn Task>> {
+        let (queued, gate, body) = {
             let mut state = self.lock();
-            let Some(mut slot) = state.tasks.remove(&id) else {
-                return;
-            };
+            let mut slot = state.tasks.remove(&id)?;
             state.wait_graph.remove(&id);
             let held = std::mem::take(&mut slot.held);
             let queued = Self::release_claims(&mut state, id, &held);
-            (queued, slot.gate)
+            (queued, slot.gate, slot.body.take())
         };
         self.clear_active_task(id);
+        self.wake.notify_all();
         self.enqueue(queued);
         if gate {
             self.gate.exit_read();
         }
+        body
     }
 
     fn clear_active_task(&self, id: TaskId) {
@@ -185,5 +175,17 @@ impl Inner {
         if *active == Some(id) {
             *active = None;
         }
+    }
+}
+
+/// Closes an inline task however its body ends, including a panic.
+struct InlineTask<'a> {
+    inner: &'a Inner,
+    id: TaskId,
+}
+
+impl Drop for InlineTask<'_> {
+    fn drop(&mut self) {
+        let _ = self.inner.close_task(self.id);
     }
 }

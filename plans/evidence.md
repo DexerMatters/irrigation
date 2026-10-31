@@ -9,7 +9,19 @@ cargo test -p reactive --test gates   # acceptance gates
 cargo test -p reactive-runtime --test kernel   # kernel semantics
 cargo test -p reactive --test end_to_end       # macro surface
 cargo test -p reactive --test tree_view        # tree family
+cargo test -p reactive --test suspension       # suspended demand
 ```
+
+## Suspension (§8.5–§8.7)
+
+| Claim | Test |
+|---|---|
+| A demand waiting on another task's node yields its worker, so queued work starts and the blocked computation observes it | `a_waiting_demand_yields_its_worker_to_queued_work` |
+| Cancellation reaches a suspended task and it publishes nothing | `a_suspended_demand_can_be_cancelled` |
+| Many concurrent demands share one invocation across suspends and wake-ups, with identical results | `concurrent_demands_share_an_invocation_across_suspensions` |
+| Progress accounting tracks a running demand and drains to zero when it completes | `progress_accounting_shows_and_drains_in_flight_demands` |
+| A writer waits for demands that hold read permits | `gate::tests::a_writer_waits_for_every_reader` |
+| A read permit can be released by a different thread | `gate::tests::a_permit_can_be_released_by_another_thread` |
 
 ## Semantic kernel (§4, §8)
 

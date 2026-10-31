@@ -79,9 +79,10 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 2. **Invalidation.** Changed unit nodes mark their reverse dependents suspect at
    the new revision. A node stays suspect until it is verified *after* that
    invalidation (`suspect_at <= verified_at`).
-3. **Demand.** `runtime.read()` runs on a worker thread. Each node either
+3. **Demand.** `runtime.read()` becomes a task on a worker. Each node either
    returns a certified value, validates its ordered trace, or re-executes with a
-   fresh recorder.
+   fresh recorder. A task that needs a node owned by another task suspends
+   instead of parking its worker, and is queued again when that node commits.
 4. **Cutoff.** An equal result keeps `changed_at`; only changed projections
    notify consumers. Output projections are separate nodes, so output 0 can be
    reused while output 1 changes.
@@ -105,8 +106,10 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Derived Map (per key), derived List/Set (whole value, documented boundary) | implemented |
 | Per-member `map`/`filter`/`flat_map` with identity-based reuse | implemented |
 | Parallel worker pool, large stacks, nested-demand inline execution | implemented |
+| Suspended demand: a waiting task yields its worker and resumes when its dependency commits | implemented |
+| Progress accounting (`RuntimeStats::tasks`: queued, running, waiting) | implemented |
 | Parallel list `map` across worker chunks, deterministic order | implemented |
-| Single-flight claims, cross-thread wait graph, cycle detection | implemented |
+| Single-flight claims, cross-task wait graph, cycle detection | implemented |
 | Cancellation: a cancelled demand cannot publish | implemented |
 | Snapshots pinned to a revision | implemented |
 | Subscriptions that keep observation roots active | implemented |
@@ -133,9 +136,12 @@ The pending items are tracked in
 * **Derived lists and sets are whole-value definitions.** A producer that
   reconstructs a sequence has no occurrence identity to offer; the plan requires
   that boundary to be explicit. Derived maps are per-key and fine-grained.
-* **Parallel operators require `Send + Sync` closures** and use scoped threads
-  per chunk, so the closure can borrow its environment. This is real
-  parallelism, but it is not a work-stealing continuation scheduler.
+* **A suspended demand restarts from its root, not mid-expression.** A compute
+  closure is ordinary Rust, so an attempt cannot be interrupted and resumed
+  inside its body; the attempt is abandoned and replayed while committed nodes
+  are reused. The pool is one shared ready queue, so there are no per-worker
+  deques to steal from. Parallel operators additionally use scoped threads per
+  chunk, so their closures can borrow the environment.
 * **Loops and `return` are rejected** inside components. Iteration goes through
   collection operators; the macro reports the unsupported construct instead of
   silently coarsening it.
@@ -228,7 +234,12 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * identical results across repeated schedules with 1–4 workers, eight
   concurrent host reads of a certified revision executing no node bodies,
   32 parallel members sharing one invocation under 2–4 workers without
-  deadlock, and six rounds of contended host demand on a two-worker pool.
+  deadlock, and six rounds of contended host demand on a two-worker pool;
+* `crates/reactive/tests/suspension.rs`: a waiting demand yields its worker so a
+  third-party demand runs and releases the blocked computation (the same test
+  fails if waits park the worker), cancellation reaches a suspended task, many
+  concurrent demands share one invocation across suspensions, and progress
+  counters drain when demands complete.
 
 ## Internals
 

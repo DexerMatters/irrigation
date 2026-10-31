@@ -37,7 +37,8 @@ Every memoized computation is a `NodeRecord`:
 | `suspect_at` | revision of the last invalidation |
 | `trace` | ordered observations: `(node, version)` |
 | `dependents` | reverse edges, used by invalidation |
-| `state` | `Vacant`, `Running { owner, generation }`, `Ready`, `Failed` |
+| `state` | `Vacant`, `Running { owner: TaskId, generation }`, `Ready`, `Failed` |
+| `waiters` | tasks suspended on this node |
 | `general` / `general_state` | custom component index and retained state |
 
 The central invariant is:
@@ -75,17 +76,22 @@ the same order and never touches an obsolete branch.
 
 ## Concurrency
 
-- One mutable transaction at a time, one active derived revision: a `RwLock`
-  gate separates edits from demands.
-- A pool of workers with large stacks executes demands. A demand that is already
-  on a worker runs inline, so a one-worker pool cannot deadlock on itself.
+- One mutable transaction at a time, one active derived revision: a `Gate`
+  separates edits from demands. Its read permits are counters rather than
+  guards, because a task keeps its permit while suspended and resumes on
+  whichever worker picks it up.
+- A pool of workers with large stacks executes demand tasks. A demand that is
+  already on a worker runs inline, so a one-worker pool cannot deadlock on
+  itself.
 - Single-flight is per node: the claim, the waiter registration, and completion
   are one state transition under the metadata mutex.
-- Waiters park on a global condvar. Before parking they check the wait graph;
-  a reachable cycle becomes `ComputeError::Cycle`. User code never runs under
-  the metadata lock.
+- A task that needs a node owned by another task suspends (see below). Before
+  recording the wait it walks the wait graph on task identities; a reachable
+  cycle becomes `ComputeError::Cycle`. User code never runs under the metadata
+  lock.
 - Cancellation is checked before claiming and before committing; a cancelled
-  attempt publishes nothing and leaves nodes vacant.
+  attempt publishes nothing and leaves nodes vacant. Cancelling a suspended task
+  queues it so it can observe the cancellation.
 - Parallel collection operators use scoped threads over worker chunks and join
   in order, so results are independent of completion order.
 
@@ -141,67 +147,58 @@ are built on this boundary.
 - Scheduling changes must preserve the claim/commit protocol and the
   `suspect_at <= verified_at` invariant.
 
-## Planned: continuation-based suspension
+## Suspension
 
-The current scheduler blocks a worker while it waits for a node owned by another
-worker. Before parking it first runs any queued job (`Pool::try_run_one`), so
-queued demand is not stranded behind blocked workers. That is still blocking,
-not yielding: the plan requires a waiting task to yield its worker. The change
-is contained to three places:
+A demand is a task (`task.rs`, `demand.rs`). The host submits it with a read
+permit and a result channel; workers run attempts. When an attempt needs a node
+that another task owns, `wait_for` registers the task on that node, sets its
+status to `Waiting`, and returns `ComputeError::Suspended`. That error travels
+through user code as an engine payload, the same channel cancellation and cycles
+use: each node boundary releases its execution mark and passes it on, and the
+attempt ends at the task boundary. The worker returns to the pool.
 
-### 1. Node claim becomes a continuation state machine
+When a node commits or fails, it queues the tasks suspended on it. A queued task
+restarts from its demand root. Nodes committed before the suspension are clean,
+so the restart reuses them; nothing has to capture and resume a Rust stack.
 
-Replace the synchronous `eval` with a step function:
+Closures are ordinary Rust and cannot be interrupted mid-body, so an attempt is
+a restart, not a resumption at the suspended expression. A node the task claimed
+before suspending stays claimed — its owner is the task identity — which keeps
+single-flight intact across suspensions. The next attempt sees
+`Running { owner: me }` with the node not on its execution stack, treats it as a
+resume, and continues. `TaskSlot::held` records those claims so a task that
+fails or is cancelled after a restart still releases them; a waiter on a
+released claim is queued and re-claims the node itself.
 
-```
-enum Step {
-    Ready(Value),
-    Execute(Box<dyn FnOnce(&mut Cx) -> Value>),
-    Wait(NodeId),
-}
-```
+Inline tasks are demands that run on their calling thread: a runtime with no
+workers, or a nested demand on a worker. They cannot yield, so their waits park
+on the node-completion condvar. That keeps the one-worker and nested-demand
+cases exactly as they were.
 
-`Inner::eval` currently loops over `Return/Wait/Claim`. Extract the decision
-into `try_step(node) -> Step` and let the caller drive it. A `Wait` no longer
-parks: it records the waiter and returns.
+Progress accounting is the task status table: `RuntimeStats::tasks` counts
+queued, running, and waiting tasks. A demand completes only when its task has
+left the table, so "every worker is idle" can never be mistaken for completion.
 
-### 2. Continuation records
+Two details are easy to get wrong:
 
-Each in-flight demand becomes a heap record:
+- Engine failures travel as panic payloads, so the runtime installs a hook
+  filter (`quiet_engine_panics`) that ignores engine payloads and delegates user
+  panics. Without it every suspension would print a backtrace.
+- A task can be woken while its previous attempt is still unwinding. The second
+  job is a no-op — the body is only taken while the status is `Queued` and the
+  body is present — and the finishing attempt requeues the task itself.
 
-```
-struct Continuation {
-    node: NodeId,
-    generation: u64,
-    stage: Stage,           // Validating { index } | Executing
-    frame: Frame,           // recorder, definitions, scope, cancel token
-    task: TaskId,
-}
-```
+### Why restarts are sound
 
-The frame already owns the recorder and staged definitions, so it can outlive
-the stack. `Stage::Validating { index }` resumes trace validation at the next
-observation; `Stage::Executing` resumes the compute closure. Compute closures
-are the hard part: the generated builder is ordinary Rust, so it cannot be
-resumed mid-body. The pragmatic rule is that a node's *own* compute runs to
-completion; only nested demands suspend. When a nested demand would block, the
-parent continuation is pushed and the worker takes another ready task.
+A restart repeats orchestration, not committed work. Component bodies are pure:
+effects are rejected by the lowering, and nested commits are idempotent because
+a committed node is clean at its revision. Staged definitions and observations
+live in the frame that unwinds, so nothing half-applied survives. The claim is
+the only state kept across an attempt, and the next attempt rebuilds the rest
+from the same revision.
 
-### 3. Ready queue and progress
-
-- A worker loop pops `Ready` continuations, runs one step, and requeues on
-  `Wait`.
-- Node completion enqueues every registered waiter.
-- Progress accounting becomes explicit: `queued + running + suspended +
-  outstanding_expansion`. A demand completes only when its requested
-  projections are ready and no outstanding expansion can add work.
-- The wait graph check stays exactly as it is; it now runs on continuation
-  identities rather than threads.
-
-### Why this is safe to defer
-
-The blocking implementation preserves every semantic guarantee the tests
-exercise: single-flight, ordered validation, cutoff, glitch-free publication,
-cycle detection, cancellation, and deadlock freedom for tiny pools. What it
-lacks is throughput when many workers wait at once. The migration above changes
-scheduling, not the commit protocol, so the existing gates remain the oracle.
+The acceptance gates are the oracle: `a_waiting_demand_yields_its_worker_to_queued_work`
+fails under the blocking implementation, `a_suspended_demand_can_be_cancelled`
+checks that cancellation reaches a suspended task, and the randomized oracle
+plus the worker-count and contention gates check that results do not depend on
+how often an attempt restarted.
