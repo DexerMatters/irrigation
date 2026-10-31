@@ -24,6 +24,7 @@ enum FieldShape {
     Map(Type, Type),
     List(Type),
     Set(Type),
+    Reduced(Type),
     Graph(Type, Type),
     Tree(Type),
 }
@@ -388,6 +389,17 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         self.content.#ident.iter().cloned().collect()
                     }
                 },
+                FieldShape::Reduced(reduction) => {
+                    let aggregate = format_ident!("{}_aggregate", ident);
+                    quote! {
+                        #vis fn #ident(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
+                            self.content.#ident.to_vec()
+                        }
+                        #vis fn #aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
+                            self.content.#ident.aggregate()
+                        }
+                    }
+                }
                 FieldShape::Graph(_, _) => {
                     let nodes = format_ident!("{}_nodes", ident);
                     let edges = format_ident!("{}_edges", ident);
@@ -488,7 +500,18 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.#ident().define(key, value, #name_str);
                         }
                     },
-                    FieldShape::Graph(_, _) => {
+                    FieldShape::Reduced(reduction) => {
+                    let aggregate = format_ident!("{}_aggregate", ident);
+                    quote! {
+                        #vis fn #ident(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
+                            self.content.#ident.to_vec()
+                        }
+                        #vis fn #aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
+                            self.content.#ident.aggregate()
+                        }
+                    }
+                }
+                FieldShape::Graph(_, _) => {
                     let nodes = format_ident!("{}_nodes", ident);
                     let edges = format_ident!("{}_edges", ident);
                     quote! {
@@ -632,6 +655,7 @@ fn shape_of(ty: &Type) -> Result<FieldShape> {
         ("Map", 2) => FieldShape::Map(types[0].clone(), types[1].clone()),
         ("List", 1) => FieldShape::List(types[0].clone()),
         ("Set", 1) => FieldShape::Set(types[0].clone()),
+        ("Reduced", 1) => FieldShape::Reduced(types[0].clone()),
         ("Graph", 2) => FieldShape::Graph(types[0].clone(), types[1].clone()),
         ("Tree", 1) => FieldShape::Tree(types[0].clone()),
         _ => FieldShape::Scalar(ty.clone()),
@@ -656,6 +680,7 @@ fn marker_for(shape: &FieldShape, derived: bool) -> TokenStream {
                 quote!(reactive::SourceSet<#elem>)
             }
         }
+        FieldShape::Reduced(reduction) => quote!(reactive::Reduced<#reduction>),
         FieldShape::Graph(node, edge) => quote!(reactive::Graph<#node, #edge>),
         FieldShape::Tree(node) => quote!(reactive::Tree<#node>),
     }
@@ -815,6 +840,30 @@ fn single_field_forwarding(
                 quote!()
             }
         }
+        FieldShape::Reduced(reduction) => quote! {
+            impl #name {
+                /// The cached aggregate.
+                #[must_use]
+                pub fn aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
+                    self.#accessor().aggregate()
+                }
+                /// Number of elements.
+                #[must_use]
+                pub fn len(&self) -> usize {
+                    self.#accessor().len()
+                }
+                /// Returns `true` when empty.
+                #[must_use]
+                pub fn is_empty(&self) -> bool {
+                    self.len() == 0
+                }
+                /// Reads every element.
+                #[must_use]
+                pub fn to_vec(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
+                    self.#accessor().to_vec()
+                }
+            }
+        },
         FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote!(),
     }
 }

@@ -23,7 +23,7 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | Scalar / record | implemented (`Scalar` field, unit per field) |
 | List | implemented for source Views (stable element ids, per-element units, rank reads observe structure) |
 | Set | implemented for source Views (per-member membership units) |
-| Balanced reduction | implemented (`AggSeq`: cached lawful aggregate, logarithmic point-edit recomputation) |
+| Balanced reduction | implemented (`AggSeq`: cached lawful aggregate, logarithmic point-edit recomputation) and exposed as the `Reduced<R>` View field |
 | Map | implemented for source and derived Views (membership + value per key) |
 | Graph | implemented for source Views: topology, per-node payload, per-edge payload and per-node adjacency units; node deletion retracts incident edges |
 | Tree | implemented: `#[tree_view]` generates typed refs, kind enums, per-variant accessors, build conversions, and an editor with identity-preserving replace/move/remove |

@@ -21,6 +21,7 @@ pub mod graph;
 pub mod join;
 pub mod list;
 pub mod map;
+pub mod reduce;
 pub mod set;
 pub mod tree;
 
@@ -28,6 +29,7 @@ pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopolog
 pub use join::{EquiJoin, JoinSpec};
 pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, SourceListRef};
 pub use map::{Map, MapEditor, MapRef};
+pub use reduce::{Reduced, ReducedEditor, ReducedRef, Reduction};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};
 pub use tree::{
     BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,

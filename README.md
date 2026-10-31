@@ -117,6 +117,7 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | `GeneralComponent` (retained state, change batches, atomic state/output commit) | implemented |
 | Incremental equi-join over map Views | implemented (`EquiJoin`, per-key deltas) |
 | Balanced lawful reductions (`AggSeq` with cached aggregates) | implemented |
+| `Reduced<R>` View field with a declared lawful reduction | implemented |
 | Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
 | Async `GeneralComponent` futures | **pending** (synchronous algorithm boundary) |
 
@@ -204,6 +205,7 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * tree reads, identity-preserving replacement and subtree moves, subtree retraction, and leaf edits that do not rebuild the tree;
 * missing-key reads as dependencies, with unrelated keys executing nothing;
 * general components initialize, update from change batches, honour the default reset policy, and commit state atomically;
+* reduced sequence fields expose a cached lawful aggregate through reads and snapshots;
 * an incremental equi-join matches a from-scratch join while combining only changed keys;
 * cancellation publishing nothing;
 * branch reclamation followed by correct repair and reconstruction;

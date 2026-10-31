@@ -1173,3 +1173,86 @@ fn concurrent_host_reads_share_one_execution() {
     // Eight concurrent reads of a certified revision execute no node bodies.
     assert_eq!(runtime.stats().executions, before);
 }
+
+// ---------------------------------------------------------------------------
+// Reduced sequence View field
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Sum;
+
+impl reactive::Reduction for Sum {
+    type Item = u64;
+    type Aggregate = u64;
+
+    fn leaf(item: &Self::Item) -> Self::Aggregate {
+        *item
+    }
+
+    fn combine(left: &Self::Aggregate, right: &Self::Aggregate) -> Self::Aggregate {
+        left + right
+    }
+
+    fn identity() -> Self::Aggregate {
+        0
+    }
+}
+
+#[view(source)]
+pub struct Totals {
+    values: Reduced<Sum>,
+}
+
+#[reactive]
+mod totals_reader {
+    use super::Totals;
+
+    #[component]
+    pub fn total(totals: &Totals) -> u64 {
+        let values = totals.values();
+        values.aggregate()
+    }
+}
+
+#[test]
+fn reduced_sequence_fields_track_their_aggregate() {
+    let runtime = Runtime::new();
+    runtime.install(totals_reader::Total).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut totals = edit.view::<Totals>();
+            let mut values = totals.values();
+            values.push(1);
+            values.push(2);
+            values.push(3);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<totals_reader::Total>()
+            .expect("aggregate"),
+        6
+    );
+    let snapshot = runtime.read().expect("snapshot");
+    let view = snapshot.view::<Totals>();
+    assert_eq!(view.values(), vec![1, 2, 3]);
+    assert_eq!(view.values_aggregate(), 6);
+
+    runtime
+        .edit(|edit| {
+            let mut totals = edit.view::<Totals>();
+            let mut values = totals.values();
+            values.set(1, 20);
+            values.remove(0);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<totals_reader::Total>()
+            .expect("aggregate"),
+        23
+    );
+    let snapshot = runtime.read().expect("snapshot");
+    assert_eq!(snapshot.view::<Totals>().values(), vec![20, 3]);
+    assert_eq!(snapshot.view::<Totals>().values_aggregate(), 23);
+}
