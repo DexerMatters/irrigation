@@ -38,7 +38,8 @@ pub use reactive_runtime::helpers::{
 };
 pub use reactive_runtime::Param;
 pub use reactive_runtime::{
-    Change, ChangeBatch, DependencyUpdates, GeneralComponent, GeneralCx,
+    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
+    GeneralComponent, GeneralCx, drive as drive_future,
 };
 pub use reactive_runtime::fixed_point::{
     FixedPoint, FixedPointProblem, Lattice, solve as solve_fixed_point,

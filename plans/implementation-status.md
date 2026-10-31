@@ -86,7 +86,7 @@ both directions, including that an unrelated key executes no consumer work.
 | `runtime.install` / `edit` / `read` / `observe` | implemented |
 | Snapshots with typed View handles | implemented |
 | `#[tree_view]` | implemented |
-| `GeneralComponent` | implemented: retained state, change batches, `Reset`/`Incremental` policies, atomic state/output/definition commit |
+| `GeneralComponent` | implemented: retained state, change batches, `Reset`/`Incremental` policies, atomic state/output/definition commit; async form driven by the owning worker |
 
 ## §11–§12 Architecture, correctness, cost
 

@@ -1368,3 +1368,69 @@ fn explanations_name_the_dependency_that_moved() {
 
     let _ = runtime.read_outputs::<branching::Pick>().expect("read");
 }
+
+// ---------------------------------------------------------------------------
+// Async GeneralComponent driver
+// ---------------------------------------------------------------------------
+
+struct AsyncTracker;
+
+impl reactive::AsyncGeneralComponent for AsyncTracker {
+    type State = u64;
+    type Output = u64;
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00AA_0003);
+    const NAME: &'static str = "tests::AsyncTracker";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<Counter as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn initialize<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+    ) -> reactive::ComponentFuture<'a, (Self::State, Self::Output)> {
+        Box::pin(async move {
+            let value: u64 = cx.read_typed(counter_unit())?;
+            Ok((value, value * 2))
+        })
+    }
+
+    fn update<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+        state: &'a Self::State,
+        changes: &'a reactive::ChangeBatch,
+    ) -> reactive::ComponentFuture<'a, (Self::State, Self::Output)> {
+        Box::pin(async move {
+            let mut value = *state;
+            for change in changes.changes() {
+                value = cx.read_typed(change.unit.clone())?;
+            }
+            Ok((value, value * 2))
+        })
+    }
+}
+
+#[test]
+fn async_components_are_driven_to_completion() {
+    let runtime = Runtime::new();
+    runtime
+        .install_general(reactive::AsyncAdapter::new(AsyncTracker))
+        .expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncTracker>>()
+            .expect("outputs"),
+        0
+    );
+    runtime
+        .edit(|edit| {
+            edit.view::<Counter>().set_value(6);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncTracker>>()
+            .expect("outputs"),
+        12
+    );
+}

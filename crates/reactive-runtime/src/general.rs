@@ -278,3 +278,110 @@ impl std::fmt::Debug for GeneralHandle {
             .finish()
     }
 }
+
+/// A component future.
+///
+/// The runtime drives futures to completion on the worker that owns the node.
+/// Reads inside the future are synchronous, so an algorithm that only reads
+/// Views completes on the first poll. Awaiting external I/O has no executor
+/// here and is reported as unsupported rather than silently blocking.
+pub type ComponentFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send + 'a>>;
+
+/// Drives a component future to completion.
+///
+/// # Errors
+///
+/// Returns [`ComputeError::Unsupported`] when the future is still pending,
+/// which means it awaited work this runtime does not provide.
+pub fn drive<T>(future: ComponentFuture<'_, T>) -> Result<T> {
+    use std::task::{Context, Poll};
+
+    let waker = std::task::Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = future;
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(result) => result,
+        Poll::Pending => Err(ComputeError::unsupported(
+            "component future is pending; awaiting external work needs a dedicated executor",
+        )),
+    }
+}
+
+/// An async form of [`GeneralComponent`].
+///
+/// The runtime polls the returned future to completion. Synchronous algorithms
+/// can still return a ready future, and the driver keeps the same atomic
+/// state/output commit as the synchronous trait.
+pub trait AsyncGeneralComponent: Send + Sync + 'static {
+    /// Retained algorithm state.
+    type State: Clone + Send + Sync + 'static;
+    /// Published output product.
+    type Output: Clone + PartialEq + Send + Sync + 'static;
+
+    /// Stable component identity.
+    const ID: reactive_core::ComponentId;
+    /// Fully qualified name for diagnostics.
+    const NAME: &'static str;
+    /// Views this component reads, registered at install time.
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// How requested-dependency invalidation is handled.
+    fn dependency_updates(&self) -> DependencyUpdates {
+        DependencyUpdates::Reset
+    }
+
+    /// Runs on first demand.
+    fn initialize<'a>(&'a self, cx: &'a mut GeneralCx) -> ComponentFuture<'a, (Self::State, Self::Output)>;
+
+    /// Runs when an observed dependency changed under `Incremental`.
+    fn update<'a>(
+        &'a self,
+        cx: &'a mut GeneralCx,
+        state: &'a Self::State,
+        changes: &'a ChangeBatch,
+    ) -> ComponentFuture<'a, (Self::State, Self::Output)>;
+}
+
+/// Adapter that drives an [`AsyncGeneralComponent`] as a [`GeneralComponent`].
+pub struct AsyncAdapter<T>(T);
+
+impl<T> AsyncAdapter<T> {
+    /// Wraps an async component.
+    #[must_use]
+    pub fn new(component: T) -> Self {
+        Self(component)
+    }
+}
+
+impl<T: AsyncGeneralComponent> std::fmt::Debug for AsyncAdapter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AsyncAdapter")
+    }
+}
+
+impl<T: AsyncGeneralComponent> GeneralComponent for AsyncAdapter<T> {
+    type State = T::State;
+    type Output = T::Output;
+
+    const ID: reactive_core::ComponentId = T::ID;
+    const NAME: &'static str = T::NAME;
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = T::VIEWS;
+
+    fn dependency_updates(&self) -> DependencyUpdates {
+        self.0.dependency_updates()
+    }
+
+    fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
+        drive(self.0.initialize(cx))
+    }
+
+    fn update(
+        &self,
+        cx: &mut GeneralCx,
+        state: &Self::State,
+        changes: &ChangeBatch,
+    ) -> Result<(Self::State, Self::Output)> {
+        drive(self.0.update(cx, state, changes))
+    }
+}
