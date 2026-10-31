@@ -150,6 +150,7 @@ The pending items are tracked in
 
 ```sh
 cargo test --workspace          # unit, kernel, macro, and acceptance-gate tests
+cargo test --release --workspace # the same suite with optimizations on
 cargo run --release --example scaling -p reactive
 cargo run --release --example reduction -p reactive
 cargo run --release --example workloads -p reactive
