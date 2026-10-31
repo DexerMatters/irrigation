@@ -110,6 +110,33 @@ pub fn panic_engine(error: ComputeError) -> ! {
     std::panic::panic_any(EnginePanic(error))
 }
 
+/// Keeps engine payloads out of the process panic hook.
+///
+/// Engine failures travel as panic payloads so ordinary user code does not have
+/// to thread a `Result` through every expression. They are control flow, not
+/// crashes: a demand that is cancelled or suspends would otherwise print a
+/// backtrace. This installs a hook once that ignores [`EnginePanic`] payloads
+/// and delegates every other payload to the hook that was installed before.
+///
+/// The runtime calls this when it is created. A hook installed afterwards
+/// replaces this one, so a host that wants the filter must install it first or
+/// preserve it with [`std::panic::take_hook`].
+pub fn quiet_engine_panics() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !is_engine_payload(info.payload()) {
+                previous(info);
+            }
+        }));
+    });
+}
+
+fn is_engine_payload(payload: &(dyn Any + Send)) -> bool {
+    payload.downcast_ref::<EnginePanic>().is_some()
+}
+
 /// Runs `f`, converting an engine panic into an error value.
 ///
 /// Ordinary panics are reported as [`ComputeError::Panicked`].

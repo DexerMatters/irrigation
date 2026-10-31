@@ -38,6 +38,12 @@ pub enum ComputeError {
     },
     /// The demand that owned this work was cancelled.
     Cancelled,
+    /// The running task suspended because another task owns a node it needs.
+    ///
+    /// This is scheduling control flow, not a failure: the task is recorded as
+    /// waiting and is queued again when that node completes. It never escapes
+    /// a public demand.
+    Suspended,
     /// User code panicked; the panic did not escape the execution scope.
     Panicked {
         /// Panic message, if the payload was a string.
@@ -103,6 +109,12 @@ impl ComputeError {
         matches!(self, Self::Cancelled)
     }
 
+    /// Returns `true` when the running task yielded its worker.
+    #[must_use]
+    pub fn is_suspended(&self) -> bool {
+        matches!(self, Self::Suspended)
+    }
+
     /// Returns `true` when retrying the same demand cannot succeed without
     /// user action (duplicate definitions, unsupported constructs).
     #[must_use]
@@ -137,6 +149,7 @@ impl fmt::Display for ComputeError {
                 "unit `{unit}` is defined twice: by `{first}` and by `{second}`"
             ),
             Self::Cancelled => f.write_str("demand was cancelled"),
+            Self::Suspended => f.write_str("demand suspended"),
             Self::Panicked { message } => write!(f, "component panicked: {message}"),
             Self::DepthExceeded { limit } => {
                 write!(f, "execution depth limit {limit} exceeded")

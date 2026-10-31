@@ -87,7 +87,9 @@ impl Pool {
                 .spawn(move || {
                     IS_WORKER.with(|flag| flag.set(true));
                     while let Some(job) = worker_inner.pop() {
-                        job();
+                        // A panicking job loses its own result; it must not lose
+                        // the worker for every later demand.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
                     }
                 })
                 .expect("spawn reactive worker");
@@ -104,6 +106,11 @@ impl Pool {
     #[must_use]
     pub fn workers(&self) -> usize {
         self.workers
+    }
+
+    /// Queues `job` for a worker without waiting for it.
+    pub fn submit(&self, job: impl FnOnce() + Send + 'static) {
+        self.inner.push(Box::new(job));
     }
 
     /// Runs one queued job on the calling thread, if any is waiting.

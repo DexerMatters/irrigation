@@ -20,7 +20,6 @@ use std::any::Any;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
-use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 use reactive_core::error::{ComputeError, Result};
@@ -32,6 +31,7 @@ use reactive_core::ops::{RuntimeOps, catch_engine};
 use reactive_core::value::{Value, value_of};
 use reactive_core::descriptor::{UnitKey, UnitKind, ViewDescriptor};
 
+use crate::task::{self, TaskId, TaskMode, TaskStatus};
 use crate::state::{
     DefinitionRecord, Invocation, NodeKind, NodeRecord, NodeState, ProviderRef, Region, State,
     UnitSlot, invalidate,
@@ -98,8 +98,8 @@ pub struct Inner {
     self_ref: OnceLock<Weak<Inner>>,
     /// Workers that execute derived computation.
     pub pool: crate::scheduler::Pool,
-    /// Cancellation token of the demand currently running.
-    active_cancel: Mutex<Option<CancelToken>>,
+    /// The most recently started demand, targeted by `cancel`.
+    pub(crate) active_task: Mutex<Option<TaskId>>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -114,6 +114,7 @@ impl Inner {
     /// Creates the shared runtime.
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Arc<Self> {
+        reactive_core::ops::quiet_engine_panics();
         let pool = crate::scheduler::Pool::new(config.workers, config.stack_size);
         let inner = Arc::new(Self {
             config,
@@ -123,7 +124,7 @@ impl Inner {
             revision: AtomicU64::new(0),
             self_ref: OnceLock::new(),
             pool,
-            active_cancel: Mutex::new(None),
+            active_task: Mutex::new(None),
         });
         let _ = inner.self_ref.set(Arc::downgrade(&inner));
         inner
@@ -264,7 +265,7 @@ impl Inner {
 
     /// Reads a unit at the current revision and records the observation.
     pub fn read_unit(&self, node: NodeId) -> Result<Value> {
-        let me = thread::current().id();
+        let me = task::current_or_detached();
         loop {
             let outcome = {
                 let mut state = self.lock();
@@ -320,12 +321,12 @@ impl Inner {
         compute: &mut dyn FnMut() -> Result<Value>,
         eq: &dyn Fn(&Value, &Value) -> bool,
     ) -> Result<Value> {
-        let me = thread::current().id();
         if frame::current()
             .is_some_and(|frame| frame.cancel().is_cancelled())
         {
             return Err(ComputeError::Cancelled);
         }
+        let me = task::current_or_detached();
         loop {
             let action = {
                 let mut state = self.lock();
@@ -342,7 +343,18 @@ impl Inner {
                 } else if record.verified_at == revision && record.value.is_some() {
                     Action::Return(record.value.clone().expect("checked"))
                 } else if record.is_running() {
-                    Action::Wait
+                    match record.state {
+                        NodeState::Running { owner, .. } if owner == me => {
+                            if task::active_contains(node) {
+                                Action::Fail(ComputeError::Cycle {
+                                    path: vec![format!("re-entrant demand of {node:?}")],
+                                })
+                            } else {
+                                Action::Resume
+                            }
+                        }
+                        _ => Action::Wait,
+                    }
                 } else if record.suspect_at <= record.verified_at && record.value.is_some() {
                     record.verified_at = revision;
                     Action::Return(record.value.clone().expect("checked"))
@@ -363,7 +375,7 @@ impl Inner {
                 }
                 Action::Fail(error) => return Err(error),
                 Action::Wait => self.wait_for(node, me)?,
-                Action::Claim => break,
+                Action::Claim | Action::Resume => break,
             }
         }
 
@@ -400,7 +412,10 @@ impl Inner {
         // closure; their state and output commit atomically.
         let general_index = self.lock().node(node).general;
         if let Some(index) = general_index {
-            return self.run_general(node, index, revision);
+            task::active_push(node);
+            let result = self.run_general(node, index, revision);
+            task::active_pop(node);
+            return result;
         }
 
         // Execute with a fresh recorder.
@@ -428,11 +443,13 @@ impl Inner {
             depth + 1,
             cancel,
         ));
+        task::active_push(node);
         let guard = FrameGuard::push(Arc::clone(&frame));
         let result = catch_engine(compute);
         let definitions: Vec<DefinitionDraft> = frame.take_staged();
         let deps = frame.take_deps();
         drop(guard);
+        task::active_pop(node);
 
         if frame::current().is_some_and(|frame| frame.cancel().is_cancelled()) {
             return self.fail(node, ComputeError::Cancelled, revision);
@@ -444,7 +461,14 @@ impl Inner {
                 frame::record_dep(Dep { node, version });
                 Ok(committed)
             }
-            Ok(Err(error)) | Err(error) => self.fail(node, error, revision),
+            Ok(Err(error)) | Err(error) => {
+                // A suspension is scheduling, not failure: the claim is kept
+                // and the task is queued again when the awaited node completes.
+                if error.is_suspended() {
+                    return Err(error);
+                }
+                self.fail(node, error, revision)
+            }
         }
     }
 
@@ -537,7 +561,12 @@ impl Inner {
                 frame::record_dep(Dep { node, version });
                 Ok(committed)
             }
-            Ok(Err(error)) | Err(error) => self.fail(node, error, revision),
+            Ok(Err(error)) | Err(error) => {
+                if error.is_suspended() {
+                    return Err(error);
+                }
+                self.fail(node, error, revision)
+            }
         }
     }
 
@@ -650,8 +679,10 @@ impl Inner {
         if !changed_nodes.is_empty() {
             invalidate(&mut state, changed_nodes, revision);
         }
+        let queued = Self::wake_waiters(&mut state, node);
         drop(state);
         self.wake.notify_all();
+        self.enqueue(queued);
         Ok(value)
     }
 
@@ -724,8 +755,10 @@ impl Inner {
                 record.failed_at = revision;
             }
         }
+        let queued = Self::wake_waiters(&mut state, node);
         drop(state);
         self.wake.notify_all();
+        self.enqueue(queued);
         Err(error)
     }
 
@@ -991,13 +1024,14 @@ impl Inner {
         Ok(())
     }
 
-    fn wait_for(&self, node: NodeId, me: ThreadId) -> Result<()> {
+    fn wait_for(&self, node: NodeId, me: TaskId) -> Result<()> {
         let mut state = self.lock();
         let owner = match state.node(node).state {
             NodeState::Running { owner, .. } => owner,
             _ => return Ok(()),
         };
-        if owner == me {
+        // A task that is already executing on this stack cannot wait for itself.
+        if task::stack_contains(owner) || owner == me {
             return Err(ComputeError::Cycle {
                 path: vec![format!("re-entrant demand of {node:?}")],
             });
@@ -1007,7 +1041,21 @@ impl Inner {
                 path: vec![format!("{me:?} -> {node:?} -> {owner:?}")],
             });
         }
+        if frame::current().is_some_and(|frame| frame.cancel().is_cancelled()) {
+            return Err(ComputeError::Cancelled);
+        }
         state.wait_graph.insert(me, node);
+        if state.tasks.get(&me).map(|slot| slot.mode) == Some(TaskMode::Pooled) {
+            // Yield the worker: record the wait and let the attempt unwind.
+            let held = task::active_snapshot();
+            if let Some(slot) = state.tasks.get_mut(&me) {
+                slot.status = TaskStatus::Waiting(node);
+                slot.held = held;
+            }
+            state.node_mut(node).waiters.push(me);
+            return Err(ComputeError::Suspended);
+        }
+        // Inline tasks have no worker to yield; park the calling thread.
         loop {
             let running = match state.node(node).state {
                 NodeState::Running { owner: current, .. } => Some(current),
@@ -1015,8 +1063,6 @@ impl Inner {
             };
             match running {
                 Some(current) if current == owner => {
-                    // Help with queued demand before parking, so a blocked
-                    // worker is not idle while work is available.
                     drop(state);
                     let helped = self.pool.try_run_one();
                     state = self.lock();
@@ -1036,7 +1082,40 @@ impl Inner {
         Ok(())
     }
 
-    fn would_cycle(&self, state: &State, from: ThreadId, target: ThreadId) -> bool {
+    /// Queues the tasks suspended on `node`. Called under the state lock; the
+    /// caller enqueues the returned tasks once the lock is released.
+    fn wake_waiters(state: &mut State, node: NodeId) -> Vec<TaskId> {
+        let waiters = std::mem::take(&mut state.node_mut(node).waiters);
+        let mut queued = Vec::new();
+        for waiter in waiters {
+            let pooled = match state.tasks.get_mut(&waiter) {
+                Some(slot) if slot.status == TaskStatus::Waiting(node) => {
+                    slot.status = TaskStatus::Queued;
+                    state.wait_graph.remove(&waiter);
+                    slot.mode == TaskMode::Pooled
+                }
+                _ => false,
+            };
+            if pooled {
+                queued.push(waiter);
+            }
+        }
+        queued
+    }
+
+    /// Releases claims a task still owns after its last attempt.
+    pub(crate) fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Vec<TaskId> {
+        let mut queued = Vec::new();
+        for &node in held {
+            if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {
+                state.node_mut(node).state = NodeState::Vacant;
+                queued.extend(Self::wake_waiters(state, node));
+            }
+        }
+        queued
+    }
+
+    fn would_cycle(&self, state: &State, from: TaskId, target: TaskId) -> bool {
         let mut current = from;
         let mut visited = HashSet::new();
         while visited.insert(current) {
@@ -1130,10 +1209,6 @@ impl Inner {
 
     /// Demands the installed root at the current revision.
     pub fn demand_root(&self, cancel: &CancelToken) -> Result<()> {
-        {
-            let mut state = self.lock();
-            state.pending_conflicts.clear();
-        }
         let revision = self.current_revision();
         let root = {
             let state = self.lock();
@@ -1225,24 +1300,44 @@ impl Inner {
         self.pool.workers()
     }
 
-    /// Marks the running demand as cancelled, if there is one.
+    /// Marks the most recently started demand as cancelled, if there is one.
     pub fn cancel_active(&self) {
-        let active = self
-            .active_cancel
+        let task = *self
+            .active_task
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        if let Some(token) = active.as_ref() {
-            token.cancel();
+        let Some(task) = task else {
+            return;
+        };
+        let queued = {
+            let mut state = self.lock();
+            let Some(slot) = state.tasks.get_mut(&task) else {
+                return;
+            };
+            slot.cancel.cancel();
+            let wake = matches!(slot.status, TaskStatus::Waiting(_));
+            let pooled = slot.mode == TaskMode::Pooled;
+            if wake {
+                slot.status = TaskStatus::Queued;
+            }
+            if wake {
+                state.wait_graph.remove(&task);
+            }
+            (wake && pooled).then_some(task)
+        };
+        self.wake.notify_all();
+        if let Some(task) = queued {
+            self.enqueue(vec![task]);
         }
     }
 
-    /// Installs the token of the demand about to run.
-    pub(crate) fn set_active_cancel(&self, token: Option<CancelToken>) {
+    /// Records the demand that a later [`Inner::cancel_active`] targets.
+    pub(crate) fn set_active_task(&self, task: Option<TaskId>) {
         let mut active = self
-            .active_cancel
+            .active_task
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        *active = token;
+        *active = task;
     }
 }
 
@@ -1290,6 +1385,8 @@ enum Action {
     Fail(ComputeError),
     Wait,
     Claim,
+    /// The task already owns this node and still has to finish it.
+    Resume,
 }
 
 impl RuntimeOps for Inner {

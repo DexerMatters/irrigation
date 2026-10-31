@@ -242,6 +242,8 @@ impl Edit {
             return Ok(false);
         }
         state.revision = revision;
+        // Conflicts belong to the revision that produced them.
+        state.pending_conflicts.clear();
         self.inner.publish_revision(revision);
         state.stats.revisions.fetch_add(1, Ordering::Relaxed);
         invalidate(&mut state, changed, revision);

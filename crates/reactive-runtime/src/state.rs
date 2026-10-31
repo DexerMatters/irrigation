@@ -7,9 +7,9 @@
 
 use std::any::Any;
 use std::sync::Arc;
-use std::thread::ThreadId;
 
 use reactive_core::error::ComputeError;
+use reactive_core::frame::CancelToken;
 use reactive_core::frame::Dep;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{
@@ -19,15 +19,17 @@ use reactive_core::key::KeyTable;
 use reactive_core::value::Value;
 use reactive_core::descriptor::{UnitKey, ViewDescriptor};
 
+use crate::task::{Task, TaskId, TaskMode, TaskStatus};
+
 /// Execution state of one memoized node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeState {
     /// No value has been produced yet.
     Vacant,
-    /// A worker is computing the node.
+    /// A task is computing the node.
     Running {
-        /// The thread that claimed the node.
-        owner: ThreadId,
+        /// The task that claimed the node.
+        owner: TaskId,
         /// Execution generation, used to reject stale commits.
         generation: u64,
     },
@@ -91,6 +93,8 @@ pub struct NodeRecord {
     pub general: Option<usize>,
     /// Retained state of a custom component, committed with its output.
     pub general_state: Option<crate::general::ErasedState>,
+    /// Tasks suspended on this node, to be queued when it completes.
+    pub waiters: Vec<TaskId>,
 }
 
 impl NodeRecord {
@@ -115,6 +119,7 @@ impl NodeRecord {
             definitions: Vec::new(),
             general: None,
             general_state: None,
+            waiters: Vec::new(),
         }
     }
 
@@ -161,6 +166,33 @@ pub struct DefinitionRecord {
     pub unit: UnitKey,
     /// The defining node.
     pub provider: NodeId,
+}
+
+/// One in-flight demand.
+pub struct TaskSlot {
+    /// The demand body, taken out while an attempt is executing.
+    pub body: Option<Box<dyn Task>>,
+    /// Scheduling state.
+    pub status: TaskStatus,
+    /// Whether the task runs on a worker or on its calling thread.
+    pub mode: TaskMode,
+    /// Whether the task holds a read permit on the revision gate.
+    pub gate: bool,
+    /// The task's cancellation token.
+    pub cancel: CancelToken,
+    /// Nodes the task claimed and still owns after suspending.
+    pub held: Vec<NodeId>,
+}
+
+impl std::fmt::Debug for TaskSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskSlot")
+            .field("status", &self.status)
+            .field("mode", &self.mode)
+            .field("gate", &self.gate)
+            .field("held", &self.held)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Two providers that claimed one unit during one revision.
@@ -380,8 +412,12 @@ pub struct State {
     pub views: FxHashMap<ViewId, &'static ViewDescriptor>,
     /// Current revision.
     pub revision: Revision,
-    /// Threads waiting on nodes.
-    pub wait_graph: FxHashMap<ThreadId, NodeId>,
+    /// Tasks waiting on nodes, for cycle detection.
+    pub wait_graph: FxHashMap<TaskId, NodeId>,
+    /// In-flight demand tasks.
+    pub tasks: FxHashMap<TaskId, TaskSlot>,
+    /// Next task identity.
+    pub next_task: TaskId,
     /// Active subscriptions.
     pub subscriptions: Vec<SubscriptionRecord>,
     /// Next subscription id.
@@ -428,6 +464,30 @@ impl State {
     pub fn alloc_entity(&mut self) -> u64 {
         self.next_entity += 1;
         self.next_entity
+    }
+
+    /// Registers a demand task and returns its identity.
+    pub fn alloc_task(
+        &mut self,
+        body: Option<Box<dyn Task>>,
+        mode: TaskMode,
+        gate: bool,
+        cancel: CancelToken,
+    ) -> TaskId {
+        self.next_task += 1;
+        let id = self.next_task;
+        self.tasks.insert(
+            id,
+            TaskSlot {
+                body,
+                status: TaskStatus::Queued,
+                mode,
+                gate,
+                cancel,
+                held: Vec::new(),
+            },
+        );
+        id
     }
 
     /// Adds a reverse dependency edge.

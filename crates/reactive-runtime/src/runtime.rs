@@ -140,40 +140,35 @@ impl Runtime {
     ///
     /// Fails when no general component is installed or when it fails.
     pub fn read_outputs_general<T: crate::general::GeneralComponent>(&self) -> Result<T::Output> {
-        let pool_owner = Arc::clone(&self.inner);
+        let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
-        pool_owner.pool.run(move || {
-            let cancel = CancelToken::default();
-            task.set_active_cancel(Some(cancel.clone()));
-            let result = {
-                let _gate = task.gate.read();
-                task.demand_root(&cancel).and_then(|()| {
-                    let node = {
-                        let state = task.lock();
-                        state.general_root
-                    };
-                    let Some(node) = node else {
-                        return Err(ComputeError::internal("no general component installed"));
-                    };
-                    let value = {
-                        let state = task.lock();
-                        state.node(node).value.clone()
-                    };
-                    let Some(value) = value else {
-                        return Err(ComputeError::internal(
-                            "general component produced no output",
-                        ));
-                    };
-                    value
-                        .downcast_ref::<T::Output>()
-                        .cloned()
-                        .ok_or(ComputeError::TypeMismatch {
-                            expected: std::any::type_name::<T::Output>(),
-                        })
-                })
-            };
-            task.set_active_cancel(None);
-            result
+        let cancel = CancelToken::default();
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
+            task.demand_root(&token).and_then(|()| {
+                let node = {
+                    let state = task.lock();
+                    state.general_root
+                };
+                let Some(node) = node else {
+                    return Err(ComputeError::internal("no general component installed"));
+                };
+                let value = {
+                    let state = task.lock();
+                    state.node(node).value.clone()
+                };
+                let Some(value) = value else {
+                    return Err(ComputeError::internal(
+                        "general component produced no output",
+                    ));
+                };
+                value
+                    .downcast_ref::<T::Output>()
+                    .cloned()
+                    .ok_or(ComputeError::TypeMismatch {
+                        expected: std::any::type_name::<T::Output>(),
+                    })
+            })
         })
     }
 
@@ -183,12 +178,11 @@ impl Runtime {
     /// install a component.
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
-        let pool_owner = Arc::clone(&self.inner);
+        let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
-        pool_owner.pool.run(move || {
-            let _gate = task.gate.read();
-            task.capture_snapshot()
-        })
+        inner
+            .demand(CancelToken::default(), move || Ok(task.capture_snapshot()))
+            .expect("snapshot demand cannot fail")
     }
 
     /// Demands the installed root and returns an immutable snapshot.
@@ -210,17 +204,11 @@ impl Runtime {
     /// Returns [`ComputeError::Cancelled`] when the token was cancelled before
     /// or during the demand.
     pub fn read_with_cancel(&self, cancel: CancelToken) -> Result<Snapshot> {
-        let pool_owner = Arc::clone(&self.inner);
+        let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
-        pool_owner.pool.run(move || {
-            task.set_active_cancel(Some(cancel.clone()));
-            let result = {
-                let _gate = task.gate.read();
-                task.demand_root(&cancel)
-                    .map(|()| task.capture_snapshot())
-            };
-            task.set_active_cancel(None);
-            result
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
+            task.demand_root(&token).map(|()| task.capture_snapshot())
         })
     }
 
@@ -250,47 +238,42 @@ impl Runtime {
         &self,
         cancel: CancelToken,
     ) -> Result<R::Output> {
-        let pool_owner = Arc::clone(&self.inner);
+        let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
-        pool_owner.pool.run(move || {
-            task.set_active_cancel(Some(cancel.clone()));
-            let result = {
-                let _gate = task.gate.read();
-                task.demand_root(&cancel).and_then(|()| {
-                    let root = {
-                        let state = task.lock();
-                        state.root.clone()
-                    };
-                    let Some(root) = root else {
-                        return Err(ComputeError::internal("no root component installed"));
-                    };
-                    let parts: Vec<Value> = {
-                        let state = task.lock();
-                        root.outputs
-                            .iter()
-                            .map(|node| {
-                                state
-                                    .node(*node)
-                                    .value
-                                    .clone()
-                                    .expect("root output was demanded")
-                            })
-                            .collect()
-                    };
-                    catch_engine(|| {
-                        (root.reconstruct)(&parts)
-                            .downcast_ref::<R::Output>()
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                reactive_core::ops::panic_engine(ComputeError::internal(
-                                    "root output type does not match the installed root",
-                                ))
-                            })
-                    })
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
+            task.demand_root(&token).and_then(|()| {
+                let root = {
+                    let state = task.lock();
+                    state.root.clone()
+                };
+                let Some(root) = root else {
+                    return Err(ComputeError::internal("no root component installed"));
+                };
+                let parts: Vec<Value> = {
+                    let state = task.lock();
+                    root.outputs
+                        .iter()
+                        .map(|node| {
+                            state
+                                .node(*node)
+                                .value
+                                .clone()
+                                .expect("root output was demanded")
+                        })
+                        .collect()
+                };
+                catch_engine(|| {
+                    (root.reconstruct)(&parts)
+                        .downcast_ref::<R::Output>()
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(ComputeError::internal(
+                                "root output type does not match the installed root",
+                            ))
+                        })
                 })
-            };
-            task.set_active_cancel(None);
-            result
+            })
         })
     }
 
@@ -399,12 +382,12 @@ impl Runtime {
     ///
     /// Fails when called outside a demand context or when the component fails.
     pub fn call<S: ComponentSpec>(&self, args: S::Args) -> Result<S::Output> {
-        let pool_owner = Arc::clone(&self.inner);
+        let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
-        pool_owner.pool.run(move || {
-            let _gate = task.gate.read();
+        let cancel = CancelToken::default();
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
             let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = task.arc();
-            let cancel = CancelToken::default();
             // Frames are thread-local execution state; see the note in `eval`.
             #[allow(clippy::arc_with_non_send_sync)]
             let frame = Arc::new(reactive_core::frame::Frame::scoped(
@@ -412,10 +395,10 @@ impl Runtime {
                 reactive_core::ids::NodeId::NONE,
                 reactive_core::ids::ScopeId::ROOT,
                 0,
-                cancel,
+                token.clone(),
             ));
             let _guard = reactive_core::frame::FrameGuard::push(frame);
-            catch_engine(|| crate::component::call_component::<S>(args))
+            catch_engine(|| crate::component::call_component::<S>(args.clone()))
         })
     }
 

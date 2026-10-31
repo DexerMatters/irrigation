@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod component;
+pub mod demand;
 pub mod edit;
 pub mod field;
 pub mod gate;
@@ -27,6 +28,7 @@ pub mod runtime;
 pub mod scheduler;
 pub mod snapshot;
 pub mod state;
+pub mod task;
 
 pub use component::{ComponentSpec, RootComponent, call_component};
 pub use edit::Edit;
