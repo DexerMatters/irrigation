@@ -26,7 +26,7 @@ static READER_STARTED: AtomicBool = AtomicBool::new(false);
 static PAIR_STARTED: AtomicUsize = AtomicUsize::new(0);
 
 mod probe {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     use super::{FAST_DONE, READER_STARTED, SLOW_STARTED};
@@ -322,4 +322,21 @@ fn a_cycle_between_two_tasks_is_reported_not_hung() {
             "right demand: {second}"
         );
     });
+}
+
+#[test]
+fn a_workerless_runtime_runs_demands_inline() {
+    let _serial = serial();
+    reset_probes();
+    FAST_DONE.store(true, Ordering::Release);
+    let runtime = Runtime::with_config(RuntimeConfig {
+        workers: 0,
+        stack_size: 16 * 1024 * 1024,
+        ..RuntimeConfig::default()
+    });
+    let value = runtime
+        .call::<yielding::__FastOnceSpec>(yielding::__FastOnceArgs { tag: 21 })
+        .expect("inline demand");
+    assert_eq!(value, 2);
+    assert_eq!(runtime.stats().tasks, TaskCounts::default());
 }

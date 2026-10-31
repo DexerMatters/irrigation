@@ -178,6 +178,9 @@ cases exactly as they were.
 Progress accounting is the task status table: `RuntimeStats::tasks` counts
 queued, running, and waiting tasks. A demand completes only when its task has
 left the table, so "every worker is idle" can never be mistaken for completion.
+Dynamic expansion permits are unnecessary here: demand expands only through
+nested inline evaluation, which cannot outlive the attempt that started it, and
+through parallel operator chunks, which are joined before the attempt returns.
 
 Two details are easy to get wrong:
 

@@ -20,6 +20,7 @@ cargo test -p reactive --test suspension       # suspended demand
 | Cancellation reaches a suspended task and it publishes nothing | `a_suspended_demand_can_be_cancelled` |
 | Many concurrent demands share one invocation across suspends and wake-ups, with identical results | `concurrent_demands_share_an_invocation_across_suspensions` |
 | Progress accounting tracks a running demand and drains to zero when it completes | `progress_accounting_shows_and_drains_in_flight_demands` |
+| A workerless runtime runs demands inline without deadlock | `a_workerless_runtime_runs_demands_inline` |
 | A writer waits for demands that hold read permits | `gate::tests::a_writer_waits_for_every_reader` |
 | A read permit can be released by a different thread | `gate::tests::a_permit_can_be_released_by_another_thread` |
 

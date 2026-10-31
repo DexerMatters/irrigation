@@ -6,7 +6,7 @@
 //! ```text
 //! demand(node, revision):
 //!     if verified at revision: return cached value
-//!     if another worker owns it: wait for it (cycle-checked)
+//!     if another task owns it: suspend (cycle-checked)
 //!     if not suspect at revision: mark verified and return cached value
 //!     claim single-flight ownership
 //!     if a trace exists: validate observations in order
@@ -67,7 +67,10 @@ pub struct RuntimeConfig {
     pub stack_size: usize,
     /// Maximum nested execution depth.
     pub max_depth: u32,
-    /// How long a waiter sleeps before re-checking a node.
+    /// How long an inline wait parks before re-checking a node.
+    ///
+    /// Pooled tasks do not poll: they suspend and are queued when the node
+    /// completes. Only nested and workerless demands use this slice.
     pub wait_slice: Duration,
 }
 

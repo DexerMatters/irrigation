@@ -2221,7 +2221,8 @@ fn a_provider_handover_updates_its_observer() {
         .expect("edit");
     let _ = runtime.read_outputs::<handover::Root>().expect("initial demand");
 
-    let seen: Arc<Mutex<Vec<Vec<(u32, u32)>>>> = Arc::new(Mutex::new(Vec::new()));
+    type Observed = Vec<Vec<(u32, u32)>>;
+    let seen: Arc<Mutex<Observed>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     let subscription = runtime
         .observe::<HandoverSlot>(move |snapshot| {
