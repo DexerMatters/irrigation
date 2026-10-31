@@ -1,5 +1,11 @@
 # Implementing routing generations
 
+> **Status (round 35): implemented.** Unreachable-subtree retirement plus
+> end-of-revision conflict resolution deliver the routing-generation behaviour:
+> `provider_handover_survives_demand_order` and
+> `a_definition_inside_an_untaken_branch_is_retracted` pass alongside the static
+> and dynamic duplicate gates. The notes below record how it was reached.
+>
 > **Status (round 33): step 1 is implemented.** `Inner::commit` retires
 > observations that the new trace no longer contains, releasing their
 > definitions and clearing the node. View unit nodes are never cleared. The gate

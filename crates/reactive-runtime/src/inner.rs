@@ -819,10 +819,14 @@ impl Inner {
             let owner = owner_key(&draft.unit);
             if let Some(existing) = region.owners.get(&owner) {
                 if existing.node != provider {
-                    return Err(ComputeError::DuplicateDefinition {
-                        unit: format!("{}[{:?}]", descriptor.name, draft.unit),
-                        first: existing.label.to_string(),
-                        second: draft.label.to_string(),
+                    // Resolve at the end of the revision: if the earlier owner
+                    // is still reachable then both providers are live and the
+                    // revision fails; if it retired during the revision, this
+                    // was a handover.
+                    state.pending_conflicts.push(crate::state::PendingConflict {
+                        unit: draft.unit.clone(),
+                        first: existing.node,
+                        second: provider,
                     });
                 }
             }
@@ -1049,8 +1053,80 @@ impl Inner {
         self.lock().alloc_entity()
     }
 
+    /// Marks nodes reachable from roots, subscriptions, and View units.
+    fn reachable_nodes(state: &State) -> std::collections::HashSet<NodeId> {
+        let mut reachable = std::collections::HashSet::new();
+        let mut stack: Vec<NodeId> = Vec::new();
+        if let Some(root) = &state.root {
+            stack.push(root.body);
+            stack.extend(root.outputs.iter().copied());
+        }
+        if let Some(general) = state.general_root {
+            stack.push(general);
+        }
+        for region in state.regions.values() {
+            stack.push(region.content_node);
+            for (_, slot) in region.units.iter() {
+                stack.push(slot.node);
+            }
+        }
+        for (_, node) in state.units.iter() {
+            stack.push(*node);
+        }
+        while let Some(node) = stack.pop() {
+            if !reachable.insert(node) {
+                continue;
+            }
+            for dep in &state.node(node).trace {
+                stack.push(dep.node);
+            }
+        }
+        reachable
+    }
+
+    /// Fails the revision if two reachable providers still claim one unit.
+    fn resolve_conflicts(&self, revision: Revision) -> Result<()> {
+        let mut state = self.lock();
+        let conflicts = std::mem::take(&mut state.pending_conflicts);
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+        let reachable = Self::reachable_nodes(&state);
+        for conflict in conflicts {
+            if !reachable.contains(&conflict.first) {
+                continue;
+            }
+            let unit = format!("{:?}", conflict.unit);
+            let label = state.node(conflict.second).label.to_string();
+            let view = conflict.unit.view;
+            if let Some(mut region) = state.regions.remove(&view) {
+                let mut changed = Vec::new();
+                let _ = self.retract_unit(
+                    &mut state,
+                    &mut region,
+                    conflict.second,
+                    &conflict.unit,
+                    revision,
+                    &mut changed,
+                );
+                state.regions.insert(view, region);
+            }
+            return Err(ComputeError::DuplicateDefinition {
+                unit,
+                first: label.clone(),
+                second: label,
+            });
+        }
+        Ok(())
+    }
+
     /// Demands the installed root at the current revision.
     pub fn demand_root(&self, cancel: &CancelToken) -> Result<()> {
+        {
+            let mut state = self.lock();
+            state.pending_conflicts.clear();
+        }
+        let revision = self.current_revision();
         let root = {
             let state = self.lock();
             state.root.clone()
@@ -1082,7 +1158,8 @@ impl Inner {
                 ))
             };
             let eq = |_: &Value, _: &Value| false;
-            return self.eval(general_node, &mut compute, &eq).map(|_| ());
+            self.eval(general_node, &mut compute, &eq)?;
+            return self.resolve_conflicts(revision);
         };
         let runtime: Arc<dyn RuntimeOps> = self.arc();
         // Frames are thread-local execution state; see the note in `eval`.
@@ -1116,7 +1193,8 @@ impl Inner {
                     &|left, right| projection_eq(index, left, right),
                 );
             }
-        })
+        })?;
+        self.resolve_conflicts(revision)
     }
 
     /// Captures every registered View's content at the current revision.

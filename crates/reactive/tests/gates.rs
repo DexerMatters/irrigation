@@ -2035,3 +2035,66 @@ fn a_definition_inside_an_untaken_branch_is_retracted() {
         "the branch restages its definition when reachable again"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Provider handover resolved at the end of the revision
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct HandoverFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct HandoverSlot(Map<u32, u32>);
+
+#[reactive]
+mod handover {
+    use super::{HandoverFlag, HandoverSlot};
+
+    #[component]
+    pub fn provider_a(flag: &HandoverFlag) -> HandoverSlot {
+        if flag.on() {
+            HandoverSlot::from([])
+        } else {
+            HandoverSlot::from([(1u32, 10u32)])
+        }
+    }
+
+    #[component]
+    pub fn provider_b(flag: &HandoverFlag) -> HandoverSlot {
+        if flag.on() {
+            HandoverSlot::from([(1u32, 20u32)])
+        } else {
+            HandoverSlot::from([])
+        }
+    }
+
+    #[component]
+    pub fn root(flag: &HandoverFlag) -> u32 {
+        // The incoming provider is demanded first.
+        let _ = provider_b(flag);
+        let _ = provider_a(flag);
+        0
+    }
+}
+
+#[test]
+fn provider_handover_survives_demand_order() {
+    let runtime = Runtime::new();
+    runtime.install(handover::Root).expect("install");
+    for (on, expected) in [(false, 10u32), (true, 20), (false, 10), (true, 20)] {
+        runtime
+            .edit(|edit| {
+                edit.view::<HandoverFlag>().set_on(on);
+            })
+            .expect("edit");
+        let _ = runtime.read_outputs::<handover::Root>().expect("outputs");
+        let snapshot = runtime.read().expect("snapshot");
+        assert_eq!(
+            snapshot.view::<HandoverSlot>().field0(),
+            vec![(1, expected)],
+            "on={on}"
+        );
+    }
+}

@@ -163,6 +163,17 @@ pub struct DefinitionRecord {
     pub provider: NodeId,
 }
 
+/// Two providers that claimed one unit during one revision.
+#[derive(Clone, Debug)]
+pub struct PendingConflict {
+    /// The contested unit.
+    pub unit: UnitKey,
+    /// The owner that held the unit when the second claim arrived.
+    pub first: NodeId,
+    /// The provider that claimed it later.
+    pub second: NodeId,
+}
+
 /// A unit installed in a derived View region.
 #[derive(Debug)]
 pub struct UnitSlot {
@@ -385,6 +396,8 @@ pub struct State {
     pub(crate) generals: Vec<std::sync::Arc<dyn crate::general::ErasedGeneral>>,
     /// The installed `GeneralComponent` root, if any.
     pub general_root: Option<NodeId>,
+    /// Conflicting definitions awaiting end-of-revision resolution.
+    pub pending_conflicts: Vec<PendingConflict>,
     /// Diagnostics counters.
     pub stats: Stats,
 }

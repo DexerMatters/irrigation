@@ -8,7 +8,7 @@
 | §5 View decomposition (scalar, list, set, map, graph, tree) | implemented | per-family gates |
 | §5.5 joins | implemented as an incremental equi-join on `GeneralComponent` | combine-count gate |
 | §5.3 balanced reductions | implemented (`AggSeq`, `Reduced<R>`) | logarithmic combine counts |
-| §6 identity, unique definitions, routing | partial: unique definitions and atomic definition commit are implemented; routing *generations* (order-independent handover and branch-scoped retraction) are pending (deviations 7–8) | duplicate-definition gates, supported-composition gate |
+| §6 identity, unique definitions, routing | implemented: unique definitions, atomic definition commit, unreachable-subtree retirement, and end-of-revision conflict resolution make handover order-independent | duplicate-definition, handover and branch-retraction gates |
 | §7 component compilation and lowering | implemented for the documented subset | end-to-end and macro tests |
 | §8 revisions, validation, invalidation, publication | implemented | kernel tests, cutoff gates |
 | §8.5–§8.7 concurrency, progress, failure, cancellation | partial: pool, single-flight, wait graph, cancellation, panic isolation, contention; continuation suspension pending | concurrency gates |
@@ -23,9 +23,9 @@
 
 ## Remaining structural gap
 
-Two structural items remain: continuation-based suspension (below) and
-order-independent provider handover (deviation 7). Branch-scoped definitions
-(deviation 8) are fixed by unreachable-subtree retirement.
+One structural item remains: continuation-based suspension (below). Both
+routing deviations (7 and 8) are fixed — handover by end-of-revision conflict
+resolution, branch-scoped definitions by unreachable-subtree retirement.
 
 Continuation-based suspension: a task that waits for another task blocks its
 worker instead of yielding it. The migration design is in
@@ -161,16 +161,15 @@ implementation does not claim to eliminate.
    large values.
 6. **Effects are not supported in computations.** They are rejected for known
    macros and otherwise cached with their node, which is the documented rule.
-7. **Provider handover is ordered, not generation-based.** When one provider
-   stops defining a unit and another starts defining it in the same revision,
-   the old provider must commit its retraction before the new provider's
-   definition is applied. The composition in the tests demands the old provider
-   first, so this holds, but the guarantee is demand-order dependent. The
-   plan's routing-generation design exists to remove that dependency; until it
-   is implemented, a handover that is demanded in the opposite order is
-   diagnosed as a duplicate definition rather than silently resolved by timing.
-   That failure mode is conservative: it reports a conflict instead of
-   publishing a wrong value.
+7. ~~Provider handover is ordered, not generation-based.~~ **Fixed.** A
+   conflicting definition is installed tentatively and recorded; at the end of
+   the revision the runtime resolves it by reachability: if the earlier owner is
+   still reachable, both providers are live and the revision fails with
+   `DuplicateDefinition`; if the earlier owner retired during the revision, the
+   handover stands. The gate
+   `provider_handover_survives_demand_order` switches ownership in both
+   directions while the incoming provider is demanded first, and the static and
+   dynamic collision gates still reject genuine conflicts.
 8. ~~Definitions staged inside an untaken branch are not retracted.~~ **Fixed.**
    `Inner::commit` now retires observations that the new trace no longer
    contains: an unreachable node releases its definitions and is cleared, so it
