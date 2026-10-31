@@ -14,8 +14,10 @@ use std::sync::mpsc::sync_channel;
 
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::CancelToken;
+use reactive_core::ids::NodeId;
 
 use crate::inner::Inner;
+use crate::state::{NodeState, State};
 use crate::task::{self, Attempt, Task, TaskId, TaskMode, TaskStatus};
 
 impl Inner {
@@ -82,7 +84,7 @@ impl Inner {
     }
 
     /// Queues one task for a worker.
-    pub(crate) fn submit_task(&self, id: TaskId) {
+    fn submit_task(&self, id: TaskId) {
         let inner = self.arc();
         self.pool.submit(move || inner.run_task(id));
     }
@@ -156,7 +158,7 @@ impl Inner {
             state.wait_graph.remove(&id);
             let held = std::mem::take(&mut slot.held);
             let queued = Self::release_claims(&mut state, id, &held);
-            (queued, slot.gate, slot.body.take())
+            (queued, slot.gate, slot.body)
         };
         self.clear_active_task(id);
         self.wake.notify_all();
@@ -165,6 +167,18 @@ impl Inner {
             self.gate.exit_read();
         }
         body
+    }
+
+    /// Releases claims a task still owns after its last attempt.
+    fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Vec<TaskId> {
+        let mut queued = Vec::new();
+        for &node in held {
+            if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {
+                state.node_mut(node).state = NodeState::Vacant;
+                queued.extend(Self::wake_waiters(state, node));
+            }
+        }
+        queued
     }
 
     fn clear_active_task(&self, id: TaskId) {

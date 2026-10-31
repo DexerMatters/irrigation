@@ -1089,7 +1089,7 @@ impl Inner {
 
     /// Queues the tasks suspended on `node`. Called under the state lock; the
     /// caller enqueues the returned tasks once the lock is released.
-    fn wake_waiters(state: &mut State, node: NodeId) -> Vec<TaskId> {
+    pub(crate) fn wake_waiters(state: &mut State, node: NodeId) -> Vec<TaskId> {
         let waiters = std::mem::take(&mut state.node_mut(node).waiters);
         let mut queued = Vec::new();
         for waiter in waiters {
@@ -1103,18 +1103,6 @@ impl Inner {
             };
             if pooled {
                 queued.push(waiter);
-            }
-        }
-        queued
-    }
-
-    /// Releases claims a task still owns after its last attempt.
-    pub(crate) fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Vec<TaskId> {
-        let mut queued = Vec::new();
-        for &node in held {
-            if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {
-                state.node_mut(node).state = NodeState::Vacant;
-                queued.extend(Self::wake_waiters(state, node));
             }
         }
         queued
