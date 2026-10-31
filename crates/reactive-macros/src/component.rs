@@ -256,8 +256,8 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
             #impl_fn
 
             #[derive(Clone, PartialEq, Hash)]
-            struct #args_ident {
-                #( #param_names: #param_types, )*
+            #vis struct #args_ident {
+                #( #vis #param_names: #param_types, )*
             }
 
             #vis fn #name(#(#param_tokens),*) #return_type {
@@ -266,7 +266,7 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
                 })
             }
 
-            struct #spec_ident;
+            #vis struct #spec_ident;
 
             impl reactive::ComponentSpec for #spec_ident {
                 type Args = #args_ident;

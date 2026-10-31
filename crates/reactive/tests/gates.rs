@@ -694,3 +694,18 @@ fn abandoned_branches_are_reclaimed_without_changing_results() {
         .expect("edit");
     assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 11);
 }
+
+#[test]
+fn a_component_can_be_demanded_directly() {
+    let runtime = Runtime::new();
+    // Direct demand installs a computation frame of its own.
+    let value = runtime
+        .call::<recursion::__FibSpec>(recursion::__FibArgs { n: 10 })
+        .expect("call");
+    assert_eq!(value, 55);
+    // A second demand reuses the interned invocation.
+    let again = runtime
+        .call::<recursion::__FibSpec>(recursion::__FibArgs { n: 10 })
+        .expect("call");
+    assert_eq!(again, 55);
+}

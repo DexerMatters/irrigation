@@ -279,8 +279,24 @@ impl Runtime {
     ///
     /// Fails when called outside a demand context or when the component fails.
     pub fn call<S: ComponentSpec>(&self, args: S::Args) -> Result<S::Output> {
-        let _gate = self.inner.gate.read();
-        catch_engine(|| crate::component::call_component::<S>(args))
+        let pool_owner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        pool_owner.pool.run(move || {
+            let _gate = task.gate.read();
+            let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = task.arc();
+            let cancel = CancelToken::default();
+            // Frames are thread-local execution state; see the note in `eval`.
+            #[allow(clippy::arc_with_non_send_sync)]
+            let frame = Arc::new(reactive_core::frame::Frame::scoped(
+                Arc::clone(&runtime),
+                reactive_core::ids::NodeId::NONE,
+                reactive_core::ids::ScopeId::ROOT,
+                0,
+                cancel,
+            ));
+            let _guard = reactive_core::frame::FrameGuard::push(frame);
+            catch_engine(|| crate::component::call_component::<S>(args))
+        })
     }
 
     /// Runtime counters, useful in tests and benchmarks.
