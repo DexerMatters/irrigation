@@ -2144,3 +2144,112 @@ fn a_small_pool_completes_contended_host_demand() {
         2 * (1..=32u64).sum::<u64>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Glitch freedom: a diamond never mixes revisions
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct DiamondInput {
+    value: u64,
+}
+
+#[reactive]
+mod diamond {
+    use super::DiamondInput;
+
+    #[component]
+    pub fn doubled(input: &DiamondInput) -> u64 {
+        input.value() * 2
+    }
+
+    #[component]
+    pub fn parity(input: &DiamondInput) -> u64 {
+        input.value() % 2
+    }
+
+    #[component]
+    pub fn combine(input: &DiamondInput) -> (u64, u64) {
+        let doubled = doubled(input);
+        let parity = parity(input);
+        (doubled, parity)
+    }
+}
+
+#[test]
+fn a_diamond_tuple_never_mixes_revisions() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        workers: 2,
+        stack_size: 16 * 1024 * 1024,
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(diamond::Combine).expect("install");
+    // (value, (doubled, parity)): `doubled` changes every step; `parity` holds
+    // at 0 for 2->4 and changes at 5. A consumer that combined a new `doubled`
+    // with a stale `parity` would fail here.
+    for (value, expected) in [(2, (4, 0)), (4, (8, 0)), (5, (10, 1)), (6, (12, 0)), (6, (12, 0))] {
+        runtime
+            .edit(|edit| {
+                edit.view::<DiamondInput>().set_value(value);
+            })
+            .expect("edit");
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    let runtime = &runtime;
+                    scope.spawn(move || {
+                        runtime.read_outputs::<diamond::Combine>().expect("outputs")
+                    })
+                })
+                .collect();
+            for handle in handles {
+                assert_eq!(handle.join().expect("join"), expected, "value={value}");
+            }
+        });
+    }
+}
+
+#[test]
+fn a_provider_handover_updates_its_observer() {
+    use std::sync::{Arc, Mutex};
+    let runtime = Runtime::new();
+    runtime.install(handover::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<HandoverFlag>().set_on(false);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<handover::Root>().expect("initial demand");
+
+    let seen: Arc<Mutex<Vec<Vec<(u32, u32)>>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let subscription = runtime
+        .observe::<HandoverSlot>(move |snapshot| {
+            sink.lock()
+                .expect("lock")
+                .push(snapshot.view::<HandoverSlot>().field0());
+        })
+        .expect("observe");
+
+    for (on, expected) in [(true, 20u32), (false, 10), (true, 20)] {
+        runtime
+            .edit(|edit| {
+                edit.view::<HandoverFlag>().set_on(on);
+            })
+            .expect("edit");
+        let snapshot = runtime.read().expect("snapshot");
+        assert_eq!(
+            snapshot.view::<HandoverSlot>().field0(),
+            vec![(1, expected)],
+            "on={on}"
+        );
+    }
+    let observed = seen.lock().expect("lock");
+    assert_eq!(
+        observed.last(),
+        Some(&vec![(1u32, 20u32)]),
+        "the observer never saw the handed-over member: {observed:?}"
+    );
+    drop(observed);
+    drop(subscription);
+}

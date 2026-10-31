@@ -7,7 +7,7 @@
 //! never observes it, and the test fails. If the waiter suspends, its worker
 //! takes the third demand immediately.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -22,9 +22,11 @@ static SLOW_STARTED: AtomicBool = AtomicBool::new(false);
 static FAST_DONE: AtomicBool = AtomicBool::new(false);
 /// Set by the waiting demand just before it demands the blocking computation.
 static READER_STARTED: AtomicBool = AtomicBool::new(false);
+/// Number of mutually recursive demands that reached their rendezvous.
+static PAIR_STARTED: AtomicUsize = AtomicUsize::new(0);
 
 mod probe {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     use super::{FAST_DONE, READER_STARTED, SLOW_STARTED};
@@ -64,6 +66,18 @@ mod probe {
         SLOW_STARTED.store(true, Ordering::Release);
         std::thread::sleep(span);
         1
+    }
+
+    /// Holds both mutually recursive demands inside their bodies until each
+    /// has started, so both wait edges are recorded concurrently.
+    pub fn rendezvous(_tag: u64) -> u64 {
+        super::PAIR_STARTED.fetch_add(1, Ordering::AcqRel);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while super::PAIR_STARTED.load(Ordering::Acquire) < 2 {
+            assert!(Instant::now() < deadline, "the pair never met");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        0
     }
 
     /// Waits for a probe flag, failing rather than hanging the suite.
@@ -114,6 +128,22 @@ mod yielding {
     pub fn perturbed(tag: u64) -> u64 {
         super::probe::jitter(tag);
         tag * 3 + 1
+    }
+
+    /// A two-component value cycle, one demand per component.
+    #[component]
+    pub fn left(tag: u64) -> u64 {
+        let mark = super::probe::rendezvous(tag);
+        let value = right(tag);
+        value + mark
+    }
+
+    /// The other half of the cycle.
+    #[component]
+    pub fn right(tag: u64) -> u64 {
+        let mark = super::probe::rendezvous(tag);
+        let value = left(tag);
+        value + mark
     }
 
     /// Touches a node owned by `sleepy_once`.
@@ -263,4 +293,33 @@ fn progress_accounting_shows_and_drains_in_flight_demands() {
         TaskCounts::default(),
         "every demand released its task"
     );
+}
+
+#[test]
+fn a_cycle_between_two_tasks_is_reported_not_hung() {
+    let _serial = serial();
+    PAIR_STARTED.store(0, Ordering::Release);
+    let runtime = two_workers();
+    std::thread::scope(|scope| {
+        let left = scope.spawn(|| {
+            runtime
+                .call::<yielding::__LeftSpec>(yielding::__LeftArgs { tag: 13 })
+                .expect_err("a cycle cannot produce a value")
+        });
+        let right = scope.spawn(|| {
+            runtime
+                .call::<yielding::__RightSpec>(yielding::__RightArgs { tag: 13 })
+                .expect_err("a cycle cannot produce a value")
+        });
+        let first = left.join().expect("left thread");
+        let second = right.join().expect("right thread");
+        assert!(
+            matches!(first, reactive::ComputeError::Cycle { .. }),
+            "left demand: {first}"
+        );
+        assert!(
+            matches!(second, reactive::ComputeError::Cycle { .. }),
+            "right demand: {second}"
+        );
+    });
 }

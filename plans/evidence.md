@@ -67,6 +67,8 @@ cargo test -p reactive --test suspension       # suspended demand
 | Two providers for one unit are rejected | `two_providers_cannot_define_the_same_unit` |
 | A dynamic expansion collision is diagnosed | `a_dynamic_expansion_that_collides_is_diagnosed` |
 | The supported branch composition republishes values | `branch_chosen_values_republish_every_execution` |
+| A handover survives demand order | `provider_handover_survives_demand_order` |
+| A handover updates its observer instead of leaving a stale subscription | `a_provider_handover_updates_its_observer` |
 
 ## Concurrency and failure (§8)
 
@@ -81,6 +83,8 @@ cargo test -p reactive --test suspension       # suspended demand
 | Parallel members share one invocation without deadlock | `parallel_members_share_one_invocation_without_deadlock` |
 | Deep recursion is stack safe | `deep_recursion_is_stack_safe` |
 | Value cycles are reported, not hung | `a_value_cycle_is_reported_not_hung` |
+| A cycle between two tasks is reported, not hung | `a_cycle_between_two_tasks_is_reported_not_hung` |
+| A diamond tuple never mixes revisions | `a_diamond_tuple_never_mixes_revisions` |
 
 ## Components and APIs (§9, §10)
 
