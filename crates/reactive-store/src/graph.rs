@@ -50,6 +50,18 @@ pub struct GraphStore<N, E> {
     next_edge: EdgeId,
 }
 
+impl<N: PartialEq, E: PartialEq> PartialEq for GraphStore<N, E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes
+            && self.edges == other.edges
+            && self.outgoing == other.outgoing
+            && self.incoming == other.incoming
+            && self.next_edge == other.next_edge
+    }
+}
+
+impl<N: Eq, E: Eq> Eq for GraphStore<N, E> {}
+
 impl<N, E> Default for GraphStore<N, E> {
     fn default() -> Self {
         Self::new()

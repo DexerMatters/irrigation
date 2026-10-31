@@ -153,6 +153,15 @@ pub fn observe_local(node: reactive_core::ids::NodeId) {
         .unwrap_or_else(|error| panic_engine(error));
 }
 
+/// Observes a tracked local's node and returns a borrow of its value.
+///
+/// Used where the value is only borrowed (for example as the receiver of an
+/// iterator adapter), so no temporary clone is created.
+pub fn observe_ref<T>(node: reactive_core::ids::NodeId, value: &T) -> &T {
+    observe_local(node);
+    value
+}
+
 /// Observes a tracked local's node and returns a clone of its value.
 ///
 /// Cloning keeps the local available for later uses; handles are cheap to

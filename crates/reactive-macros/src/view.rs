@@ -78,15 +78,12 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
 
     let derived = matches!(kind, ViewKindArg::Derived);
     for field in &fields {
-        match &field.shape {
-            FieldShape::Graph(_, _) | FieldShape::Tree(_) => {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "graph and tree fields are not yet supported by `#[view]`; \
-                     use `#[tree_view]` for ownership trees",
-                ));
-            }
-            _ => {}
+        if let FieldShape::Tree(_) = field.shape {
+            return Err(syn::Error::new_spanned(
+                &field.ty,
+                "tree fields are declared with `#[tree_view]`; \
+                 a `#[view]` struct cannot own an enum-group tree",
+            ));
         }
     }
 
@@ -391,7 +388,19 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         self.content.#ident.iter().cloned().collect()
                     }
                 },
-                FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote! {},
+                FieldShape::Graph(_, _) => {
+                    let nodes = format_ident!("{}_nodes", ident);
+                    let edges = format_ident!("{}_edges", ident);
+                    quote! {
+                        #vis fn #nodes(&self) -> Vec<u64> {
+                            self.content.#ident.nodes().map(|(id, _)| id).collect()
+                        }
+                        #vis fn #edges(&self) -> Vec<u64> {
+                            self.content.#ident.edges().map(|(id, _)| id).collect()
+                        }
+                    }
+                }
+                FieldShape::Tree(_) => quote! {},
             }
         })
         .collect();
@@ -479,7 +488,19 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.#ident().define(key, value, #name_str);
                         }
                     },
-                    FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote! {},
+                    FieldShape::Graph(_, _) => {
+                    let nodes = format_ident!("{}_nodes", ident);
+                    let edges = format_ident!("{}_edges", ident);
+                    quote! {
+                        #vis fn #nodes(&self) -> Vec<u64> {
+                            self.content.#ident.nodes().map(|(id, _)| id).collect()
+                        }
+                        #vis fn #edges(&self) -> Vec<u64> {
+                            self.content.#ident.edges().map(|(id, _)| id).collect()
+                        }
+                    }
+                }
+                FieldShape::Tree(_) => quote! {},
                 }
             })
             .collect()

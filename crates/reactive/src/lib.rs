@@ -13,6 +13,7 @@ pub use reactive_collections::{
     DerivedList, DerivedListRef, DerivedSet, DerivedSetRef, Map, MapEditor, MapRef, SourceList,
     SourceListEditor, SourceListRef, SourceSet, SourceSetEditor, SourceSetRef,
 };
+pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use reactive_core::error::{ComputeError, Result};
 pub use reactive_core::frame::Dep;
 pub use reactive_core::hash::hash_one;
@@ -27,7 +28,7 @@ pub use reactive_runtime::field::{
     EntityKey, ScalarEditor, ScalarRef, ViewFieldHandle, membership_unit, structure_unit, value_unit,
 };
 pub use reactive_runtime::helpers::{
-    ensure_view, node_of, observe_clone, observe_local, values_equal,
+    ensure_view, node_of, observe_clone, observe_local, observe_ref, values_equal,
 };
 pub use reactive_runtime::Param;
 pub use reactive_runtime::fixed_point::{

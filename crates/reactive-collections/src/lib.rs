@@ -17,10 +17,12 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
+pub mod graph;
 pub mod list;
 pub mod map;
 pub mod set;
 
+pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, SourceListRef};
 pub use map::{Map, MapEditor, MapRef};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};

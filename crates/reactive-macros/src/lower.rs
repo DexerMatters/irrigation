@@ -18,17 +18,33 @@ use syn::{Block, Expr, ExprClosure, ExprMacro, Pat, Stmt};
 struct Lowered {
     tokens: TokenStream,
     node: Option<TokenStream>,
+    /// Iterator values are not memoized: they borrow their source and are
+    /// consumed within one execution of the enclosing computation.
+    iterator: bool,
 }
 
 impl Lowered {
     fn plain(tokens: TokenStream) -> Self {
-        Self { tokens, node: None }
+        Self {
+            tokens,
+            node: None,
+            iterator: false,
+        }
     }
 
     fn node(tokens: TokenStream, node: TokenStream) -> Self {
         Self {
             tokens,
             node: Some(node),
+            iterator: false,
+        }
+    }
+
+    fn iter(tokens: TokenStream) -> Self {
+        Self {
+            tokens,
+            node: None,
+            iterator: true,
         }
     }
 }
@@ -38,6 +54,11 @@ pub struct Lowerer {
     component: String,
     counter: u32,
     scopes: Vec<std::collections::HashMap<String, TokenStream>>,
+    /// Inside a closure body no per-expression nodes are created: the closure
+    /// may be called many times in one scope (for example by an iterator
+    /// adapter), so per-call node identity cannot be assigned syntactically.
+    /// Tracked reads still record on the enclosing computation.
+    inline_depth: usize,
 }
 
 impl Lowerer {
@@ -48,7 +69,19 @@ impl Lowerer {
             component: component.into(),
             counter: 0,
             scopes: vec![std::collections::HashMap::new()],
+            inline_depth: 0,
         }
+    }
+
+    fn node_or_inline(&mut self, body: TokenStream) -> Lowered {
+        if self.inline_depth > 0 {
+            return Lowered::plain(body);
+        }
+        let site = self.site();
+        Lowered::node(
+            quote!(reactive::eval(#site, || #body)),
+            quote!(reactive::node_of(#site)),
+        )
     }
 
     fn site(&mut self) -> TokenStream {
@@ -102,6 +135,14 @@ impl Lowerer {
                         .tokens;
                 }
                 let lowered = self.expr_node(&init.expr);
+                if self.inline_depth > 0 {
+                    let tokens = lowered.tokens;
+                    return quote!(let #pat = #tokens;);
+                }
+                if lowered.iterator {
+                    let tokens = lowered.tokens;
+                    return quote!(let #pat = #tokens;);
+                }
                 let (tokens, node) = match (&lowered.node, is_trivial(&init.expr)) {
                     (Some(node), _) => (lowered.tokens, Some(node.clone())),
                     (None, true) => (lowered.tokens, None),
@@ -187,98 +228,67 @@ impl Lowerer {
                 let left = self.expr(&binary.left);
                 let right = self.expr(&binary.right);
                 let op = &binary.op;
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #left #op #right)),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#left #op #right))
             }
             Expr::Unary(unary) => {
                 let inner = self.expr(&unary.expr);
                 let op = &unary.op;
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #op #inner)),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#op #inner))
             }
             Expr::Cast(cast) => {
                 let inner = self.expr(&cast.expr);
                 let ty = &cast.ty;
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #inner as #ty)),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#inner as #ty))
             }
             Expr::MethodCall(call) => {
-                let receiver = self.expr(&call.receiver);
                 let method = &call.method;
                 let method_name = method.to_string();
+                let receiver = if is_iterator_method(&method_name) {
+                    self.borrowed_receiver(&call.receiver)
+                } else {
+                    self.expr(&call.receiver)
+                };
                 let turbofish = &call.turbofish;
                 let args: Vec<TokenStream> = call.args.iter().map(|arg| self.argument(arg)).collect();
-                if is_transparent_method(&method_name) {
-                    return Lowered::plain(
-                        quote!(#receiver.#method #turbofish (#(#args),*)),
-                    );
+                let iterator_chain = is_collection_adapter(&method_name)
+                    && receiver_is_iterator(&call.receiver);
+                if is_transparent_method(&method_name) || iterator_chain {
+                    let tokens = quote!(#receiver.#method #turbofish (#(#args),*));
+                    return if is_iterator_method(&method_name) || iterator_chain {
+                        Lowered::iter(tokens)
+                    } else {
+                        Lowered::plain(tokens)
+                    };
                 }
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #receiver.#method #turbofish (#(#args),*))),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#receiver.#method #turbofish (#(#args),*)))
             }
             Expr::Call(call) => {
                 let function = self.expr(&call.func);
                 let args: Vec<TokenStream> = call.args.iter().map(|arg| self.argument(arg)).collect();
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #function(#(#args),*))),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#function(#(#args),*)))
             }
             Expr::Field(field) => {
                 let base = self.expr(&field.base);
                 let member = &field.member;
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #base.#member)),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#base.#member))
             }
             Expr::Index(index) => {
                 let base = self.expr(&index.expr);
                 let offset = self.expr(&index.index);
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #base[#offset])),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#base[#offset]))
             }
             Expr::Tuple(tuple) => {
                 let elems: Vec<TokenStream> = tuple.elems.iter().map(|elem| self.expr(elem)).collect();
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || (#(#elems),*))),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!((#(#elems),*)))
             }
             Expr::Array(array) => {
                 let elems: Vec<TokenStream> = array.elems.iter().map(|elem| self.expr(elem)).collect();
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || [#(#elems),*])),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!([#(#elems),*]))
             }
             Expr::Repeat(repeat) => {
                 let value = self.expr(&repeat.expr);
                 let len = self.expr(&repeat.len);
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || [#value; #len])),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!([#value; #len]))
             }
             Expr::Struct(structure) => {
                 let path = &structure.path;
@@ -295,11 +305,7 @@ impl Lowerer {
                     })
                     .collect();
                 let rest = structure.rest.as_ref().map(|rest| quote!(.. #rest));
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #path { #(#fields,)* #rest })),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#path { #(#fields,)* #rest }))
             }
             Expr::If(if_expr) => {
                 let condition = self.expr(&if_expr.cond);
@@ -347,6 +353,7 @@ impl Lowerer {
                 Lowered {
                     tokens: quote!(#tokens?),
                     node,
+                    iterator: inner.iterator,
                 }
             }
             Expr::Assign(assign) => {
@@ -376,11 +383,7 @@ impl Lowerer {
                 let start = range.start.as_ref().map(|expr| self.expr(expr));
                 let end = range.end.as_ref().map(|expr| self.expr(expr));
                 let limits = &range.limits;
-                let site = self.site();
-                Lowered::node(
-                    quote!(reactive::eval(#site, || #start #limits #end)),
-                    quote!(reactive::node_of(#site)),
-                )
+                self.node_or_inline(quote!(#start #limits #end))
             }
             Expr::Macro(mac) => self.macro_expr(mac),
             Expr::Closure(closure) => self.error(
@@ -425,6 +428,20 @@ impl Lowerer {
         }
     }
 
+    /// Lowers a receiver that is only borrowed, avoiding a temporary clone.
+    fn borrowed_receiver(&mut self, receiver: &Expr) -> TokenStream {
+        if let Expr::Path(path) = receiver {
+            if path.qself.is_none() && path.path.segments.len() == 1 {
+                let name = path.path.segments[0].ident.to_string();
+                if let Some(node) = self.lookup(&name) {
+                    let ident = &path.path.segments[0].ident;
+                    return quote!(reactive::observe_ref(#node, &#ident));
+                }
+            }
+        }
+        self.expr(receiver)
+    }
+
     fn argument(&mut self, arg: &Expr) -> TokenStream {
         match arg {
             Expr::Closure(closure) => self.closure(closure),
@@ -433,6 +450,7 @@ impl Lowerer {
     }
 
     fn closure(&mut self, closure: &ExprClosure) -> TokenStream {
+        self.inline_depth += 1;
         self.scopes.push(std::collections::HashMap::new());
         let capture = &closure.capture;
         let inputs = closure.inputs.iter().map(|input| match input {
@@ -447,6 +465,7 @@ impl Lowerer {
             }
         };
         self.scopes.pop();
+        self.inline_depth -= 1;
         quote!(#capture |#(#inputs),*| #body)
     }
 
@@ -469,12 +488,8 @@ impl Lowerer {
                  effects belong in observers, not computations",
             );
         }
-        let site = self.site();
         let tokens = mac.to_token_stream();
-        Lowered::node(
-            quote!(reactive::eval(#site, || #tokens)),
-            quote!(reactive::node_of(#site)),
-        )
+        self.node_or_inline(tokens)
     }
 }
 
@@ -506,10 +521,50 @@ fn collect_pattern_names(pat: &Pat, names: &mut Vec<String>) {
                 collect_pattern_names(&field.pat, names);
             }
         }
+        Pat::Type(typed) => collect_pattern_names(&typed.pat, names),
         Pat::Reference(reference) => collect_pattern_names(&reference.pat, names),
         Pat::Paren(paren) => collect_pattern_names(&paren.pat, names),
         _ => {}
     }
+}
+
+/// Adapters that are lazy on a standard iterator but incremental on a
+/// collection handle. The receiver decides which meaning applies.
+fn is_collection_adapter(name: &str) -> bool {
+    matches!(name, "map" | "filter" | "flat_map")
+}
+
+/// Returns `true` when the receiver expression is itself an iterator chain.
+fn receiver_is_iterator(receiver: &Expr) -> bool {
+    match receiver {
+        Expr::MethodCall(call) => is_iterator_method(&call.method.to_string()),
+        Expr::Call(call) => call
+            .func
+            .to_token_stream()
+            .to_string()
+            .contains("into_iter"),
+        _ => false,
+    }
+}
+
+/// Methods that produce a lazy iterator value.
+fn is_iterator_method(name: &str) -> bool {
+    matches!(
+        name,
+        "iter"
+            | "iter_mut"
+            | "into_iter"
+            | "cloned"
+            | "copied"
+            | "rev"
+            | "enumerate"
+            | "zip"
+            | "chain"
+            | "take"
+            | "skip"
+            | "step_by"
+            | "filter_map"
+    )
 }
 
 /// Iterator and borrow adapters that must not become memoized nodes.
@@ -534,5 +589,34 @@ fn is_transparent_method(name: &str) -> bool {
             | "as_mut"
             | "as_deref"
             | "borrow"
+            | "filter_map"
+            | "fold"
+            | "sum"
+            | "product"
+            | "count"
+            | "collect"
+            | "find"
+            | "any"
+            | "all"
+            | "min"
+            | "max"
+            | "last"
+            | "nth"
+            | "position"
+            | "for_each"
+            | "first"
+            | "get"
+            | "values"
+            | "keys"
+            | "next"
+            | "front"
+            | "back"
+            | "chars"
+            | "as_bytes"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "split"
+            | "lines"
     )
 }

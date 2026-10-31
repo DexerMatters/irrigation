@@ -397,7 +397,7 @@ mod reachability {
             seeds: vec![seed],
         };
         let fixed = reactive::solve_fixed_point(&problem).expect("converges");
-        let mut nodes: Vec<u32> = fixed.non_bottom();
+        let nodes: Vec<u32> = fixed.non_bottom();
         nodes.sort_unstable();
         nodes
     }
@@ -466,4 +466,121 @@ fn fixed_points_inside_components_follow_insertions_and_deletions() {
             .expect("outputs"),
         reachable_from_scratch(&[(0, 1), (2, 3), (1, 2)], 0)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Graph View family: topology and payloads are independent
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Network {
+    links: Graph<u32, u32>,
+}
+
+#[reactive]
+mod graph_stats {
+    use super::Network;
+
+    #[component]
+    pub fn stats(network: &Network) -> (u64, u64, u64) {
+        let graph = network.links();
+        let nodes = graph.node_count() as u64;
+        let edges = graph.edge_count() as u64;
+        let ids = graph.edges();
+        let weights = ids.iter().map(|edge| graph.edge_weight(*edge).unwrap_or(0) as u64);
+        let total = weights.sum::<u64>();
+        (nodes, edges, total)
+    }
+}
+
+fn graph_unit_versions(runtime: &Runtime) -> Vec<(String, u64)> {
+    runtime
+        .dump()
+        .into_iter()
+        .filter_map(|node| node.unit.map(|unit| (unit, node.changed_at)))
+        .collect()
+}
+
+#[test]
+fn graph_topology_and_payloads_are_independent() {
+    let runtime = Runtime::new();
+    runtime.install(graph_stats::Stats).expect("install");
+    let first_edge = runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Network>();
+            let mut links = view.links();
+            links.add_node(1, 10);
+            links.add_node(2, 20);
+            links.add_node(3, 30);
+            let first = links.add_edge(1, 2, 5);
+            links.add_edge(2, 3, 7);
+            first
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        (3, 2, 12)
+    );
+    let before = graph_unit_versions(&runtime);
+    let topology_before: Vec<(String, u64)> = before
+        .iter()
+        .filter(|(unit, _)| unit.contains("Structure"))
+        .cloned()
+        .collect();
+    assert!(!topology_before.is_empty());
+
+    // A payload edit must not touch topology.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Network>();
+            let mut links = view.links();
+            links.set_edge(first_edge, 50);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        (3, 2, 57)
+    );
+    let after = graph_unit_versions(&runtime);
+    let topology_after: Vec<(String, u64)> = after
+        .iter()
+        .filter(|(unit, _)| unit.contains("Structure"))
+        .cloned()
+        .collect();
+    assert_eq!(topology_before, topology_after);
+
+    // Removing a node retracts its incident edges.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Network>();
+            let mut links = view.links();
+            links.remove_node(2);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        (2, 0, 0)
+    );
+    let snapshot = runtime.read().expect("read");
+    assert_eq!(snapshot.view::<Network>().links_nodes(), vec![1, 3]);
+    assert!(snapshot.view::<Network>().links_edges().is_empty());
+}
+
+#[test]
+fn graph_neighbours_follow_edges() {
+    let runtime = Runtime::new();
+    runtime.install(graph_stats::Stats).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Network>();
+            let mut links = view.links();
+            links.add_node(1, 0);
+            links.add_node(2, 0);
+            links.add_node(3, 0);
+            links.add_edge(1, 2, 1);
+            links.add_edge(1, 3, 1);
+            links.add_edge(2, 3, 1);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<graph_stats::Stats>().expect("outputs");
 }
