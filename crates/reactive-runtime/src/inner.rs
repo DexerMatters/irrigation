@@ -1015,6 +1015,14 @@ impl Inner {
             };
             match running {
                 Some(current) if current == owner => {
+                    // Help with queued demand before parking, so a blocked
+                    // worker is not idle while work is available.
+                    drop(state);
+                    let helped = self.pool.try_run_one();
+                    state = self.lock();
+                    if helped {
+                        continue;
+                    }
                     let (next, _timeout) = self
                         .wake
                         .wait_timeout(state, self.config.wait_slice)

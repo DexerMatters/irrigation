@@ -144,9 +144,10 @@ are built on this boundary.
 ## Planned: continuation-based suspension
 
 The current scheduler blocks a worker while it waits for a node owned by another
-worker. That is correct (cycles are detected and a one-worker pool runs nested
-demand inline) but it wastes a worker. The plan requires a waiting task to yield
-its worker. The change is contained to three places:
+worker. Before parking it first runs any queued job (`Pool::try_run_one`), so
+queued demand is not stranded behind blocked workers. That is still blocking,
+not yielding: the plan requires a waiting task to yield its worker. The change
+is contained to three places:
 
 ### 1. Node claim becomes a continuation state machine
 

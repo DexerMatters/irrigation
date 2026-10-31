@@ -106,6 +106,28 @@ impl Pool {
         self.workers
     }
 
+    /// Runs one queued job on the calling thread, if any is waiting.
+    ///
+    /// A worker that is about to park on a dependency calls this first, so
+    /// queued demand is not stranded behind blocked workers.
+    pub fn try_run_one(&self) -> bool {
+        let job = {
+            let mut queue = self
+                .inner
+                .queue
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            queue.pop_front()
+        };
+        match job {
+            Some(job) => {
+                job();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Runs `job` on a worker and waits for its result.
     ///
     /// If the caller is already a worker, or no workers exist, the job runs
