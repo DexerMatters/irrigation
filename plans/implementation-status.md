@@ -1,5 +1,34 @@
 # Implementation status against the plan
 
+## Coverage at a glance
+
+| Plan section | Status | Evidence |
+|---|---|---|
+| §1–§4 semantic model (Views, revisions, snapshots, change laws) | implemented | kernel tests, randomized oracle |
+| §5 View decomposition (scalar, list, set, map, graph, tree) | implemented | per-family gates |
+| §5.5 joins | implemented as an incremental equi-join on `GeneralComponent` | combine-count gate |
+| §5.3 balanced reductions | implemented (`AggSeq`, `Reduced<R>`) | logarithmic combine counts |
+| §6 identity, unique definitions, routing | implemented (no separate dispatcher API) | duplicate-definition gates |
+| §7 component compilation and lowering | implemented for the documented subset | end-to-end and macro tests |
+| §8 revisions, validation, invalidation, publication | implemented | kernel tests, cutoff gates |
+| §8.5–§8.7 concurrency, progress, failure, cancellation | partial: pool, single-flight, wait graph, cancellation, panic isolation; continuation suspension pending | concurrency gates |
+| §9 recursion and transient parameters | implemented | recursion gates |
+| §9.5 fixed points | implemented | fixed-point gates |
+| §10 public API | implemented (`#[view]`, `#[component]`, `#[reactive]`, `#[tree_view]`, `GeneralComponent`, observers) | end-to-end tests |
+| §11 architecture, effects, explainability | implemented (explain_node, docs/architecture.md) | explanation gate |
+| §12 correctness and cost model | exercised by gates; measured by examples | workload matrix |
+| §13 verification | randomized oracle and counterexample gates | gates file |
+| §14 phases and benchmarks | phases 1–3 complete for the implemented surface; phase 4 partial; phase 5 partial | examples |
+| §15 final recommendation | followed: typed graph language hosted in Rust | — |
+
+## Remaining structural gap
+
+Continuation-based suspension: a task that waits for another task blocks its
+worker instead of yielding it. The migration design is in
+[`../docs/architecture.md`](../docs/architecture.md). Every semantic guarantee
+the gates exercise is already satisfied by the blocking implementation; what is
+missing is throughput when many workers wait at once.
+
 This file records, section by section, what the workspace implements, where the
 evidence is, and what remains. It is deliberately conservative: a feature is
 "implemented" only when a test exercises its stated contract.
