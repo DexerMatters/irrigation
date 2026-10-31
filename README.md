@@ -226,8 +226,9 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * cancellation publishing nothing;
 * branch reclamation followed by correct repair and reconstruction;
 * identical results across repeated schedules with 1–4 workers, eight
-  concurrent host reads of a certified revision executing no node bodies, and
-  32 parallel members sharing one invocation under 2–4 workers without deadlock.
+  concurrent host reads of a certified revision executing no node bodies,
+  32 parallel members sharing one invocation under 2–4 workers without
+  deadlock, and six rounds of contended host demand on a two-worker pool.
 
 ## Internals
 

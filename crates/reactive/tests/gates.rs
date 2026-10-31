@@ -2098,3 +2098,49 @@ fn provider_handover_survives_demand_order() {
         );
     }
 }
+
+#[test]
+fn a_small_pool_completes_contended_host_demand() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        workers: 2,
+        stack_size: 16 * 1024 * 1024,
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(model_analysis::Analyze).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            for value in 1..=32u64 {
+                numbers.push(value);
+            }
+        })
+        .expect("edit");
+
+    for round in 0..6 {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..6 {
+                let runtime = &runtime;
+                handles.push(scope.spawn(move || {
+                    runtime
+                        .read_outputs::<model_analysis::Analyze>()
+                        .expect("contended read")
+                }));
+            }
+            let results: Vec<u64> = handles
+                .into_iter()
+                .map(|handle| handle.join().expect("join"))
+                .collect();
+            for result in &results {
+                assert_eq!(*result, results[0], "round {round}");
+            }
+        });
+    }
+    assert_eq!(
+        runtime
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("final"),
+        2 * (1..=32u64).sum::<u64>()
+    );
+}
