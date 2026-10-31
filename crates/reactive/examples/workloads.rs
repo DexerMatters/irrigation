@@ -183,6 +183,26 @@ fn main() {
             elapsed.as_micros()
         );
 
+        // Specialized handwritten incremental algorithm: a running total
+        // updated at the edited index. This is the floor the transparent
+        // machinery is priced against.
+        let mut values: Vec<i64> = (0..size).map(|index| index as i64).collect();
+        let middle = size / 2;
+        let mut running: i64 = values.iter().sum();
+        let started = Instant::now();
+        for step in 0..10_000i64 {
+            let next = if step % 2 == 0 { -1 } else { -2 };
+            running += next - values[middle];
+            values[middle] = next;
+        }
+        let per_edit = started.elapsed().as_secs_f64() * 1e6 / 10_000.0;
+        std::hint::black_box(&values);
+        assert_eq!(
+            running,
+            (0..size as i64).sum::<i64>() - middle as i64 - 2
+        );
+        println!("handwritten\t{size}\t-\t-\t{per_edit:.4}");
+
         // Whole-function memoization baseline: an edit invalidates the entry,
         // so every transaction recomputes the whole function.
         let mut cache: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();

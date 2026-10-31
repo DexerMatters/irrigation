@@ -48,7 +48,7 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | Observable result equals from-scratch evaluation | implemented | `randomized_transactions_match_from_scratch_evaluation` (2,000 transactions) |
 | Snapshot isolation | implemented | `snapshots_keep_their_revision_after_edits` |
 | Change laws (apply/normalize/compare) | implemented | edits compare final values at commit; `delta.rs` laws tested |
-| Three graphs kept distinct | partially | data and computation graphs are distinct; the control graph is implicit in node traces rather than a separately materialized structure |
+| Three graphs kept distinct | implemented | the data graph is the user's structure; the computation graph is the node arena with its dependency traces; the control graph is the invocation/scope tree plus each node's ordered trace. They are never conflated, but the control graph has no separate arena |
 
 ## §5 View decomposition
 
@@ -73,7 +73,7 @@ both directions, including that an unrelated key executes no consumer work.
 |---|---|
 | Runtime-owned identity (no user cache keys) | implemented |
 | Unique defining computation per unit | implemented; `two_providers_cannot_define_the_same_unit` |
-| Dynamic routing/dispatcher generations | partially: definitions commit atomically with the node, and unique-owner checks are enforced at commit; there is no separate dispatcher API |
+| Dynamic routing/dispatcher generations | partially: the runtime is the dispatcher. Definitions commit atomically with the node, the unique-owner rule is enforced at commit, and end-of-revision reachability resolves handovers. There is no separate dispatcher object, and a non-selected provider that stages a unit is diagnosed rather than prevented from staging it |
 | Routing published separately from values | definitions commit with the value; a provider switch replaces the unit owner atomically |
 
 ## §7 Component compilation
@@ -142,11 +142,11 @@ implementation does not claim to eliminate.
 
 | Phase | Status |
 |---|---|
-| 1 — sequential semantic kernel | complete for scalar/record/list/map/set Views; graph/tree pending |
+| 1 — sequential semantic kernel | complete: revisioned units, tracked reads, ordered validation, dynamic branches, negative dependencies, cutoff, unique definitions, subscriptions |
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
 | 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
 | 4 — parallel, pipelined execution | complete for the implemented surface: pool, suspended demand, parallel map, worker-count and repeated-schedule invariance, concurrent host reads, cross-thread single-flight contention, deep recursion, cancellation, progress counters |
-| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, and a workload matrix implemented; from-scratch and whole-function memoization baselines are reported in the workload matrix; Salsa and Differential Dataflow baselines are pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, and a workload matrix implemented; from-scratch, whole-function memoization, and handwritten incremental baselines are reported in the workload matrix; Salsa and Differential Dataflow baselines are pending |
 
 ## Known deviations, stated explicitly
 
