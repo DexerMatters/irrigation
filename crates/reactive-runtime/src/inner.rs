@@ -1572,6 +1572,9 @@ impl Inner {
     /// Nodes that still define derived units are never reclaimed, because their
     /// definitions would otherwise disappear from the region.
     pub fn collect(&self) -> ReclaimStats {
+        // Reclamation must not race a demand that is midway through committing
+        // a trace; wait for in-flight demands instead.
+        let _permit = self.gate.read();
         let mut state = self.lock();
         let mut reachable: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
         let mut stack: Vec<NodeId> = Vec::new();
