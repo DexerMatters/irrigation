@@ -23,6 +23,7 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | Scalar / record | implemented (`Scalar` field, unit per field) |
 | List | implemented for source Views (stable element ids, per-element units, rank reads observe structure) |
 | Set | implemented for source Views (per-member membership units) |
+| Balanced reduction | implemented (`AggSeq`: cached lawful aggregate, logarithmic point-edit recomputation) |
 | Map | implemented for source and derived Views (membership + value per key) |
 | Graph | implemented for source Views: topology, per-node payload, per-edge payload and per-node adjacency units; node deletion retracts incident edges |
 | Tree | implemented: `#[tree_view]` generates typed refs, kind enums, per-variant accessors, build conversions, and an editor with identity-preserving replace/move/remove |
@@ -111,7 +112,7 @@ implementation does not claim to eliminate.
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
 | 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
 | 4 — parallel, pipelined execution | partial: pool, parallel map, invariance, deep recursion; continuation scheduling, cancellation tests, and schedule perturbation pending |
-| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, and a join operator implemented; the full benchmark matrix and balanced reductions are pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, and a join operator implemented; the full benchmark matrix is pending |
 
 ## Known deviations, stated explicitly
 

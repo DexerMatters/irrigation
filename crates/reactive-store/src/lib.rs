@@ -13,12 +13,14 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
+pub mod aggregate;
 pub mod delta;
 pub mod field;
 pub mod graph;
 pub mod persistent;
 pub mod tree;
 
+pub use aggregate::AggSeq;
 pub use delta::{ListDelta, ListEdit, MapDelta, MapEdit, SetDelta, SetEdit};
 pub use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,

@@ -52,6 +52,7 @@ pub use reactive_core::descriptor::{
 };
 pub use reactive_store::field::{Scalar, ViewField};
 pub use reactive_store::persistent::{PMap, PSeq, PSet};
+pub use reactive_store::AggSeq;
 
 /// Builds the zero-sized handle for a View type.
 #[must_use]

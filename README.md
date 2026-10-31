@@ -116,7 +116,7 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Tree View family and `#[tree_view]` enum-group macro | implemented |
 | `GeneralComponent` (retained state, change batches, atomic state/output commit) | implemented |
 | Incremental equi-join over map Views | implemented (`EquiJoin`, per-key deltas) |
-| Balanced lawful reductions | **pending** |
+| Balanced lawful reductions (`AggSeq` with cached aggregates) | implemented |
 | Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
 | Async `GeneralComponent` futures | **pending** (synchronous algorithm boundary) |
 
@@ -150,6 +150,7 @@ The pending items are tracked in
 ```sh
 cargo test --workspace          # unit, kernel, macro, and acceptance-gate tests
 cargo run --release --example scaling -p reactive
+cargo run --release --example reduction -p reactive
 ```
 
 Measured on this machine (release, one worker, one point edit at the middle of
@@ -163,7 +164,17 @@ a mapped list followed by an observer read):
 | 50,000 | 8 | 0 | 42 ms |
 
 Executions are independent of the untouched list length, which is the plan's
-first scaling criterion. Wall time grows with the member trace the runtime must
+first scaling criterion.
+
+Balanced reduction (`cargo run --release --example reduction -p reactive`) grows
+logarithmically:
+
+| elements | combines for a set | combines for an insert |
+|---|---|---|
+| 1,000 | 20 | 22 |
+| 10,000 | 26 | 28 |
+| 100,000 | 34 | 36 |
+| 1,000,000 | 40 | 42 | Wall time grows with the member trace the runtime must
 validate (`E_v` in the plan's cost model), not with executed user code.
 
 The acceptance gates in `crates/reactive/tests/gates.rs` cover:
