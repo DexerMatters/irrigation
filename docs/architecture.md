@@ -140,3 +140,67 @@ are built on this boundary.
   `GeneralComponent` when the algorithm needs retained state.
 - Scheduling changes must preserve the claim/commit protocol and the
   `suspect_at <= verified_at` invariant.
+
+## Planned: continuation-based suspension
+
+The current scheduler blocks a worker while it waits for a node owned by another
+worker. That is correct (cycles are detected and a one-worker pool runs nested
+demand inline) but it wastes a worker. The plan requires a waiting task to yield
+its worker. The change is contained to three places:
+
+### 1. Node claim becomes a continuation state machine
+
+Replace the synchronous `eval` with a step function:
+
+```
+enum Step {
+    Ready(Value),
+    Execute(Box<dyn FnOnce(&mut Cx) -> Value>),
+    Wait(NodeId),
+}
+```
+
+`Inner::eval` currently loops over `Return/Wait/Claim`. Extract the decision
+into `try_step(node) -> Step` and let the caller drive it. A `Wait` no longer
+parks: it records the waiter and returns.
+
+### 2. Continuation records
+
+Each in-flight demand becomes a heap record:
+
+```
+struct Continuation {
+    node: NodeId,
+    generation: u64,
+    stage: Stage,           // Validating { index } | Executing
+    frame: Frame,           // recorder, definitions, scope, cancel token
+    task: TaskId,
+}
+```
+
+The frame already owns the recorder and staged definitions, so it can outlive
+the stack. `Stage::Validating { index }` resumes trace validation at the next
+observation; `Stage::Executing` resumes the compute closure. Compute closures
+are the hard part: the generated builder is ordinary Rust, so it cannot be
+resumed mid-body. The pragmatic rule is that a node's *own* compute runs to
+completion; only nested demands suspend. When a nested demand would block, the
+parent continuation is pushed and the worker takes another ready task.
+
+### 3. Ready queue and progress
+
+- A worker loop pops `Ready` continuations, runs one step, and requeues on
+  `Wait`.
+- Node completion enqueues every registered waiter.
+- Progress accounting becomes explicit: `queued + running + suspended +
+  outstanding_expansion`. A demand completes only when its requested
+  projections are ready and no outstanding expansion can add work.
+- The wait graph check stays exactly as it is; it now runs on continuation
+  identities rather than threads.
+
+### Why this is safe to defer
+
+The blocking implementation preserves every semantic guarantee the tests
+exercise: single-flight, ordered validation, cutoff, glitch-free publication,
+cycle detection, cancellation, and deadlock freedom for tiny pools. What it
+lacks is throughput when many workers wait at once. The migration above changes
+scheduling, not the commit protocol, so the existing gates remain the oracle.
