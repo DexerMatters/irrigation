@@ -74,6 +74,18 @@ Validation is ordered because control must be checked before a branch that may
 have been deleted. The lowering preserves source order, so `eval` re-executes in
 the same order and never touches an obsolete branch.
 
+## Value equality
+
+Cutoff is the View field's `PartialEq`; the runtime never normalizes a value
+first. Integers, strings, and collections therefore cutoff exactly. Floats keep
+IEEE semantics: `-0.0 == 0.0`, and `NaN != NaN`, so a computed `NaN` re-executes
+on every revision. A host that wants bitwise float cutoff wraps the value in a
+newtype with that `PartialEq`; the field's equality is the contract.
+
+Hashes never establish equality. They bucket component invocations, whose
+arguments are then compared with `PartialEq`; a collision only costs a
+comparison.
+
 ## Concurrency
 
 - One mutable transaction at a time, one active derived revision: a `Gate`

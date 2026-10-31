@@ -151,6 +151,9 @@ The pending items are tracked in
 * **Effects inside components are cached with their node.** A `println!`-style
   effect is rejected, but a counter incremented through a static would be
   skipped on reuse. Diagnostics belong in outputs and observers.
+* **Cutoff uses the field's `PartialEq`, with no normalization.** Floats keep
+  IEEE semantics, so `-0.0 == 0.0` and `NaN != NaN`; a computed `NaN` therefore
+  re-executes every revision. Use a newtype for bitwise float equality.
 
 ## Testing
 
