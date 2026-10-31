@@ -1572,3 +1572,79 @@ fn a_switched_scope_retires_its_old_dependency() {
     );
     assert_eq!(runtime.stats().executions, before);
 }
+
+// ---------------------------------------------------------------------------
+// Cutoff must not retain the old dependency graph
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Choice {
+    flag: bool,
+    left: u64,
+    right: u64,
+}
+
+#[reactive]
+mod constant_branch {
+    use super::Choice;
+
+    #[component]
+    pub fn choose(choice: &Choice) -> u64 {
+        if choice.flag() {
+            let _ = choice.left();
+            1
+        } else {
+            let _ = choice.right();
+            1
+        }
+    }
+}
+
+#[test]
+fn an_equal_output_still_replaces_the_dependency_trace() {
+    let runtime = Runtime::new();
+    runtime.install(constant_branch::Choose).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Choice>();
+            view.set_flag(false);
+            view.set_left(1);
+            view.set_right(2);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<constant_branch::Choose>()
+            .expect("outputs"),
+        1
+    );
+
+    // Switch branches: the output stays 1, so cutoff suppresses a value event,
+    // but the trace must now point at the left branch.
+    runtime
+        .edit(|edit| {
+            edit.view::<Choice>().set_flag(true);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<constant_branch::Choose>()
+            .expect("outputs"),
+        1
+    );
+
+    // Editing the newly active branch must execute the body again.
+    let before = runtime.stats().executions;
+    runtime
+        .edit(|edit| {
+            edit.view::<Choice>().set_left(9);
+        })
+        .expect("edit");
+    let _ = runtime
+        .read_outputs::<constant_branch::Choose>()
+        .expect("outputs");
+    assert!(
+        runtime.stats().executions > before,
+        "the active branch was not tracked after cutoff"
+    );
+}
