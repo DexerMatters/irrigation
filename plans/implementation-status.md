@@ -112,7 +112,7 @@ implementation does not claim to eliminate.
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
 | 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
 | 4 — parallel, pipelined execution | partial: pool, parallel map, worker-count and repeated-schedule invariance, concurrent host reads, deep recursion, cancellation; continuation-based suspension is not implemented |
-| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, and a join operator implemented; the full benchmark matrix is pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, and a workload matrix implemented; comparative baselines are pending |
 
 ## Known deviations, stated explicitly
 

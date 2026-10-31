@@ -151,6 +151,7 @@ The pending items are tracked in
 cargo test --workspace          # unit, kernel, macro, and acceptance-gate tests
 cargo run --release --example scaling -p reactive
 cargo run --release --example reduction -p reactive
+cargo run --release --example workloads -p reactive
 ```
 
 Measured on this machine (release, one worker, one point edit at the middle of
@@ -164,9 +165,20 @@ a mapped list followed by an observer read):
 | 50,000 | 8 | 0 | 42 ms |
 
 Executions are independent of the untouched list length, which is the plan's
-first scaling criterion.
+first scaling criterion. The workload matrix adds:
 
-Balanced reduction (`cargo run --release --example reduction -p reactive`) grows
+| workload | units | executions | revisions |
+|---|---|---|---|
+| 100 no-op transactions | 100 | 0 | 0 |
+| edit an unrelated map key | 1 | 0 | 1 |
+| tree leaf replacement | 100 | 8 | 1 |
+| tree leaf replacement | 10,000 | 8 | 1 |
+
+A tree leaf edit executes a constant number of primitives; its wall time grows
+with the validated item list (`E_v`), not with executed user code.
+
+Balanced reduction (`cargo run --release --example reduction -p reactive
+cargo run --release --example workloads -p reactive`) grows
 logarithmically:
 
 | elements | combines for a set | combines for an insert |
