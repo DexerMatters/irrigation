@@ -160,10 +160,10 @@ a mapped list followed by an observer read):
 
 | list length | primitive executions | trace validations | edit + read |
 |---|---|---|---|
-| 100 | 8 | 0 | 45 µs |
-| 1,000 | 8 | 0 | 485 µs |
-| 10,000 | 8 | 0 | 5.0 ms |
-| 50,000 | 8 | 0 | 42 ms |
+| 100 | 5 | 0 | 53 µs |
+| 1,000 | 5 | 0 | 362 µs |
+| 10,000 | 5 | 0 | 4.2 ms |
+| 50,000 | 5 | 0 | 31 ms |
 
 Executions are independent of the untouched list length, which is the plan's
 first scaling criterion. The workload matrix adds:

@@ -95,10 +95,10 @@ rather than mechanized. The cost model is measured in `examples/scaling.rs`:
 
 | list length | primitive executions | edit + read |
 |---|---|---|
-| 100 | 8 | 45 µs |
-| 1,000 | 8 | 485 µs |
-| 10,000 | 8 | 5.0 ms |
-| 50,000 | 8 | 42 ms |
+| 100 | 5 | 53 µs |
+| 1,000 | 5 | 362 µs |
+| 10,000 | 5 | 4.2 ms |
+| 50,000 | 5 | 31 ms |
 
 Executed primitives are constant; the linear term is trace validation over the
 mapped members (`E_v`), which the plan's cost model predicts and which this
