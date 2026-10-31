@@ -292,13 +292,17 @@ impl std::fmt::Debug for RootRecord {
     }
 }
 
+type SnapshotCallback = Arc<dyn Fn(&crate::snapshot::Snapshot) + Send + Sync>;
+type ChangesCallback =
+    Arc<dyn Fn(&crate::snapshot::Snapshot, &crate::snapshot::ChangeSummary) + Send + Sync>;
+
 /// An observer callback.
 #[derive(Clone)]
 pub enum Observer {
     /// Receives the snapshot only.
-    Plain(Arc<dyn Fn(&crate::snapshot::Snapshot) + Send + Sync>),
+    Plain(SnapshotCallback),
     /// Receives the snapshot and a summary of the changed View versions.
-    WithChanges(Arc<dyn Fn(&crate::snapshot::Snapshot, &crate::snapshot::ChangeSummary) + Send + Sync>),
+    WithChanges(ChangesCallback),
 }
 
 impl std::fmt::Debug for Observer {
