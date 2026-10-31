@@ -52,6 +52,17 @@ pub trait EditableView: ViewSchema {
     fn edit<'a>(edit: &'a mut crate::edit::Edit) -> Self::Editor<'a>;
 }
 
+/// What changed between two notifications of one observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChangeSummary {
+    /// The observed View.
+    pub view: ViewId,
+    /// Content version before the change.
+    pub previous: Version,
+    /// Content version now.
+    pub current: Version,
+}
+
 /// Immutable content captured at one revision.
 pub struct Snapshot {
     revision: Revision,

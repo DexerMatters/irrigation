@@ -1648,3 +1648,39 @@ fn an_equal_output_still_replaces_the_dependency_trace() {
         "the active branch was not tracked after cutoff"
     );
 }
+
+#[test]
+fn observers_receive_the_changed_view_version() {
+    use std::sync::{Arc, Mutex};
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            numbers.push(1);
+        })
+        .expect("edit");
+    let seen: Arc<Mutex<Vec<reactive::ChangeSummary>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let subscription = runtime
+        .observe_with_changes::<Model>(move |_snapshot, changes| {
+            sink.lock().expect("lock").push(*changes);
+        })
+        .expect("observe");
+
+    runtime
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            numbers.push(2);
+        })
+        .expect("edit");
+
+    let summaries = seen.lock().expect("lock");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].view, <Model as reactive::ViewSchema>::view_id());
+    assert!(summaries[0].current > summaries[0].previous);
+    drop(summaries);
+    drop(subscription);
+}

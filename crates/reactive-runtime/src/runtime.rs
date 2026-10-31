@@ -345,7 +345,44 @@ impl Runtime {
         state.subscriptions.push(SubscriptionRecord {
             id,
             view: V::view_id(),
-            callback: Arc::new(callback),
+            callback: crate::state::Observer::Plain(Arc::new(callback)),
+            last_version: version,
+            active: Arc::clone(&active),
+        });
+        Ok(Subscription {
+            inner: Arc::clone(&self.inner),
+            id,
+            active,
+        })
+    }
+
+    /// Registers a callback that also receives the changed View versions.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the View is not registered.
+    pub fn observe_with_changes<V: ViewSchema>(
+        &self,
+        callback: impl Fn(&Snapshot, &crate::snapshot::ChangeSummary) + Send + Sync + 'static,
+    ) -> Result<Subscription> {
+        if self.inner.view_descriptor(V::view_id()).is_none() {
+            return Err(ComputeError::internal(format!(
+                "cannot observe unregistered view `{}`",
+                V::DESCRIPTOR.name
+            )));
+        }
+        let mut state = self.inner.lock();
+        let id = state.next_subscription;
+        state.next_subscription += 1;
+        let active = Arc::new(AtomicBool::new(true));
+        let version = state
+            .regions
+            .get(&V::view_id())
+            .map_or(0, |region| state.node(region.content_node).changed_at);
+        state.subscriptions.push(SubscriptionRecord {
+            id,
+            view: V::view_id(),
+            callback: crate::state::Observer::WithChanges(Arc::new(callback)),
             last_version: version,
             active: Arc::clone(&active),
         });
@@ -533,7 +570,7 @@ impl Runtime {
                     (
                         subscription.id,
                         subscription.view,
-                        Arc::clone(&subscription.callback),
+                        subscription.callback.clone(),
                         Arc::clone(&subscription.active),
                     )
                 })
@@ -544,30 +581,37 @@ impl Runtime {
                 continue;
             }
             let version = snapshot.version_of(view);
-            let should_fire = {
+            let (should_fire, previous) = {
                 let mut state = self.inner.lock();
                 match state.subscriptions.iter_mut().find(|sub| sub.id == id) {
                     Some(subscription) if version != subscription.last_version => {
+                        let previous = subscription.last_version;
                         subscription.last_version = version;
-                        true
+                        (true, previous)
                     }
-                    Some(_) | None => false,
+                    Some(subscription) => (false, subscription.last_version),
+                    None => (false, 0),
                 }
             };
             if should_fire {
-                callback(&snapshot);
+                match callback {
+                    crate::state::Observer::Plain(callback) => callback(&snapshot),
+                    crate::state::Observer::WithChanges(callback) => {
+                        let summary = crate::snapshot::ChangeSummary {
+                            view,
+                            previous,
+                            current: version,
+                        };
+                        callback(&snapshot, &summary);
+                    }
+                }
             }
         }
         Ok(())
     }
 }
 
-type PendingSubscription = (
-    u64,
-    ViewId,
-    Arc<dyn Fn(&Snapshot) + Send + Sync>,
-    Arc<AtomicBool>,
-);
+type PendingSubscription = (u64, ViewId, crate::state::Observer, Arc<AtomicBool>);
 
 /// Handle for an active observation. Dropping it removes the subscription.
 pub struct Subscription {

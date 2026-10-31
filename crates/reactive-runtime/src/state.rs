@@ -292,6 +292,24 @@ impl std::fmt::Debug for RootRecord {
     }
 }
 
+/// An observer callback.
+#[derive(Clone)]
+pub enum Observer {
+    /// Receives the snapshot only.
+    Plain(Arc<dyn Fn(&crate::snapshot::Snapshot) + Send + Sync>),
+    /// Receives the snapshot and a summary of the changed View versions.
+    WithChanges(Arc<dyn Fn(&crate::snapshot::Snapshot, &crate::snapshot::ChangeSummary) + Send + Sync>),
+}
+
+impl std::fmt::Debug for Observer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plain(_) => f.write_str("Observer::Plain"),
+            Self::WithChanges(_) => f.write_str("Observer::WithChanges"),
+        }
+    }
+}
+
 /// One active observation root.
 pub struct SubscriptionRecord {
     /// Subscription identity.
@@ -299,7 +317,7 @@ pub struct SubscriptionRecord {
     /// The observed View.
     pub view: ViewId,
     /// Callback invoked after each change.
-    pub callback: Arc<dyn Fn(&crate::snapshot::Snapshot) + Send + Sync>,
+    pub callback: Observer,
     /// Content version last delivered.
     pub last_version: Version,
     /// Whether the subscription is still active.

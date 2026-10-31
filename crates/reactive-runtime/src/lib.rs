@@ -41,4 +41,6 @@ pub use param::Param;
 pub use runtime::{
     DependencyExplanation, Explain, Explanation, NodeInfo, Runtime, RuntimeStats, Subscription,
 };
-pub use snapshot::{DerivedView, EditableView, Snapshot, SourceView, ViewSchema};
+pub use snapshot::{
+    ChangeSummary, DerivedView, EditableView, Snapshot, SourceView, ViewSchema,
+};
