@@ -37,5 +37,7 @@ pub use general::{
 pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_content};
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};
 pub use param::Param;
-pub use runtime::{Explain, NodeInfo, Runtime, RuntimeStats, Subscription};
+pub use runtime::{
+    DependencyExplanation, Explain, Explanation, NodeInfo, Runtime, RuntimeStats, Subscription,
+};
 pub use snapshot::{DerivedView, EditableView, Snapshot, SourceView, ViewSchema};

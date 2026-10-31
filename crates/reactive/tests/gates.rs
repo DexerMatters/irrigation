@@ -1324,3 +1324,47 @@ fn snapshots_can_be_taken_without_a_root() {
     assert_eq!(snapshot.view::<Table>().entries(), vec![(7, 70)]);
     assert_eq!(snapshot.revision(), runtime.revision());
 }
+
+#[test]
+fn explanations_name_the_dependency_that_moved() {
+    let runtime = Runtime::new();
+    runtime.install(branching::Pick).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Toggle>();
+            view.set_flag(true);
+            view.set_left(10);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<branching::Pick>().expect("warm");
+    runtime
+        .edit(|edit| {
+            edit.view::<Toggle>().set_left(11);
+        })
+        .expect("edit");
+    // Explain the root body before repairing it: the observation that moved in
+    // the last transaction is visible as changed or suspect.
+    let root = runtime
+        .dump()
+        .into_iter()
+        .find(|node| node.kind == "InvocationBody" && node.label == "root body")
+        .expect("root body");
+    let explanation = runtime.explain_node(root.id);
+    assert!(!explanation.dependencies.is_empty());
+    assert!(explanation.suspect_at > explanation.verified_at);
+    let moved: Vec<_> = explanation
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.changed || dependency.suspect)
+        .collect();
+    assert!(
+        !moved.is_empty(),
+        "the affected observations must be visible: {explanation:?}"
+    );
+    assert!(
+        moved.len() < explanation.dependencies.len(),
+        "unaffected observations must stay certified: {explanation:?}"
+    );
+
+    let _ = runtime.read_outputs::<branching::Pick>().expect("read");
+}

@@ -442,6 +442,42 @@ impl Runtime {
             .map_or(0, |region| region.units.len())
     }
 
+    /// Explains why one node changed: which observations moved and which are
+    /// still certified.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the node identity is out of range.
+    #[must_use]
+    pub fn explain_node(&self, node: reactive_core::ids::NodeId) -> Explanation {
+        let state = self.inner.lock();
+        let record = state.node(node);
+        let dependencies = record
+            .trace
+            .iter()
+            .map(|dep| {
+                let dependency = state.node(dep.node);
+                DependencyExplanation {
+                    node: dep.node,
+                    unit: dependency.unit.as_ref().map(|unit| format!("{unit:?}")),
+                    label: dependency.label,
+                    recorded: dep.version,
+                    current: dependency.changed_at,
+                    changed: dependency.changed_at != dep.version,
+                    suspect: dependency.suspect_at > dependency.verified_at,
+                }
+            })
+            .collect();
+        Explanation {
+            node,
+            label: record.label,
+            value_changed_at: record.changed_at,
+            verified_at: record.verified_at,
+            suspect_at: record.suspect_at,
+            dependencies,
+        }
+    }
+
     /// Dumps every node with its dependency structure, for diagnostics and
     /// tests.
     #[must_use]
@@ -569,6 +605,42 @@ pub struct RuntimeStats {
     pub revisions: u64,
     /// Nodes currently allocated.
     pub nodes: usize,
+}
+
+/// Why one node changed.
+#[derive(Clone, Debug)]
+pub struct Explanation {
+    /// The explained node.
+    pub node: reactive_core::ids::NodeId,
+    /// Human-readable node label.
+    pub label: &'static str,
+    /// Revision at which the node's value last changed.
+    pub value_changed_at: Version,
+    /// Revision for which the value is certified.
+    pub verified_at: Revision,
+    /// Revision of the last invalidation.
+    pub suspect_at: Revision,
+    /// Recorded observations, in dependency order.
+    pub dependencies: Vec<DependencyExplanation>,
+}
+
+/// One observation in an [`Explanation`].
+#[derive(Clone, Debug)]
+pub struct DependencyExplanation {
+    /// Observed node.
+    pub node: reactive_core::ids::NodeId,
+    /// Logical unit, when the observed node is a View unit.
+    pub unit: Option<String>,
+    /// Observed node label.
+    pub label: &'static str,
+    /// Version recorded when the observation was made.
+    pub recorded: Version,
+    /// Current version of the observed node.
+    pub current: Version,
+    /// Whether this observation moved.
+    pub changed: bool,
+    /// Whether the observed node is itself awaiting validation.
+    pub suspect: bool,
 }
 
 /// One node in a diagnostic dump.

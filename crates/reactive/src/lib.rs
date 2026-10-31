@@ -45,7 +45,8 @@ pub use reactive_runtime::fixed_point::{
 };
 pub use reactive_runtime::{
     ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, Runtime, RuntimeConfig,
-    MemoryReport, ReclaimStats, RuntimeStats, Snapshot, SourceView, Subscription, ViewSchema, call_component, define_unit,
+    DependencyExplanation, Explanation, MemoryReport, ReclaimStats, RuntimeStats, Snapshot,
+    SourceView, Subscription, ViewSchema, call_component, define_unit,
     read_unit_value, try_read_unit_value, view_content,
 };
 pub use reactive_core::descriptor::{
