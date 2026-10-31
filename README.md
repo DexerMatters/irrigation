@@ -220,6 +220,11 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
   concurrent host reads of a certified revision executing no node bodies, and
   32 parallel members sharing one invocation under 2–4 workers without deadlock.
 
+## Internals
+
+[`docs/architecture.md`](docs/architecture.md) explains the node model, revision
+protocol, concurrency rules, unit layouts, and lowering contract.
+
 ## Reading the plan
 
 The implementation follows the plan's phase order. Where the plan and the code
