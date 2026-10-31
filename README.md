@@ -194,7 +194,9 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * general components initialize, update from change batches, honour the default reset policy, and commit state atomically;
 * an incremental equi-join matches a from-scratch join while combining only changed keys;
 * cancellation publishing nothing;
-* branch reclamation followed by correct repair and reconstruction.
+* branch reclamation followed by correct repair and reconstruction;
+* identical results across repeated schedules with 1–4 workers, and eight
+  concurrent host reads of a certified revision executing no node bodies.
 
 ## Reading the plan
 

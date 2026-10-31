@@ -1099,3 +1099,77 @@ fn incremental_join_matches_from_scratch_and_touches_only_changed_keys() {
         "a value update must combine exactly one key"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Schedule perturbation and concurrent demand
+// ---------------------------------------------------------------------------
+
+#[test]
+fn repeated_schedules_produce_identical_results() {
+    let mut expected: Option<u64> = None;
+    for round in 0..12 {
+        let workers = 1 + (round % 4);
+        let runtime = Runtime::with_config(reactive::RuntimeConfig {
+            workers,
+            stack_size: 32 * 1024 * 1024,
+            ..reactive::RuntimeConfig::default()
+        });
+        runtime.install(parallel_sum::Sum).expect("install");
+        runtime
+            .edit(|edit| {
+                let mut model = edit.view::<Model>();
+                let mut numbers = model.numbers();
+                for value in 1..=64u64 {
+                    numbers.push(value);
+                }
+            })
+            .expect("edit");
+        let value = runtime
+            .read_outputs::<parallel_sum::Sum>()
+            .expect("outputs");
+        match expected {
+            None => expected = Some(value),
+            Some(expected) => assert_eq!(value, expected, "round {round} diverged"),
+        }
+    }
+    assert_eq!(expected, Some(2 * (1..=64u64).sum::<u64>()));
+}
+
+#[test]
+fn concurrent_host_reads_share_one_execution() {
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            numbers.push(1);
+            numbers.push(2);
+            numbers.push(3);
+        })
+        .expect("edit");
+    // Warm the graph so the body and member nodes are already certified.
+    let _ = runtime
+        .read_outputs::<model_analysis::Analyze>()
+        .expect("warm");
+    let before = runtime.stats().executions;
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let runtime = &runtime;
+            handles.push(scope.spawn(move || {
+                runtime
+                    .read_outputs::<model_analysis::Analyze>()
+                    .expect("concurrent read")
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|handle| handle.join().expect("join")).collect();
+        for result in &results {
+            assert_eq!(*result, results[0]);
+        }
+    });
+
+    // Eight concurrent reads of a certified revision execute no node bodies.
+    assert_eq!(runtime.stats().executions, before);
+}
