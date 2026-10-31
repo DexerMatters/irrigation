@@ -65,7 +65,7 @@ pub fn expand_module(input: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_fn(mut item: ItemFn) -> syn::Result<TokenStream> {
+fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
     let name = item.sig.ident.clone();
     let name_str = name.to_string();
     let vis = item.vis.clone();
@@ -101,7 +101,7 @@ fn expand_fn(mut item: ItemFn) -> syn::Result<TokenStream> {
     let mut impl_fn = item.clone();
     impl_fn.sig.ident = impl_name.clone();
     impl_fn.vis = Visibility::Inherited;
-    impl_fn.block = Box::new(body_block);
+    *impl_fn.block = body_block;
     impl_fn.attrs.clear();
 
     let param_names: Vec<&syn::Ident> = params.iter().map(|(name, _)| name).collect();

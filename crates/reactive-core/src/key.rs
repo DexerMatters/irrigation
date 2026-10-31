@@ -57,13 +57,15 @@ pub fn any_key<K: Any + Hash + Eq + Send + Sync + std::fmt::Debug>(key: K) -> Ar
     Arc::new(key)
 }
 
+type Bucket<V> = Vec<(Arc<dyn AnyKey>, V)>;
+
 /// A hash-bucketed table whose buckets verify equality on the real key.
 ///
 /// This is the collision-safe form the plan requires: the hash chooses a
 /// bucket, the key decides identity.
 #[derive(Clone)]
 pub struct KeyTable<V> {
-    buckets: FxHashMap<u64, Vec<(Arc<dyn AnyKey>, V)>>,
+    buckets: FxHashMap<u64, Bucket<V>>,
     len: usize,
 }
 

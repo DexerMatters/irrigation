@@ -107,10 +107,11 @@ impl Snapshot {
         self.versions.get(&V::view_id()).copied()
     }
 
-    /// Returns the content version for a raw View identity.
+    /// Returns the content version for a raw View identity, or zero when the
+    /// View was never captured.
     #[must_use]
-    pub(crate) fn version_by_id(&self, view: ViewId) -> Option<Version> {
-        self.versions.get(&view).copied()
+    pub(crate) fn version_of(&self, view: ViewId) -> Version {
+        self.versions.get(&view).copied().unwrap_or(0)
     }
 
     /// Returns `true` when the snapshot contains the View.

@@ -245,6 +245,12 @@ impl ScopeTable {
     pub fn len(&self) -> usize {
         self.map.len()
     }
+
+    /// Returns `true` when no scope has been allocated.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 
 /// The installed root component.

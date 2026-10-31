@@ -403,6 +403,9 @@ impl Inner {
                 revision,
             );
         }
+        // Frames are thread-local execution state: `RefCell` is intentional and
+        // the frame never crosses a thread boundary.
+        #[allow(clippy::arc_with_non_send_sync)]
         let frame = Arc::new(Frame::computing(
             self.arc(),
             node,
@@ -411,7 +414,7 @@ impl Inner {
             cancel,
         ));
         let guard = FrameGuard::push(Arc::clone(&frame));
-        let result = catch_engine(|| compute());
+        let result = catch_engine(compute);
         let definitions: Vec<DefinitionDraft> = frame.take_staged();
         let deps = frame.take_deps();
         drop(guard);

@@ -262,14 +262,22 @@ where
 }
 
 /// Transactional editor for a map field.
-pub struct MapEditor<'a, K, V> {
+pub struct MapEditor<'a, K, V>
+where
+    K: Ord + Hash + Clone + Send + Sync + Debug + 'static,
+    V: Clone + PartialEq + Send + Sync + 'static,
+{
     edit: &'a mut Edit,
     view: ViewId,
     field: FieldId,
     storage: &'a mut PMap<K, V>,
 }
 
-impl<K, V> Debug for MapEditor<'_, K, V> {
+impl<K, V> Debug for MapEditor<'_, K, V>
+where
+    K: Ord + Hash + Clone + Send + Sync + Debug + 'static,
+    V: Clone + PartialEq + Send + Sync + 'static,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MapEditor").finish_non_exhaustive()
     }
@@ -300,7 +308,6 @@ where
             any_key(key.clone()),
         );
         self.edit.set(value_key, value);
-        self.stage_structure();
     }
 
     /// Removes one entry.
@@ -317,12 +324,21 @@ where
             any_key(key.clone()),
         );
         self.edit.set(membership, false);
-        self.stage_structure();
     }
 
     fn stage_structure(&mut self) {
         let structure: PMap<K, ()> = self.storage.iter().map(|(key, _)| (key.clone(), ())).collect();
         self.edit.set(structure_unit(self.view, self.field), structure);
+    }
+}
+
+impl<K, V> Drop for MapEditor<'_, K, V>
+where
+    K: Ord + Hash + Clone + Send + Sync + Debug + 'static,
+    V: Clone + PartialEq + Send + Sync + 'static,
+{
+    fn drop(&mut self) {
+        self.stage_structure();
     }
 }
 

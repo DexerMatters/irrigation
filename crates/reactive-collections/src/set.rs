@@ -174,14 +174,14 @@ where
 }
 
 /// Transactional editor for a source set.
-pub struct SourceSetEditor<'a, T> {
+pub struct SourceSetEditor<'a, T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static> {
     edit: &'a mut Edit,
     view: ViewId,
     field: FieldId,
     storage: &'a mut PSet<T>,
 }
 
-impl<T> std::fmt::Debug for SourceSetEditor<'_, T> {
+impl<T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static> std::fmt::Debug for SourceSetEditor<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SourceSetEditor").finish_non_exhaustive()
     }
@@ -207,7 +207,6 @@ where
             ),
             true,
         );
-        self.stage_structure();
         true
     }
 
@@ -227,7 +226,6 @@ where
             ),
             false,
         );
-        self.stage_structure();
         true
     }
 
@@ -235,6 +233,15 @@ where
         let structure = self.storage.clone();
         self.edit
             .set(structure_unit(self.view, self.field), structure);
+    }
+}
+
+impl<T> Drop for SourceSetEditor<'_, T>
+where
+    T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
+{
+    fn drop(&mut self) {
+        self.stage_structure();
     }
 }
 

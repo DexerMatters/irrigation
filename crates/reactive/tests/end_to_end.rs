@@ -1,7 +1,7 @@
 //! End-to-end test of the macro surface: views, a root component, edits,
 //! snapshots, and typed outputs.
 
-use reactive::{component, reactive, view, Runtime};
+use reactive::{reactive, view, Runtime};
 
 #[view(source)]
 pub struct Inputs {

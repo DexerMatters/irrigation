@@ -30,6 +30,9 @@ pub use reactive_runtime::helpers::{
     ensure_view, node_of, observe_clone, observe_local, values_equal,
 };
 pub use reactive_runtime::Param;
+pub use reactive_runtime::fixed_point::{
+    FixedPoint, FixedPointProblem, Lattice, solve as solve_fixed_point,
+};
 pub use reactive_runtime::{
     ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, Runtime, RuntimeConfig,
     RuntimeStats, Snapshot, SourceView, Subscription, ViewSchema, call_component, define_unit,

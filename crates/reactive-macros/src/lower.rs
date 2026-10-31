@@ -12,7 +12,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::{Block, Expr, ExprClosure, ExprMacro, FnArg, Pat, Stmt};
+use syn::{Block, Expr, ExprClosure, ExprMacro, Pat, Stmt};
 
 /// A lowered expression and, when it is backed by one node, that node.
 struct Lowered {
@@ -288,10 +288,9 @@ impl Lowerer {
                     .map(|field| {
                         let member = &field.member;
                         let value = self.expr(&field.expr);
-                        if field.colon_token.is_some() {
-                            quote!(#member: #value)
-                        } else {
-                            quote!(#value)
+                        match member {
+                            syn::Member::Named(_) => quote!(#member: #value),
+                            syn::Member::Unnamed(_) => quote!(#value),
                         }
                     })
                     .collect();
@@ -325,7 +324,7 @@ impl Lowerer {
                     .arms
                     .iter()
                     .map(|arm| {
-                        let (pattern, guard) = match &arm.pat {
+                        let (_pattern, _guard) = match &arm.pat {
                             Pat::Guard(guard) => {
                                 let condition = self.expr(&guard.guard);
                                 ((*guard.pat).clone(), quote!(if #condition))
@@ -536,20 +535,4 @@ fn is_transparent_method(name: &str) -> bool {
             | "as_deref"
             | "borrow"
     )
-}
-
-/// Returns the argument names of a component signature.
-pub fn parameter_names(
-    inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
-) -> Vec<syn::Ident> {
-    inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            FnArg::Typed(typed) => match &*typed.pat {
-                Pat::Ident(ident) => Some(ident.ident.clone()),
-                _ => None,
-            },
-            FnArg::Receiver(_) => None,
-        })
-        .collect()
 }

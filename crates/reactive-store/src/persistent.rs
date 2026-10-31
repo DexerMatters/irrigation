@@ -156,9 +156,11 @@ fn entry_insert<K: Ord + Clone, V: Clone>(
     }
 }
 
+type EntryLink<K, V> = Option<Arc<Entry<K, V>>>;
+
 fn entry_remove_min<K: Ord + Clone, V: Clone>(
     entry: Arc<Entry<K, V>>,
-) -> (Option<Arc<Entry<K, V>>>, Arc<Entry<K, V>>) {
+) -> (EntryLink<K, V>, Arc<Entry<K, V>>) {
     match entry.left.clone() {
         None => (entry.right.clone(), entry),
         Some(left) => {

@@ -362,14 +362,14 @@ where
 }
 
 /// Transactional editor for a source list.
-pub struct SourceListEditor<'a, T> {
+pub struct SourceListEditor<'a, T: Clone + PartialEq + Send + Sync + 'static> {
     edit: &'a mut Edit,
     view: ViewId,
     field: FieldId,
     storage: &'a mut PSeq<(u64, T)>,
 }
 
-impl<T> std::fmt::Debug for SourceListEditor<'_, T> {
+impl<T: Clone + PartialEq + Send + Sync + 'static> std::fmt::Debug for SourceListEditor<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SourceListEditor").finish_non_exhaustive()
     }
@@ -391,7 +391,6 @@ where
             UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(id)),
             value,
         );
-        self.stage_structure();
         id
     }
 
@@ -410,7 +409,6 @@ where
             UnitKey::entity(self.view, self.field, UnitKind::Membership, any_key(id)),
             false,
         );
-        self.stage_structure();
         Some(value)
     }
 
@@ -432,13 +430,21 @@ where
             return;
         }
         *self.storage = self.storage.move_element(from, to);
-        self.stage_structure();
     }
 
     fn stage_structure(&mut self) {
         let ids: PSeq<u64> = self.storage.iter().map(|(id, _)| *id).collect();
         self.edit
             .set(structure_unit(self.view, self.field), ids);
+    }
+}
+
+impl<T> Drop for SourceListEditor<'_, T>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+{
+    fn drop(&mut self) {
+        self.stage_structure();
     }
 }
 
@@ -588,6 +594,39 @@ where
     }
 }
 
+fn map_member<T, U, F>(
+    runtime: &std::sync::Arc<dyn reactive_core::RuntimeOps>,
+    call_scope: reactive_core::ScopeId,
+    id: u64,
+    view: ViewId,
+    field: FieldId,
+    content: fn(&dyn Any) -> PSeq<(u64, T)>,
+    f: &F,
+) -> U
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    U: Clone + PartialEq + Send + Sync + 'static,
+    F: Fn(reactive_runtime::Param<T>) -> U + ?Sized,
+{
+    let member_scope = runtime.child_scope(call_scope, id, "list_member");
+    let param_node = runtime.site_node(member_scope, SiteId(1));
+    let value: T = reactive_core::ops::eval_node_with(runtime, param_node, || {
+        read_unit_value(
+            UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
+            |any| {
+                content(any)
+                    .iter()
+                    .find(|(existing, _)| *existing == id)
+                    .map(|(_, value)| value.clone())
+            },
+        )
+    });
+    let result_node = runtime.site_node(member_scope, SiteId(2));
+    reactive_core::ops::eval_node_with(runtime, result_node, || {
+        f(reactive_runtime::Param::new(param_node, value.clone()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -621,37 +660,4 @@ mod tests {
         );
         assert_eq!(storage.to_vec(), vec![1, 2, 3]);
     }
-}
-
-fn map_member<T, U, F>(
-    runtime: &std::sync::Arc<dyn reactive_core::RuntimeOps>,
-    call_scope: reactive_core::ScopeId,
-    id: u64,
-    view: ViewId,
-    field: FieldId,
-    content: fn(&dyn Any) -> PSeq<(u64, T)>,
-    f: &F,
-) -> U
-where
-    T: Clone + PartialEq + Send + Sync + 'static,
-    U: Clone + PartialEq + Send + Sync + 'static,
-    F: Fn(reactive_runtime::Param<T>) -> U + ?Sized,
-{
-    let member_scope = runtime.child_scope(call_scope, id, "list_member");
-    let param_node = runtime.site_node(member_scope, SiteId(1));
-    let value: T = reactive_core::ops::eval_node_with(runtime, param_node, || {
-        read_unit_value(
-            UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
-            |any| {
-                content(any)
-                    .iter()
-                    .find(|(existing, _)| *existing == id)
-                    .map(|(_, value)| value.clone())
-            },
-        )
-    });
-    let result_node = runtime.site_node(member_scope, SiteId(2));
-    reactive_core::ops::eval_node_with(runtime, result_node, || {
-        f(reactive_runtime::Param::new(param_node, value.clone()))
-    })
 }

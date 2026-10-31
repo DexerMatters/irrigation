@@ -12,6 +12,9 @@ use std::sync::Arc;
 use crate::ids::{FieldId, ViewId};
 use crate::key::AnyKey;
 
+/// An immutable, type-erased View content value.
+pub type Content = Arc<dyn std::any::Any + Send + Sync>;
+
 /// Whether a View is populated by edits or by component definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ViewKind {
@@ -55,35 +58,35 @@ pub struct FieldDescriptor {
 #[derive(Clone, Copy, Debug)]
 pub struct ContentVtable {
     /// Creates the empty content value.
-    pub empty: fn() -> std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    pub empty: fn() -> Content,
     /// Installs one unit into the content.
     pub define: fn(
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        &Content,
         &UnitKey,
         crate::value::Value,
-    ) -> std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Content,
     /// Retracts one unit from the content.
     pub retract: fn(
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        &Content,
         &UnitKey,
-    ) -> std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Content,
     /// Reports whether a unit is present.
     pub contains: fn(
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        &Content,
         &UnitKey,
     ) -> bool,
     /// Reads the current value of a unit out of the content.
     pub get: fn(
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        &Content,
         &UnitKey,
     ) -> Option<crate::value::Value>,
     /// Compares two content values semantically.
     pub eq: fn(
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
-        &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        &Content,
+        &Content,
     ) -> bool,
     /// Formats the content for diagnostics.
-    pub debug: fn(&std::sync::Arc<dyn std::any::Any + Send + Sync>) -> String,
+    pub debug: fn(&Content) -> String,
 }
 
 /// Describes a registered View namespace.

@@ -1,7 +1,7 @@
 //! Acceptance gates from the plan: randomized oracle comparison, recursion,
 //! mutual recursion, cycle detection, and unique definitions.
 
-use reactive::{component, reactive, view, Runtime};
+use reactive::{reactive, view, Runtime};
 
 // ---------------------------------------------------------------------------
 // Randomized edit sequence against a from-scratch oracle
@@ -367,4 +367,124 @@ fn results_are_invariant_across_worker_counts() {
         results.push(runtime.read_outputs::<parallel_sum::Sum>().expect("outputs"));
     }
     assert_eq!(results, vec![10100, 10100, 10100]);
+}
+
+// ---------------------------------------------------------------------------
+// Fixed points inside a component
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct GraphInput {
+    edges: List<(u32, u32)>,
+    seed: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Reachability {
+    edges: Vec<(u32, u32)>,
+    seeds: Vec<u32>,
+}
+
+impl reactive::FixedPointProblem for Reachability {
+    type Key = u32;
+    type Value = bool;
+
+    fn seeds(&self) -> Vec<(u32, bool)> {
+        self.seeds.iter().map(|node| (*node, true)).collect()
+    }
+
+    fn transfer(&self, key: &u32, value: &bool) -> Vec<(u32, bool)> {
+        if !*value {
+            return Vec::new();
+        }
+        self.edges
+            .iter()
+            .filter(|(from, _)| from == key)
+            .map(|(_, to)| (*to, true))
+            .collect()
+    }
+}
+
+#[reactive]
+mod reachability {
+    use super::{GraphInput, Reachability};
+
+    #[component]
+    pub fn reachable(input: &GraphInput) -> Vec<u32> {
+        let edges = input.edges().to_vec();
+        let seed = input.seed();
+        let problem = Reachability {
+            edges,
+            seeds: vec![seed],
+        };
+        let fixed = reactive::solve_fixed_point(&problem).expect("converges");
+        let mut nodes: Vec<u32> = fixed.non_bottom();
+        nodes.sort_unstable();
+        nodes
+    }
+}
+
+fn reachable_from_scratch(edges: &[(u32, u32)], seed: u32) -> Vec<u32> {
+    let mut reached = std::collections::BTreeSet::from([seed]);
+    let mut queue = vec![seed];
+    while let Some(node) = queue.pop() {
+        for (from, to) in edges {
+            if *from == node && reached.insert(*to) {
+                queue.push(*to);
+            }
+        }
+    }
+    reached.into_iter().collect()
+}
+
+#[test]
+fn fixed_points_inside_components_follow_insertions_and_deletions() {
+    let runtime = Runtime::new();
+    runtime.install(reachability::Reachable).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<GraphInput>();
+            view.set_seed(0);
+            let mut edges = view.edges();
+            edges.push((0, 1));
+            edges.push((1, 2));
+            edges.push((2, 3));
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<reachability::Reachable>()
+            .expect("outputs"),
+        vec![0, 1, 2, 3]
+    );
+
+    // Retract the middle edge: deletion must not leave stale facts behind.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<GraphInput>();
+            let mut edges = view.edges();
+            edges.remove(1);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<reachability::Reachable>()
+            .expect("outputs"),
+        reachable_from_scratch(&[(0, 1), (2, 3)], 0)
+    );
+
+    // Reinsert it: the region recomputes to the larger fixed point.
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<GraphInput>();
+            let mut edges = view.edges();
+            edges.push((1, 2));
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<reachability::Reachable>()
+            .expect("outputs"),
+        reachable_from_scratch(&[(0, 1), (2, 3), (1, 2)], 0)
+    );
 }

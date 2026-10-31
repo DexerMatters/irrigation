@@ -119,7 +119,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         .map(|field| field.ident.to_string())
         .collect();
     let field_vis: Vec<&Visibility> = fields.iter().map(|field| &field.vis).collect();
-    let indices: Vec<u16> = fields.iter().map(|field| field.index).collect();
+    let _indices: Vec<u16> = fields.iter().map(|field| field.index).collect();
 
     // ---------------------------------------------------------------- content
     let content = quote! {
@@ -144,12 +144,10 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             let ident = &field.ident;
             let index = field.index;
             let marker = marker_for(&field.shape, derived);
-            match field.shape {
-                _ => quote! {
-                    #index => {
-                        let entity = key.entity.as_deref().unwrap_or(&());
-                        next.#ident = <#marker as reactive::ViewField>::define(&next.#ident, entity, value);
-                    },
+            quote! {
+                #index => {
+                    let entity = key.entity.as_deref().unwrap_or(&());
+                    next.#ident = <#marker as reactive::ViewField>::define(&next.#ident, entity, value);
                 },
             }
         })

@@ -1,18 +1,16 @@
 //! The public runtime handle: installation, reads, edits, and observations.
 
-use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use reactive_core::error::{ComputeError, Result};
-use reactive_core::frame::CancelToken;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{ComponentId, Revision, Version, ViewId};
 use reactive_core::ops::catch_engine;
 use reactive_core::value::Value;
 use reactive_core::descriptor::ViewDescriptor;
 
-use crate::component::{ComponentSpec, RootComponent, eval_value};
+use crate::component::{ComponentSpec, RootComponent};
 use crate::edit::Edit;
 use crate::inner::{Inner, RuntimeConfig};
 use crate::snapshot::{Snapshot, ViewSchema};
@@ -333,7 +331,7 @@ impl Runtime {
             return Ok(());
         }
         let snapshot = self.read()?;
-        let pending: Vec<(u64, ViewId, Arc<dyn Fn(&Snapshot) + Send + Sync>, Arc<AtomicBool>)> = {
+        let pending: Vec<PendingSubscription> = {
             let state = self.inner.lock();
             state
                 .subscriptions
@@ -356,15 +354,11 @@ impl Runtime {
             let should_fire = {
                 let mut state = self.inner.lock();
                 match state.subscriptions.iter_mut().find(|sub| sub.id == id) {
-                    Some(subscription) => {
-                        if version != subscription.last_version {
-                            subscription.last_version = version;
-                            true
-                        } else {
-                            false
-                        }
+                    Some(subscription) if version != subscription.last_version => {
+                        subscription.last_version = version;
+                        true
                     }
-                    None => false,
+                    Some(_) | None => false,
                 }
             };
             if should_fire {
@@ -374,6 +368,13 @@ impl Runtime {
         Ok(())
     }
 }
+
+type PendingSubscription = (
+    u64,
+    ViewId,
+    Arc<dyn Fn(&Snapshot) + Send + Sync>,
+    Arc<AtomicBool>,
+);
 
 /// Handle for an active observation. Dropping it removes the subscription.
 pub struct Subscription {
@@ -480,8 +481,4 @@ pub fn component_id<S: ComponentSpec>() -> ComponentId {
     S::ID
 }
 
-impl Snapshot {
-    fn version_of(&self, view: ViewId) -> Version {
-        self.version_by_id(view).unwrap_or(0)
-    }
-}
+

@@ -1,0 +1,183 @@
+# Reactive: a concurrent, fine-grained incremental computation system
+
+A Rust workspace implementing the design in
+[`plans/concurrent-incremental-system-plan.md`](plans/concurrent-incremental-system-plan.md):
+user-defined components generate dependency graphs over typed **Views**, the
+runtime records primitive-level observations, and changes repair only the
+computations whose inputs actually changed.
+
+The observable contract is:
+
+> the result at revision `r` equals a deterministic from-scratch evaluation at
+> revision `r`, and an unchanged output keeps its change version, so it does not
+> notify its consumers.
+
+## Quick start
+
+```rust
+use reactive::{component, reactive, view, Runtime};
+
+#[view(source)]
+pub struct Inputs {
+    numbers: List<u32>,
+    strict: bool,
+}
+
+#[view(derived)]
+pub struct Squares(Map<u32, u32>);
+
+#[reactive]
+mod analysis {
+    use super::{Inputs, Squares};
+
+    #[component]
+    pub fn analyze(inputs: &Inputs) -> (Squares, u64) {
+        let numbers = inputs.numbers();
+        let doubled = numbers.map(|n| *n * 2);
+        let total = doubled.iter().sum::<u64>();
+        let squares = Squares::from(numbers.map(|n| (*n * 2, *n * *n)));
+        (squares, total)
+    }
+}
+
+let runtime = Runtime::new();
+runtime.install(analysis::Analyze)?;
+
+runtime.edit(|edit| {
+    let mut inputs = edit.view::<Inputs>();
+    let mut numbers = inputs.numbers();
+    numbers.push(1);
+    numbers.push(2);
+})?;
+
+let snapshot = runtime.read()?;
+let entries = snapshot.view::<Squares>().field0();
+
+let subscription = runtime.observe::<Squares>(|snapshot| {
+    println!("{:?}", snapshot.view::<Squares>().field0());
+});
+```
+
+## Architecture
+
+| Crate | Responsibility |
+|---|---|
+| `reactive-core` | identities, structured errors, ambient computation frames, type-erased values, collision-safe dynamic keys, change contracts, View descriptors |
+| `reactive-store` | persistent AVL map/sequence/set, graph and tree stores, field storage contracts |
+| `reactive-runtime` | node arena, ordered validation, change cutoff, reverse-edge invalidation, edits, derived regions, snapshots, subscriptions, worker pool, fixed points |
+| `reactive-collections` | source list/map/set with per-entity observations, tracked parameter handles, per-member operators, derived collections |
+| `reactive-macros` | `#[view]`, `#[component]`, `#[reactive]` lowering to tracked primitives |
+| `reactive-test` | oracle and trace hooks |
+| `reactive` | public facade |
+
+### How a change flows
+
+1. **Edit.** `runtime.edit(|e| ...)` stages unit writes against the committed
+   snapshot. At commit the runtime compares final values; a transaction whose
+   final state is equal publishes no revision.
+2. **Invalidation.** Changed unit nodes mark their reverse dependents suspect at
+   the new revision. A node stays suspect until it is verified *after* that
+   invalidation (`suspect_at <= verified_at`).
+3. **Demand.** `runtime.read()` runs on a worker thread. Each node either
+   returns a certified value, validates its ordered trace, or re-executes with a
+   fresh recorder.
+4. **Cutoff.** An equal result keeps `changed_at`; only changed projections
+   notify consumers. Output projections are separate nodes, so output 0 can be
+   reused while output 1 changes.
+5. **Definitions.** A derived View unit is defined by exactly one provider
+   invocation. Definitions commit atomically with the node's value and trace;
+   two providers for one unit produce a deterministic diagnostic.
+
+## What is implemented
+
+| Plan area | Status |
+|---|---|
+| Revisioned scalar/record units, tracked reads, ordered validation, cutoff | implemented |
+| Dynamic branches; inactive branches have no active trace entries | implemented |
+| Negative dependencies (`get(k) == None`, `contains(x) == false`) | implemented |
+| Unique definitions and dispatcher-free composition | implemented |
+| Recursive and mutually recursive components with argument interning | implemented |
+| Transient parameters (component args and per-member `Param`) | implemented |
+| Expression-level lowering: each primitive is a node; unsupported constructs are rejected | implemented |
+| Tracked locals (`let` bindings) so consumers depend on producers | implemented |
+| List/Map/Set source Views with per-entity membership and payload units | implemented |
+| Derived Map (per key), derived List/Set (whole value, documented boundary) | implemented |
+| Per-member `map`/`filter`/`flat_map` with identity-based reuse | implemented |
+| Parallel worker pool, large stacks, nested-demand inline execution | implemented |
+| Parallel list `map` across worker chunks, deterministic order | implemented |
+| Single-flight claims, cross-thread wait graph, cycle detection | implemented |
+| Snapshots pinned to a revision | implemented |
+| Subscriptions that keep observation roots active | implemented |
+| Declared fixed points (lattice, monotone transfer, budget, reset deletion) | implemented |
+| Deep recursion (10,000 levels) | implemented with large worker stacks |
+| Graph and tree View families | **pending** |
+| `#[tree_view]` enum-group macro | **pending** |
+| `GeneralComponent` trait and output transactions | **pending** |
+| Indexed joins and balanced lawful reductions | **pending** |
+| Cache eviction, memory accounting, benchmarks | **partial** |
+| Async `GeneralComponent` futures, cancellation API | **pending** |
+
+The pending items are tracked in
+[`plans/implementation-status.md`](plans/implementation-status.md).
+
+## Honest boundaries
+
+* **Stack safety comes from worker stack size, not heap frames.** Deep
+  recursion is supported to the configured `stack_size` (256 MiB by default,
+  `RuntimeConfig`), and `max_depth` turns exhaustion into a structured error.
+  A production version should use heap-owned frames or fibers.
+* **Derived lists and sets are whole-value definitions.** A producer that
+  reconstructs a sequence has no occurrence identity to offer; the plan requires
+  that boundary to be explicit. Derived maps are per-key and fine-grained.
+* **Parallel operators require `Send + Sync` closures** and use scoped threads
+  per chunk, so the closure can borrow its environment. This is real
+  parallelism, but it is not a work-stealing continuation scheduler.
+* **Loops and `return` are rejected** inside components. Iteration goes through
+  collection operators; the macro reports the unsupported construct instead of
+  silently coarsening it.
+* **Tracked locals are cloned on use** (`observe_clone`) so a local remains
+  usable after an observation. Handles are cheap to clone; large payloads should
+  be `Arc`-backed by the View API.
+* **Effects inside components are cached with their node.** A `println!`-style
+  effect is rejected, but a counter incremented through a static would be
+  skipped on reuse. Diagnostics belong in outputs and observers.
+
+## Testing
+
+```sh
+cargo test --workspace          # unit, kernel, macro, and acceptance-gate tests
+cargo run --release --example scaling -p reactive
+```
+
+Measured on this machine (release, one worker, one point edit at the middle of
+a mapped list followed by an observer read):
+
+| list length | primitive executions | trace validations | edit + read |
+|---|---|---|---|
+| 100 | 8 | 0 | 45 µs |
+| 1,000 | 8 | 0 | 485 µs |
+| 10,000 | 8 | 0 | 5.0 ms |
+| 50,000 | 8 | 0 | 42 ms |
+
+Executions are independent of the untouched list length, which is the plan's
+first scaling criterion. Wall time grows with the member trace the runtime must
+validate (`E_v` in the plan's cost model), not with executed user code.
+
+The acceptance gates in `crates/reactive/tests/gates.rs` cover:
+
+* 2,000 randomized edit transactions checked against a from-scratch oracle;
+* no-op transactions publishing nothing;
+* recursion, mutual recursion, and memoized invocation reuse;
+* value cycles reported as errors rather than hangs;
+* two providers defining one unit rejected deterministically;
+* independent output cutoff;
+* 10,000-deep recursion;
+* identical results across 1, 2, and 4 workers;
+* fixed points inside components across edge insertion and deletion.
+
+## Reading the plan
+
+The implementation follows the plan's phase order. Where the plan and the code
+diverge, the divergence is listed in
+[`plans/implementation-status.md`](plans/implementation-status.md) rather than
+hidden.

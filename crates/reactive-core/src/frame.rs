@@ -307,6 +307,9 @@ pub fn in_scope<R>(discriminant: u64, label: &'static str, f: impl FnOnce() -> R
     let scope = parent
         .runtime()
         .child_scope(parent.scope(), discriminant, label);
+    // Frames are thread-local execution state: `RefCell` is intentional and the
+    // frame never crosses a thread boundary.
+    #[allow(clippy::arc_with_non_send_sync)]
     let frame = Arc::new(Frame::scoped(
         Arc::clone(parent.runtime()),
         parent.node(),

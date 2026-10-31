@@ -163,6 +163,12 @@ pub fn value_unit(view: ViewId, field: FieldId, key: impl Into<EntityKey>) -> Un
 /// A dynamically typed entity key.
 pub struct EntityKey(std::sync::Arc<dyn reactive_core::key::AnyKey>);
 
+impl std::fmt::Debug for EntityKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("EntityKey").field(&self.0.key_display()).finish()
+    }
+}
+
 impl EntityKey {
     /// Erases a concrete key.
     #[must_use]

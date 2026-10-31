@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 /// Expands a tree View group.
 pub fn expand(_args: TokenStream, input: TokenStream) -> TokenStream {
     syn::Error::new_spanned(
-        proc_macro2::TokenStream::from(input),
+        input,
         "`#[tree_view]` is not implemented yet; use source Views with `List`/`Map` fields",
     )
     .to_compile_error()
