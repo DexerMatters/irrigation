@@ -1908,3 +1908,4 @@ fn result_control_flow_is_tracked_like_any_other_value() {
         Ok(10)
     );
 }
+
