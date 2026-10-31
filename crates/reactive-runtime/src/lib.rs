@@ -30,7 +30,7 @@ pub use component::{ComponentSpec, RootComponent, call_component};
 pub use edit::Edit;
 pub use field::{ScalarEditor, ScalarRef, ViewFieldHandle};
 pub use fixed_point::{FixedPoint, FixedPointProblem, Lattice, solve, solve_with_budget};
-pub use helpers::{define_unit, read_unit_value, view_content};
+pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_content};
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};
 pub use param::Param;
 pub use runtime::{Explain, NodeInfo, Runtime, RuntimeStats, Subscription};

@@ -25,7 +25,7 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | Set | implemented for source Views (per-member membership units) |
 | Map | implemented for source and derived Views (membership + value per key) |
 | Graph | implemented for source Views: topology, per-node payload, per-edge payload and per-node adjacency units; node deletion retracts incident edges |
-| Tree | pending (persistent store exists; `#[tree_view]` macro not implemented) |
+| Tree | implemented: `#[tree_view]` generates typed refs, kind enums, per-variant accessors, build conversions, and an editor with identity-preserving replace/move/remove |
 
 Negative reads are dependencies: membership units default to `false` and are
 updated on insertion/removal, so `get(k) == None` wakes when `k` appears. The
@@ -84,7 +84,7 @@ both directions, including that an unrelated key executes no consumer work.
 | `#[reactive]` / `#[component]` | implemented |
 | `runtime.install` / `edit` / `read` / `observe` | implemented |
 | Snapshots with typed View handles | implemented |
-| `#[tree_view]` | pending |
+| `#[tree_view]` | implemented |
 | `GeneralComponent` | pending |
 
 ## §11–§12 Architecture, correctness, cost
@@ -108,8 +108,8 @@ implementation does not claim to eliminate.
 | Phase | Status |
 |---|---|
 | 1 — sequential semantic kernel | complete for scalar/record/list/map/set Views; graph/tree pending |
-| 2 — fine-grained generated components | complete except the enum-group tree macro |
-| 3 — all collection Views and delta operators | partial: list/map/set complete; graph/tree, joins, and `GeneralComponent` pending |
+| 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
+| 3 — all collection Views and delta operators | partial: list/map/set/graph/tree complete; indexed joins and `GeneralComponent` pending |
 | 4 — parallel, pipelined execution | partial: pool, parallel map, invariance, deep recursion; continuation scheduling, cancellation tests, and schedule perturbation pending |
 | 5 — fixed points, resource control, performance | partial: fixed points, reclamation, and memory accounting implemented; the full benchmark matrix is pending |
 
@@ -130,10 +130,9 @@ implementation does not claim to eliminate.
 
 ## Next work, in plan order
 
-1. `#[tree_view]` enum-group macro and tree View family.
-2. Graph View family with topology/payload separation.
-3. `GeneralComponent` with output transactions, dependency scopes, and update
+1. `GeneralComponent` with output transactions, dependency scopes, and update
    batches.
+2. Indexed joins and the bilinear delta rule.
 4. Indexed joins and lawful balanced reductions.
 5. Continuation-based scheduling, cancellation API, and schedule perturbation
    tests.

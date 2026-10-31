@@ -374,3 +374,4 @@ fn output_types(output: &ReturnType) -> Vec<Type> {
     }
 }
 
+

@@ -113,7 +113,7 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Declared fixed points (lattice, monotone transfer, budget, reset deletion) | implemented |
 | Deep recursion (10,000 levels) | implemented with large worker stacks |
 | Graph View family (topology, payloads, adjacency, node deletion) | implemented |
-| Tree View family and `#[tree_view]` | **pending** |
+| Tree View family and `#[tree_view]` enum-group macro | implemented |
 | `GeneralComponent` trait and output transactions | **pending** |
 | Indexed joins and balanced lawful reductions | **pending** |
 | Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
@@ -177,6 +177,7 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * identical results across 1, 2, and 4 workers;
 * fixed points inside components across edge insertion and deletion;
 * graph topology isolation from payload edits, and node deletion retracting edges;
+* tree reads, identity-preserving replacement and subtree moves, subtree retraction, and leaf edits that do not rebuild the tree;
 * missing-key reads as dependencies, with unrelated keys executing nothing;
 * cancellation publishing nothing;
 * branch reclamation followed by correct repair and reconstruction.

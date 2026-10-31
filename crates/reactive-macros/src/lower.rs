@@ -330,7 +330,7 @@ impl Lowerer {
                     .arms
                     .iter()
                     .map(|arm| {
-                        let (_pattern, _guard) = match &arm.pat {
+                        let (pattern, guard) = match &arm.pat {
                             Pat::Guard(guard) => {
                                 let condition = self.expr(&guard.guard);
                                 ((*guard.pat).clone(), quote!(if #condition))
@@ -339,7 +339,7 @@ impl Lowerer {
                         };
                         let body = self.expr(&arm.body);
                         let observe = observe.clone();
-                        quote!({ #observe #body })
+                        quote!(#pattern #guard => { #observe #body },)
                     })
                     .collect();
                 let _ = &arms;

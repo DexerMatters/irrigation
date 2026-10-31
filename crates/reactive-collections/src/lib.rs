@@ -21,8 +21,13 @@ pub mod graph;
 pub mod list;
 pub mod map;
 pub mod set;
+pub mod tree;
 
 pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, SourceListRef};
 pub use map::{Map, MapEditor, MapRef};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};
+pub use tree::{
+    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,
+    TreeNodeId, TreeValue, slots as tree_slots, tree_content_vtable, tree_eq, tree_fields,
+};

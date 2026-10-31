@@ -14,6 +14,10 @@ pub use reactive_collections::{
     SourceListEditor, SourceListRef, SourceSet, SourceSetEditor, SourceSetRef,
 };
 pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
+pub use reactive_collections::{
+    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,
+    TreeNodeId, TreeValue, tree_content_vtable, tree_eq, tree_fields, tree_slots,
+};
 pub use reactive_core::error::{ComputeError, Result};
 pub use reactive_core::frame::{CancelToken, Dep};
 pub use reactive_core::hash::hash_one;
@@ -37,7 +41,7 @@ pub use reactive_runtime::fixed_point::{
 pub use reactive_runtime::{
     ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, Runtime, RuntimeConfig,
     MemoryReport, ReclaimStats, RuntimeStats, Snapshot, SourceView, Subscription, ViewSchema, call_component, define_unit,
-    read_unit_value, view_content,
+    read_unit_value, try_read_unit_value, view_content,
 };
 pub use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
