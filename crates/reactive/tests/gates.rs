@@ -1750,3 +1750,57 @@ fn a_dynamic_expansion_that_collides_is_diagnosed() {
         "expected a duplicate-definition error, got {error:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Panics abort one execution scope without poisoning the runtime
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Bomb {
+    armed: bool,
+}
+
+fn explode() -> u64 {
+    panic!("boom");
+}
+
+#[reactive]
+mod bomb {
+    use super::{explode, Bomb};
+
+    #[component]
+    pub fn risky(bomb: &Bomb) -> u64 {
+        if bomb.armed() {
+            explode()
+        } else {
+            7
+        }
+    }
+}
+
+#[test]
+fn a_panic_fails_one_scope_and_the_next_revision_recovers() {
+    let runtime = Runtime::new();
+    runtime.install(bomb::Risky).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<Bomb>().set_armed(true);
+        })
+        .expect("edit");
+    let error = runtime.read_outputs::<bomb::Risky>().unwrap_err();
+    assert!(
+        matches!(error, reactive::ComputeError::Panicked { .. }),
+        "expected a panic error, got {error:?}"
+    );
+
+    // The single-flight slot is released and the failure is not permanent.
+    runtime
+        .edit(|edit| {
+            edit.view::<Bomb>().set_armed(false);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<bomb::Risky>().expect("recovers"),
+        7
+    );
+}
