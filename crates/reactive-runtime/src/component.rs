@@ -24,7 +24,7 @@ use crate::inner::arguments_hash;
 /// provide independent cutoff.
 pub trait ComponentSpec: Send + Sync + 'static {
     /// Interned argument tuple.
-    type Args: Clone + Hash + Eq + Send + Sync + 'static;
+    type Args: Clone + Hash + PartialEq + Send + Sync + 'static;
     /// Output product.
     type Output: Clone + PartialEq + Send + Sync + 'static;
 
@@ -60,7 +60,7 @@ pub trait RootComponent: Send + Sync + 'static {
     /// Number of output projections.
     const ARITY: usize;
     /// Views this component reads, registered at install time.
-    const VIEWS: &'static [&'static reactive_store::descriptor::ViewDescriptor];
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor];
 
     /// Executes the component body.
     fn run() -> Self::Output;

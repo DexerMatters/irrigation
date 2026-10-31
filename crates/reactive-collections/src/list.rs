@@ -19,7 +19,7 @@ use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
-use reactive_store::descriptor::{FieldKind, UnitKey, UnitKind};
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::persistent::PSeq;
 
@@ -194,41 +194,62 @@ where
     ///
     /// The closure receives a [`Param`] that records the element observation on
     /// every dereference, so a primitive inside the closure depends on exactly
-    /// the element it read.
+    /// the element it read. With more than one worker, chunks run in parallel;
+    /// the result order is fixed by element order, not completion order.
     #[must_use]
     pub fn map<U, F>(&self, f: F) -> Vec<U>
     where
         U: Clone + PartialEq + Send + Sync + 'static,
-        F: Fn(reactive_runtime::Param<T>) -> U,
+        T: Send + Sync,
+        F: Fn(reactive_runtime::Param<T>) -> U + Send + Sync,
     {
         let frame = reactive_core::frame::current_or_engine_panic("list map");
         let runtime = std::sync::Arc::clone(frame.runtime());
         let call_scope = runtime.child_scope(frame.scope(), u64::from(frame.node().0), "list_map");
+        let ids = self.ids().to_vec();
         let content = self.content;
         let view = self.view;
         let field = self.field;
-        self.ids()
-            .iter()
-            .map(|id| {
-                let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                let id = *id;
-                let param_node = runtime.site_node(member_scope, SiteId(1));
-                let value: T = reactive_core::ops::eval_node(param_node, || {
-                    read_unit_value(
-                        UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
-                        |any| {
-                            content(any)
-                                .iter()
-                                .find(|(existing, _)| *existing == id)
-                                .map(|(_, value)| value.clone())
-                        },
-                    )
+        let workers = runtime.workers();
+        if workers > 1 && ids.len() >= 8 {
+            let chunk = ids.len().div_ceil(workers);
+            let chunks: Vec<Vec<u64>> = ids.chunks(chunk).map(<[u64]>::to_vec).collect();
+            let mut results = Vec::with_capacity(ids.len());
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = chunks
+                    .iter()
+                    .map(|chunk| {
+                        let runtime = std::sync::Arc::clone(&runtime);
+                        let f = &f;
+                        scope.spawn(move || {
+                            let mut values = Vec::with_capacity(chunk.len());
+                            for id in chunk {
+                                values.push(map_member(
+                                    &runtime, call_scope, *id, view, field, content, f,
+                                ));
+                            }
+                            values
+                        })
+                    })
+                    .collect();
+                for handle in handles {
+                    results.extend(handle.join().expect("parallel map worker"));
+                }
+            });
+            for id in &ids {
+                let node = runtime.site_node(
+                    runtime.child_scope(call_scope, *id, "list_member"),
+                    SiteId(2),
+                );
+                reactive_core::frame::record_dep(reactive_core::frame::Dep {
+                    node,
+                    version: runtime.changed_at(node),
                 });
-                let result_node = runtime.site_node(member_scope, SiteId(2));
-                reactive_core::ops::eval_node(result_node, || {
-                    f(reactive_runtime::Param::new(param_node, value.clone()))
-                })
-            })
+            }
+            return results;
+        }
+        ids.iter()
+            .map(|id| map_member(&runtime, call_scope, *id, view, field, content, &f))
             .collect()
     }
 
@@ -600,4 +621,37 @@ mod tests {
         );
         assert_eq!(storage.to_vec(), vec![1, 2, 3]);
     }
+}
+
+fn map_member<T, U, F>(
+    runtime: &std::sync::Arc<dyn reactive_core::RuntimeOps>,
+    call_scope: reactive_core::ScopeId,
+    id: u64,
+    view: ViewId,
+    field: FieldId,
+    content: fn(&dyn Any) -> PSeq<(u64, T)>,
+    f: &F,
+) -> U
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    U: Clone + PartialEq + Send + Sync + 'static,
+    F: Fn(reactive_runtime::Param<T>) -> U + ?Sized,
+{
+    let member_scope = runtime.child_scope(call_scope, id, "list_member");
+    let param_node = runtime.site_node(member_scope, SiteId(1));
+    let value: T = reactive_core::ops::eval_node_with(runtime, param_node, || {
+        read_unit_value(
+            UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
+            |any| {
+                content(any)
+                    .iter()
+                    .find(|(existing, _)| *existing == id)
+                    .map(|(_, value)| value.clone())
+            },
+        )
+    });
+    let result_node = runtime.site_node(member_scope, SiteId(2));
+    reactive_core::ops::eval_node_with(runtime, result_node, || {
+        f(reactive_runtime::Param::new(param_node, value.clone()))
+    })
 }

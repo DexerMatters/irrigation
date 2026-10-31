@@ -12,7 +12,7 @@ use reactive_core::ids::{ComponentId, FieldId, ViewId};
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::helpers::read_unit_value;
 use reactive_runtime::{ComponentSpec, RootComponent, Runtime, ViewSchema, call_component};
-use reactive_store::descriptor::{
+use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
 };
 

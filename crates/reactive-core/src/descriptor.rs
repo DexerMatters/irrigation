@@ -9,8 +9,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use reactive_core::ids::{FieldId, ViewId};
-use reactive_core::key::AnyKey;
+use crate::ids::{FieldId, ViewId};
+use crate::key::AnyKey;
 
 /// Whether a View is populated by edits or by component definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,7 +60,7 @@ pub struct ContentVtable {
     pub define: fn(
         &std::sync::Arc<dyn std::any::Any + Send + Sync>,
         &UnitKey,
-        reactive_core::value::Value,
+        crate::value::Value,
     ) -> std::sync::Arc<dyn std::any::Any + Send + Sync>,
     /// Retracts one unit from the content.
     pub retract: fn(
@@ -76,7 +76,7 @@ pub struct ContentVtable {
     pub get: fn(
         &std::sync::Arc<dyn std::any::Any + Send + Sync>,
         &UnitKey,
-    ) -> Option<reactive_core::value::Value>,
+    ) -> Option<crate::value::Value>,
     /// Compares two content values semantically.
     pub eq: fn(
         &std::sync::Arc<dyn std::any::Any + Send + Sync>,
@@ -227,7 +227,7 @@ pub fn unit_label(view_name: &str, field_name: &str, key: &UnitKey) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reactive_core::key::any_key;
+    use crate::key::any_key;
 
     #[test]
     fn unit_keys_distinguish_entities_and_kinds() {

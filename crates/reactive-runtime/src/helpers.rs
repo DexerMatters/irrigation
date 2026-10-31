@@ -12,7 +12,7 @@ use reactive_core::frame::current_or_engine_panic;
 use reactive_core::ids::ViewId;
 use reactive_core::ops::panic_engine;
 use reactive_core::value::{Value, value_of};
-use reactive_store::descriptor::UnitKey;
+use reactive_core::descriptor::UnitKey;
 
 use crate::inner::DefinitionDraft;
 
@@ -115,6 +115,16 @@ pub fn values_equal<T: PartialEq + Any>(left: &Value, right: &Value) -> bool {
     match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
         (Some(left), Some(right)) => left == right,
         _ => false,
+    }
+}
+
+/// Registers a View namespace if a computation is running.
+///
+/// Generated definition methods call this so a derived View used only inside a
+/// component body still has a region to define units in.
+pub fn ensure_view(descriptor: &'static reactive_core::descriptor::ViewDescriptor) {
+    if let Some(frame) = reactive_core::frame::current() {
+        frame.runtime().register_view(descriptor);
     }
 }
 

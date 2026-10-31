@@ -26,14 +26,16 @@ pub use reactive_macros::{component, reactive, tree_view, view};
 pub use reactive_runtime::field::{
     EntityKey, ScalarEditor, ScalarRef, ViewFieldHandle, membership_unit, structure_unit, value_unit,
 };
-pub use reactive_runtime::helpers::{node_of, observe_clone, observe_local, values_equal};
+pub use reactive_runtime::helpers::{
+    ensure_view, node_of, observe_clone, observe_local, values_equal,
+};
 pub use reactive_runtime::Param;
 pub use reactive_runtime::{
     ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, Runtime, RuntimeConfig,
     RuntimeStats, Snapshot, SourceView, Subscription, ViewSchema, call_component, define_unit,
     read_unit_value, view_content,
 };
-pub use reactive_store::descriptor::{
+pub use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
 };
 pub use reactive_store::field::{Scalar, ViewField};

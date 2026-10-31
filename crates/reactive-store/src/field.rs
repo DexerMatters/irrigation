@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 use reactive_core::key::AnyKey;
 use reactive_core::value::Value;
 
-use crate::descriptor::FieldKind;
+use reactive_core::descriptor::FieldKind;
 
 /// One field of a View's content.
 pub trait ViewField: 'static {

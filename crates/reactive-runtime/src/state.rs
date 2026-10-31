@@ -17,7 +17,7 @@ use reactive_core::ids::{
 };
 use reactive_core::key::KeyTable;
 use reactive_core::value::Value;
-use reactive_store::descriptor::{UnitKey, ViewDescriptor};
+use reactive_core::descriptor::{UnitKey, ViewDescriptor};
 
 /// Execution state of one memoized node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +343,8 @@ pub struct State {
     pub next_subscription: u64,
     /// Next entity id allocated by source edits.
     pub next_entity: u64,
+    /// Next invocation identity, used to derive a unique scope per invocation.
+    pub next_invocation: u64,
     /// Installed root.
     pub root: Option<RootRecord>,
     /// Diagnostics counters.

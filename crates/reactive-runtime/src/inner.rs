@@ -30,7 +30,7 @@ use reactive_core::ids::{ComponentId, NodeId, Revision, ScopeId, SiteId, Version
 use reactive_core::key::{AnyKey, any_key};
 use reactive_core::ops::{RuntimeOps, catch_engine};
 use reactive_core::value::{Value, value_of};
-use reactive_store::descriptor::{UnitKey, UnitKind, ViewDescriptor};
+use reactive_core::descriptor::{UnitKey, UnitKind, ViewDescriptor};
 
 use crate::state::{
     DefinitionRecord, Invocation, NodeKind, NodeRecord, NodeState, ProviderRef, Region, State,
@@ -75,7 +75,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             workers: 1,
-            stack_size: 64 * 1024 * 1024,
+            stack_size: 256 * 1024 * 1024,
             max_depth: 250_000,
             wait_slice: Duration::from_millis(20),
         }
@@ -96,6 +96,8 @@ pub struct Inner {
     pub(crate) revision: AtomicU64,
     /// Weak self-reference used when building frames.
     self_ref: OnceLock<Weak<Inner>>,
+    /// Workers that execute derived computation.
+    pub pool: crate::scheduler::Pool,
 }
 
 impl std::fmt::Debug for Inner {
@@ -110,6 +112,7 @@ impl Inner {
     /// Creates the shared runtime.
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Arc<Self> {
+        let pool = crate::scheduler::Pool::new(config.workers, config.stack_size);
         let inner = Arc::new(Self {
             config,
             state: Mutex::new(State::default()),
@@ -117,6 +120,7 @@ impl Inner {
             gate: RwLock::new(()),
             revision: AtomicU64::new(0),
             self_ref: OnceLock::new(),
+            pool,
         });
         let _ = inner.self_ref.set(Arc::downgrade(&inner));
         inner
@@ -284,7 +288,7 @@ impl Inner {
                     }
                 } else if record.is_running() {
                     Outcome::Wait
-                } else if record.value.is_some() {
+                } else if record.suspect_at <= record.verified_at && record.value.is_some() {
                     record.verified_at = revision;
                     Outcome::Return(record.value.clone().expect("checked"), record.changed_at)
                 } else {
@@ -331,7 +335,7 @@ impl Inner {
                     Action::Return(record.value.clone().expect("checked"))
                 } else if record.is_running() {
                     Action::Wait
-                } else if record.suspect_at != revision && record.value.is_some() {
+                } else if record.suspect_at <= record.verified_at && record.value.is_some() {
                     record.verified_at = revision;
                     Action::Return(record.value.clone().expect("checked"))
                 } else {
@@ -440,7 +444,7 @@ impl Inner {
                 let record = state.node(dep.node);
                 (
                     record.verified_at == revision,
-                    record.suspect_at != revision && record.value.is_some(),
+                    record.suspect_at <= record.verified_at && record.value.is_some(),
                     record.changed_at,
                 )
             };
@@ -833,6 +837,62 @@ impl Inner {
     pub fn alloc_entity(&self) -> u64 {
         self.lock().alloc_entity()
     }
+
+    /// Demands the installed root at the current revision.
+    pub fn demand_root(&self) -> Result<()> {
+        let root = {
+            let state = self.lock();
+            state.root.clone()
+        };
+        let Some(root) = root else {
+            return Err(ComputeError::internal(
+                "no root component installed; call `runtime.install` first",
+            ));
+        };
+        let runtime: Arc<dyn RuntimeOps> = self.arc();
+        catch_engine(|| {
+            let body_value = crate::component::eval_value(
+                &runtime,
+                root.body,
+                || (root.run)(),
+                &root.body_eq,
+            );
+            for (index, node) in root.outputs.iter().enumerate() {
+                let projection_eq = root.projection_eq;
+                crate::component::eval_value(
+                    &runtime,
+                    *node,
+                    || {
+                        runtime.observe(root.body).unwrap_or_else(|error| {
+                            reactive_core::ops::panic_engine(error)
+                        });
+                        (root.project)(&body_value, index)
+                    },
+                    &|left, right| projection_eq(index, left, right),
+                );
+            }
+        })
+    }
+
+    /// Captures every registered View's content at the current revision.
+    #[must_use]
+    pub fn capture_snapshot(&self) -> crate::snapshot::Snapshot {
+        let state = self.lock();
+        let revision = state.revision;
+        let mut views: FxHashMap<ViewId, Arc<dyn Any + Send + Sync>> = FxHashMap::default();
+        let mut versions: FxHashMap<ViewId, Version> = FxHashMap::default();
+        for (id, region) in &state.regions {
+            views.insert(*id, Arc::clone(&region.content));
+            versions.insert(*id, state.node(region.content_node).changed_at);
+        }
+        crate::snapshot::Snapshot::new(revision, views, versions)
+    }
+
+    /// Number of worker threads.
+    #[must_use]
+    pub fn workers(&self) -> usize {
+        self.pool.workers()
+    }
 }
 
 /// Returns the key used for unique-definition enforcement.
@@ -929,6 +989,14 @@ impl RuntimeOps for Inner {
         Inner::view_content(self, view)
     }
 
+    fn register_view(&self, descriptor: &'static ViewDescriptor) {
+        Inner::register_view(self, descriptor);
+    }
+
+    fn workers(&self) -> usize {
+        Inner::workers(self)
+    }
+
     fn changed_at(&self, node: NodeId) -> Version {
         Inner::changed_at(self, node)
     }
@@ -966,13 +1034,16 @@ impl RuntimeOps for Inner {
                 }
             }
         }
+        let invocation_id = state.next_invocation + 1;
+        state.next_invocation = invocation_id;
+        let invocation_scope = state.scopes.child(scope, invocation_id);
         let mut body_record = NodeRecord::empty("invocation", NodeKind::InvocationBody);
-        body_record.scope = scope;
+        body_record.scope = invocation_scope;
         let body = state.alloc(body_record);
         let mut outputs = Vec::with_capacity(arity);
         for index in 0..arity {
             let mut record = NodeRecord::empty("invocation output", NodeKind::InvocationOutput);
-            record.scope = scope;
+            record.scope = invocation_scope;
             record.site = SiteId(index as u32);
             outputs.push(state.alloc(record));
         }

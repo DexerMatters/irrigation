@@ -73,6 +73,12 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// same demand; it never executes the observed node.
     fn observe(&self, node: NodeId) -> Result<()>;
 
+    /// Registers a View namespace if it is not registered yet.
+    fn register_view(&self, descriptor: &'static crate::descriptor::ViewDescriptor);
+
+    /// Number of worker threads available for parallel regions.
+    fn workers(&self) -> usize;
+
     /// Returns (creating on first use) the body and output nodes of a component
     /// invocation. `args_eq` compares two type-erased argument tuples.
     fn invocation_node(
@@ -154,6 +160,44 @@ where
 {
     let frame = current_or_engine_panic("eval_node");
     eval_node_in(&frame, node, f)
+}
+
+/// Evaluates a node with an explicit runtime handle.
+///
+/// Used by parallel regions: the spawned work has no ambient frame of its own,
+/// but the node it evaluates installs one for the closure body.
+pub fn eval_node_with<T, F>(runtime: &Arc<dyn RuntimeOps>, node: NodeId, f: F) -> T
+where
+    T: PartialEq + Clone + Send + Sync + 'static,
+    F: FnOnce() -> T,
+{
+    let mut compute = {
+        let mut f = Some(f);
+        move || {
+            let f = f.take().unwrap_or_else(|| {
+                panic_engine(ComputeError::internal(
+                    "node compute closure was invoked more than once",
+                ))
+            });
+            Ok(value_of(f()))
+        }
+    };
+    let eq = |left: &Value, right: &Value| match (
+        left.downcast_ref::<T>(),
+        right.downcast_ref::<T>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    };
+    match runtime.eval(node, &mut compute, &eq) {
+        Ok(value) => match value.downcast_ref::<T>() {
+            Some(value) => value.clone(),
+            None => panic_engine(ComputeError::TypeMismatch {
+                expected: std::any::type_name::<T>(),
+            }),
+        },
+        Err(error) => panic_engine(error),
+    }
 }
 
 fn eval_node_in<T, F>(frame: &Frame, node: NodeId, f: F) -> T

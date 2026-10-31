@@ -449,6 +449,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 match &field.shape {
                     FieldShape::Scalar(ty) => quote! {
                         #vis fn #define_name(&self, value: #ty) {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             reactive::define_unit(
                                 reactive::UnitKey::field(
                                     #view_const,
@@ -463,17 +464,20 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                     FieldShape::List(elem) => quote! {
                         #vis fn #define_name<I>(&self, items: I)
                         where I: IntoIterator<Item = #elem> {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             self.#ident().define_all(items, #name_str);
                         }
                     },
                     FieldShape::Set(elem) => quote! {
                         #vis fn #define_name<I>(&self, members: I)
                         where I: IntoIterator<Item = #elem> {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             self.#ident().define_all(members, #name_str);
                         }
                     },
                     FieldShape::Map(key, value) => quote! {
                         #vis fn #define_name(&self, key: #key, value: #value) {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             self.#ident().define(key, value, #name_str);
                         }
                     },
@@ -529,6 +533,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 type Editor<'a> = #editor_ident<'a>;
 
                 fn edit<'a>(edit: &'a mut reactive::Edit) -> Self::Editor<'a> {
+                    edit.ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                     let content = (*edit.content::<#content_ident>(#view_const)).clone();
                     #editor_ident { edit, content }
                 }
@@ -678,6 +683,7 @@ fn single_field_forwarding(
             }
             /// Defines one entry.
             pub fn define(&self, key: #key, value: #value) {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
                 self.#accessor().define(key, value, #name_str);
             }
             /// Defines every entry of an iterator.
@@ -718,6 +724,7 @@ fn single_field_forwarding(
             where
                 I: IntoIterator<Item = #elem>,
             {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
                 self.#accessor().define_all(items, #name_str);
             }
             /// Defines the whole list.
@@ -751,6 +758,7 @@ fn single_field_forwarding(
             where
                 I: IntoIterator<Item = #elem>,
             {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
                 self.#accessor().define_all(members, #name_str);
             }
             /// Defines every member.

@@ -10,7 +10,7 @@ use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{ComponentId, Revision, Version, ViewId};
 use reactive_core::ops::catch_engine;
 use reactive_core::value::Value;
-use reactive_store::descriptor::ViewDescriptor;
+use reactive_core::descriptor::ViewDescriptor;
 
 use crate::component::{ComponentSpec, RootComponent, eval_value};
 use crate::edit::Edit;
@@ -115,17 +115,13 @@ impl Runtime {
     ///
     /// Fails when no root is installed or when a component fails.
     pub fn read(&self) -> Result<Snapshot> {
-        let _gate = self.inner.gate.read();
-        self.demand_root()?;
-        let state = self.inner.lock();
-        let revision = state.revision;
-        let mut views: FxHashMap<ViewId, Arc<dyn Any + Send + Sync>> = FxHashMap::default();
-        let mut versions: FxHashMap<ViewId, Version> = FxHashMap::default();
-        for (id, region) in &state.regions {
-            views.insert(*id, Arc::clone(&region.content));
-            versions.insert(*id, state.node(region.content_node).changed_at);
-        }
-        Ok(Snapshot::new(revision, views, versions))
+        let pool_owner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        pool_owner.pool.run(move || {
+            let _gate = task.gate.read();
+            task.demand_root()?;
+            Ok(task.capture_snapshot())
+        })
     }
 
     /// Demands the installed root and returns its typed output product.
@@ -135,37 +131,41 @@ impl Runtime {
     /// Fails when no root is installed, when a component fails, or when `R`
     /// does not match the installed root.
     pub fn read_outputs<R: RootComponent>(&self) -> Result<R::Output> {
-        let _gate = self.inner.gate.read();
-        self.demand_root()?;
-        let root = {
-            let state = self.inner.lock();
-            state.root.clone()
-        };
-        let Some(root) = root else {
-            return Err(ComputeError::internal("no root component installed"));
-        };
-        let parts: Vec<Value> = {
-            let state = self.inner.lock();
-            root.outputs
-                .iter()
-                .map(|node| {
-                    state
-                        .node(*node)
-                        .value
-                        .clone()
-                        .expect("root output was demanded")
-                })
-                .collect()
-        };
-        catch_engine(|| {
-            (root.reconstruct)(&parts)
-                .downcast_ref::<R::Output>()
-                .cloned()
-                .unwrap_or_else(|| {
-                    reactive_core::ops::panic_engine(ComputeError::internal(
-                        "root output type does not match the installed root",
-                    ))
-                })
+        let pool_owner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        pool_owner.pool.run(move || {
+            let _gate = task.gate.read();
+            task.demand_root()?;
+            let root = {
+                let state = task.lock();
+                state.root.clone()
+            };
+            let Some(root) = root else {
+                return Err(ComputeError::internal("no root component installed"));
+            };
+            let parts: Vec<Value> = {
+                let state = task.lock();
+                root.outputs
+                    .iter()
+                    .map(|node| {
+                        state
+                            .node(*node)
+                            .value
+                            .clone()
+                            .expect("root output was demanded")
+                    })
+                    .collect()
+            };
+            catch_engine(|| {
+                (root.reconstruct)(&parts)
+                    .downcast_ref::<R::Output>()
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        reactive_core::ops::panic_engine(ComputeError::internal(
+                            "root output type does not match the installed root",
+                        ))
+                    })
+            })
         })
     }
 
@@ -322,33 +322,6 @@ impl Runtime {
         // cooperative hook used by observers and hosts.
         let state = self.inner.lock();
         drop(state);
-    }
-
-    fn demand_root(&self) -> Result<()> {
-        let root = {
-            let state = self.inner.lock();
-            state.root.clone()
-        };
-        let Some(root) = root else {
-            return Err(ComputeError::internal(
-                "no root component installed; call `runtime.install` first",
-            ));
-        };
-        let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = self.inner.arc();
-        let cancel = CancelToken::default();
-        drop(cancel);
-        catch_engine(|| {
-            let body_value = eval_value(&runtime, root.body, || (root.run)(), &root.body_eq);
-            for (index, node) in root.outputs.iter().enumerate() {
-                let projection_eq = root.projection_eq;
-                eval_value(&runtime, *node, || {
-                    runtime
-                        .observe(root.body)
-                        .unwrap_or_else(|error| reactive_core::ops::panic_engine(error));
-                    (root.project)(&body_value, index)
-                }, &|left, right| projection_eq(index, left, right));
-            }
-        })
     }
 
     fn notify_subscribers(&self) -> Result<()> {

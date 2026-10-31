@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod change;
+pub mod descriptor;
 pub mod error;
 pub mod frame;
 pub mod hash;

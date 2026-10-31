@@ -9,7 +9,7 @@ use std::any::Any;
 
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::key::any_key;
-use reactive_store::descriptor::{UnitKey, UnitKind};
+use reactive_core::descriptor::{UnitKey, UnitKind};
 use reactive_store::field::{Scalar, ViewField};
 
 use crate::edit::Edit;

@@ -1,0 +1,370 @@
+//! Acceptance gates from the plan: randomized oracle comparison, recursion,
+//! mutual recursion, cycle detection, and unique definitions.
+
+use reactive::{component, reactive, view, Runtime};
+
+// ---------------------------------------------------------------------------
+// Randomized edit sequence against a from-scratch oracle
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Model {
+    numbers: List<u64>,
+    strict: bool,
+}
+
+#[reactive]
+mod model_analysis {
+    use super::{Model};
+
+    #[component]
+    pub fn analyze(model: &Model) -> u64 {
+        let numbers = model.numbers();
+        let doubled = numbers.map(|n| *n * 2);
+        let total = doubled.iter().sum::<u64>();
+        if model.strict() {
+            total + 1
+        } else {
+            total
+        }
+    }
+}
+
+fn oracle(numbers: &[u64], strict: bool) -> u64 {
+    let total: u64 = numbers.iter().map(|n| n * 2).sum();
+    if strict { total + 1 } else { total }
+}
+
+/// Deterministic small LCG; the test is reproducible without an RNG crate.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+
+    fn below(&mut self, bound: usize) -> usize {
+        if bound == 0 {
+            0
+        } else {
+            (self.next() as usize) % bound
+        }
+    }
+}
+
+#[test]
+fn randomized_transactions_match_from_scratch_evaluation() {
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    let mut model: Vec<u64> = Vec::new();
+    let mut strict = false;
+    let mut rng = Lcg(0x5eed);
+
+    for _ in 0..2000 {
+        let choice = rng.below(6);
+        runtime
+            .edit(|edit| {
+                let mut view = edit.view::<Model>();
+                match choice {
+                    0 => {
+                        let value = rng.next() % 100;
+                        view.numbers().push(value);
+                        model.push(value);
+                    }
+                    1 if !model.is_empty() => {
+                        let index = rng.below(model.len());
+                        view.numbers().remove(index);
+                        model.remove(index);
+                    }
+                    2 if !model.is_empty() => {
+                        let index = rng.below(model.len());
+                        let value = rng.next() % 100;
+                        view.numbers().set(index, value);
+                        model[index] = value;
+                    }
+                    3 if model.len() > 1 => {
+                        let from = rng.below(model.len());
+                        let to = rng.below(model.len());
+                        view.numbers().move_element(from, to);
+                        let value = model.remove(from);
+                        model.insert(to, value);
+                    }
+                    4 => {
+                        strict = !strict;
+                        view.set_strict(strict);
+                    }
+                    _ => {}
+                }
+            })
+            .expect("edit");
+
+        let actual = runtime
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("read");
+        assert_eq!(
+            actual,
+            oracle(&model, strict),
+            "model {model:?} strict {strict}"
+        );
+    }
+}
+
+#[test]
+fn no_op_transactions_publish_nothing() {
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    let _ = runtime.read().expect("read");
+    let revision = runtime.revision();
+    for _ in 0..10 {
+        runtime
+            .edit(|edit| {
+                edit.view::<Model>().set_strict(false);
+            })
+            .expect("edit");
+    }
+    assert_eq!(runtime.revision(), revision);
+}
+
+// ---------------------------------------------------------------------------
+// Recursion and mutual recursion
+// ---------------------------------------------------------------------------
+
+#[reactive]
+mod recursion {
+    #[component]
+    pub fn fib(n: u32) -> u64 {
+        if n < 2 {
+            u64::from(n)
+        } else {
+            fib(n - 1) + fib(n - 2)
+        }
+    }
+
+    #[component]
+    pub fn even(n: u32) -> bool {
+        if n == 0 {
+            true
+        } else {
+            odd(n - 1)
+        }
+    }
+
+    #[component]
+    pub fn odd(n: u32) -> bool {
+        if n == 0 {
+            false
+        } else {
+            even(n - 1)
+        }
+    }
+
+    #[component]
+    pub fn loopy(n: u32) -> u64 {
+        loopy(n)
+    }
+}
+
+#[reactive]
+mod recursion_root {
+    use super::recursion;
+
+    #[component]
+    pub fn root() -> (u64, bool) {
+        (recursion::fib(12), recursion::even(10))
+    }
+}
+
+#[test]
+fn recursive_and_mutually_recursive_components_are_memoized() {
+    let runtime = Runtime::new();
+    runtime.install(recursion_root::Root).expect("install");
+    let (fib, even) = runtime
+        .read_outputs::<recursion_root::Root>()
+        .expect("outputs");
+    assert_eq!(fib, 144);
+    assert!(even);
+    let executions = runtime.stats().executions;
+    let (fib, even) = runtime
+        .read_outputs::<recursion_root::Root>()
+        .expect("outputs");
+    assert_eq!(fib, 144);
+    assert!(even);
+    assert_eq!(runtime.stats().executions, executions);
+}
+
+#[reactive]
+mod cycle_root {
+    use super::recursion;
+
+    #[component]
+    pub fn root() -> u64 {
+        recursion::loopy(1)
+    }
+}
+
+#[test]
+fn a_value_cycle_is_reported_not_hung() {
+    let runtime = Runtime::new();
+    runtime.install(cycle_root::Root).expect("install");
+    let error = runtime.read_outputs::<cycle_root::Root>().unwrap_err();
+    assert!(
+        matches!(error, reactive::ComputeError::Cycle { .. }),
+        "expected a cycle error, got {error:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Unique definitions
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct Registry(Map<u32, u32>);
+
+#[reactive]
+mod duplicate_definitions {
+    use super::Registry;
+
+    #[component]
+    pub fn first() -> Registry {
+        Registry::from([(1u32, 10u32)])
+    }
+
+    #[component]
+    pub fn second() -> Registry {
+        Registry::from([(1u32, 20u32)])
+    }
+
+    #[component]
+    pub fn root() -> u32 {
+        let _ = first();
+        let _ = second();
+        0
+    }
+}
+
+#[test]
+fn two_providers_cannot_define_the_same_unit() {
+    let runtime = Runtime::new();
+    runtime
+        .install(duplicate_definitions::Root)
+        .expect("install");
+    let error = runtime
+        .read_outputs::<duplicate_definitions::Root>()
+        .unwrap_err();
+    assert!(
+        matches!(error, reactive::ComputeError::DuplicateDefinition { .. }),
+        "expected a duplicate-definition error, got {error:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Independent output cutoff
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Pair {
+    left: u32,
+    right: u32,
+}
+
+#[reactive]
+mod independent_outputs {
+    use super::Pair;
+
+    #[component]
+    pub fn split(pair: &Pair) -> (u32, u32) {
+        (pair.left(), pair.right())
+    }
+}
+
+#[test]
+fn changing_one_output_does_not_change_the_other() {
+    let runtime = Runtime::new();
+    runtime.install(independent_outputs::Split).expect("install");
+    let (left, right) = runtime
+        .read_outputs::<independent_outputs::Split>()
+        .expect("outputs");
+    assert_eq!((left, right), (0, 0));
+
+    runtime
+        .edit(|edit| {
+            edit.view::<Pair>().set_right(7);
+        })
+        .expect("edit");
+    let (left, right) = runtime
+        .read_outputs::<independent_outputs::Split>()
+        .expect("outputs");
+    assert_eq!((left, right), (0, 7));
+}
+
+// ---------------------------------------------------------------------------
+// Deep recursion and worker-count invariance
+// ---------------------------------------------------------------------------
+
+#[reactive]
+mod deep {
+    #[component]
+    pub fn countdown(n: u32) -> u64 {
+        if n == 0 {
+            0
+        } else {
+            countdown(n - 1) + 1
+        }
+    }
+
+    #[component]
+    pub fn root() -> u64 {
+        countdown(10_000)
+    }
+}
+
+#[test]
+fn deep_recursion_is_stack_safe() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        workers: 2,
+        stack_size: 256 * 1024 * 1024,
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(deep::Root).expect("install");
+    assert_eq!(runtime.read_outputs::<deep::Root>().expect("outputs"), 10_000);
+}
+
+#[reactive]
+mod parallel_sum {
+    use super::Model;
+
+    #[component]
+    pub fn sum(model: &Model) -> u64 {
+        let numbers = model.numbers();
+        let doubled = numbers.map(|n| *n * 2);
+        doubled.iter().sum::<u64>()
+    }
+}
+
+#[test]
+fn results_are_invariant_across_worker_counts() {
+    let mut results = Vec::new();
+    for workers in [1usize, 2, 4] {
+        let runtime = Runtime::with_config(reactive::RuntimeConfig {
+            workers,
+            stack_size: 16 * 1024 * 1024,
+            ..reactive::RuntimeConfig::default()
+        });
+        runtime.install(parallel_sum::Sum).expect("install");
+        runtime
+            .edit(|edit| {
+                let mut model = edit.view::<Model>();
+                let mut numbers = model.numbers();
+                for value in 1..=100u64 {
+                    numbers.push(value);
+                }
+            })
+            .expect("edit");
+        results.push(runtime.read_outputs::<parallel_sum::Sum>().expect("outputs"));
+    }
+    assert_eq!(results, vec![10100, 10100, 10100]);
+}

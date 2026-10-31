@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use reactive_core::error::Result;
 use reactive_core::ids::{Revision, ViewId};
 use reactive_core::value::{Value, value_of};
-use reactive_store::descriptor::{UnitKey, UnitKind};
+use reactive_core::descriptor::{UnitKey, UnitKind};
 
 use crate::inner::Inner;
 use crate::snapshot::EditableView;
@@ -71,6 +71,11 @@ impl Edit {
     /// Returns the editor for a View.
     pub fn view<V: EditableView>(&mut self) -> V::Editor<'_> {
         V::edit(self)
+    }
+
+    /// Registers a View namespace if it is not registered yet.
+    pub fn ensure_view(&mut self, descriptor: &'static reactive_core::descriptor::ViewDescriptor) {
+        self.inner.register_view(descriptor);
     }
 
     /// Stages a typed unit write.

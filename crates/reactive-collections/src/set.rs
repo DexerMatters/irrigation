@@ -14,7 +14,7 @@ use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
-use reactive_store::descriptor::{FieldKind, UnitKey, UnitKind};
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::persistent::PSet;
 

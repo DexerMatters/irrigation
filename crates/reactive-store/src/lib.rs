@@ -14,14 +14,13 @@
 #![forbid(unsafe_code)]
 
 pub mod delta;
-pub mod descriptor;
 pub mod field;
 pub mod graph;
 pub mod persistent;
 pub mod tree;
 
 pub use delta::{ListDelta, ListEdit, MapDelta, MapEdit, SetDelta, SetEdit};
-pub use descriptor::{
+pub use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
 };
 pub use field::{Scalar, ViewField};
