@@ -1804,3 +1804,43 @@ fn a_panic_fails_one_scope_and_the_next_revision_recovers() {
         7
     );
 }
+
+#[test]
+fn runtimes_are_isolated_namespaces() {
+    let first = Runtime::new();
+    first.install(model_analysis::Analyze).expect("install a");
+    let second = Runtime::new();
+    second.install(model_analysis::Analyze).expect("install b");
+
+    first
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            numbers.push(1);
+        })
+        .expect("edit a");
+    second
+        .edit(|edit| {
+            let mut model = edit.view::<Model>();
+            let mut numbers = model.numbers();
+            numbers.push(2);
+            numbers.push(3);
+        })
+        .expect("edit b");
+
+    assert_eq!(
+        first
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("a"),
+        2
+    );
+    assert_eq!(
+        second
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("b"),
+        10
+    );
+    // Revisions are per-runtime, not process-global.
+    assert_eq!(first.revision(), 1);
+    assert_eq!(second.revision(), 1);
+}
