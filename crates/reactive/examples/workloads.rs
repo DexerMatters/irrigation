@@ -187,12 +187,14 @@ fn main() {
         // so every transaction recomputes the whole function.
         let mut cache: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();
         let started = Instant::now();
+        let mut memo_total = 0i64;
         for edit in 0..10u64 {
             // A new edit changes the fingerprint, missing the cache.
             let key = values.len() as u64 + edit;
-            total = *cache.entry(key).or_insert_with(|| values.iter().sum());
+            memo_total = *cache.entry(key).or_insert_with(|| values.iter().sum());
         }
         let elapsed = started.elapsed() / 10;
+        assert_eq!(memo_total, values.iter().sum::<i64>());
         println!(
             "memoized-miss\t{size}\t-\t-\t{}",
             elapsed.as_micros()
