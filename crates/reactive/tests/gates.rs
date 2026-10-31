@@ -1684,3 +1684,69 @@ fn observers_receive_the_changed_view_version() {
     drop(summaries);
     drop(subscription);
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic definition collisions
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct KeyInput {
+    key: u32,
+}
+
+#[view(derived)]
+pub struct CollisionRegistry(Map<u32, u32>);
+
+#[reactive]
+mod dynamic_collision {
+    use super::{CollisionRegistry, KeyInput};
+
+    #[component]
+    pub fn provider_a(input: &KeyInput) -> CollisionRegistry {
+        let key = input.key();
+        CollisionRegistry::from([(key, 1u32)])
+    }
+
+    #[component]
+    pub fn provider_b() -> CollisionRegistry {
+        CollisionRegistry::from([(7u32, 2u32)])
+    }
+
+    #[component]
+    pub fn root(input: &KeyInput) -> u32 {
+        let _ = provider_a(input);
+        let _ = provider_b();
+        0
+    }
+}
+
+#[test]
+fn a_dynamic_expansion_that_collides_is_diagnosed() {
+    let runtime = Runtime::new();
+    runtime.install(dynamic_collision::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<KeyInput>().set_key(1);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<dynamic_collision::Root>()
+            .expect("disjoint keys"),
+        0
+    );
+
+    // The dispatcher now routes both providers at key 7.
+    runtime
+        .edit(|edit| {
+            edit.view::<KeyInput>().set_key(7);
+        })
+        .expect("edit");
+    let error = runtime
+        .read_outputs::<dynamic_collision::Root>()
+        .unwrap_err();
+    assert!(
+        matches!(error, reactive::ComputeError::DuplicateDefinition { .. }),
+        "expected a duplicate-definition error, got {error:?}"
+    );
+}

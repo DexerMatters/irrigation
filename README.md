@@ -210,6 +210,7 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * fixed points inside components across edge insertion and deletion;
 * graph topology isolation from payload edits, and node deletion retracting edges;
 * an equal output still replacing its dependency trace (cutoff is not graph retention);
+* a dynamic expansion that routes two providers at one unit being diagnosed deterministically;
 * tree reads, identity-preserving replacement and subtree moves, subtree retraction, and leaf edits that do not rebuild the tree;
 * missing-key reads as dependencies, with unrelated keys executing nothing;
 * general components initialize, update from change batches, honour the default reset policy, and commit state atomically;
