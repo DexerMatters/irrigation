@@ -362,10 +362,7 @@ impl Inner {
                     record.verified_at = revision;
                     Action::Return(record.value.clone().expect("checked"))
                 } else {
-                    record.state = NodeState::Running {
-                        owner: me,
-                        generation: 0,
-                    };
+                    record.state = NodeState::Running { owner: me };
                     Action::Claim
                 }
             };
@@ -1027,14 +1024,19 @@ impl Inner {
         Ok(())
     }
 
+    /// Records a wait on `node`, or parks when the task cannot yield.
+    ///
+    /// A pooled task registers itself and returns [`ComputeError::Suspended`]
+    /// so its attempt unwinds and the worker is free. An inline task has no
+    /// worker to yield and blocks until the node leaves `Running`.
     fn wait_for(&self, node: NodeId, me: TaskId) -> Result<()> {
         let mut state = self.lock();
         let owner = match state.node(node).state {
             NodeState::Running { owner, .. } => owner,
             _ => return Ok(()),
         };
-        // A task that is already executing on this stack cannot wait for itself.
-        if task::stack_contains(owner) || owner == me {
+        // A task already executing on this stack cannot wait for itself.
+        if task::stack_contains(owner) {
             return Err(ComputeError::Cycle {
                 path: vec![format!("re-entrant demand of {node:?}")],
             });

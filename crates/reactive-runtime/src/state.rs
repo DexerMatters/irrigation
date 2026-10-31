@@ -30,8 +30,6 @@ pub enum NodeState {
     Running {
         /// The task that claimed the node.
         owner: TaskId,
-        /// Execution generation, used to reject stale commits.
-        generation: u64,
     },
     /// A committed value is available.
     Ready,

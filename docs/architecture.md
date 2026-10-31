@@ -37,7 +37,7 @@ Every memoized computation is a `NodeRecord`:
 | `suspect_at` | revision of the last invalidation |
 | `trace` | ordered observations: `(node, version)` |
 | `dependents` | reverse edges, used by invalidation |
-| `state` | `Vacant`, `Running { owner: TaskId, generation }`, `Ready`, `Failed` |
+| `state` | `Vacant`, `Running { owner: TaskId }`, `Ready`, `Failed` |
 | `waiters` | tasks suspended on this node |
 | `general` / `general_state` | custom component index and retained state |
 
