@@ -116,7 +116,7 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Tree View family and `#[tree_view]` | **pending** |
 | `GeneralComponent` trait and output transactions | **pending** |
 | Indexed joins and balanced lawful reductions | **pending** |
-| Cache eviction, memory accounting, benchmarks | **partial** |
+| Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
 | Async `GeneralComponent` futures | **pending** |
 
 The pending items are tracked in

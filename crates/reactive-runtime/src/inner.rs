@@ -1104,3 +1104,150 @@ impl RuntimeOps for Inner {
         (body, outputs)
     }
 }
+
+/// Counters from one reclamation pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReclaimStats {
+    /// Nodes allocated before the pass.
+    pub nodes_before: usize,
+    /// Nodes still allocated after the pass.
+    pub nodes_after: usize,
+    /// Nodes whose record was cleared.
+    pub nodes_reclaimed: usize,
+    /// Invocation records dropped with their bodies.
+    pub invocations_reclaimed: usize,
+}
+
+/// A point-in-time memory report.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryReport {
+    /// Allocated node records.
+    pub nodes: usize,
+    /// Bytes held by committed values, as reported by their concrete types.
+    pub value_bytes: usize,
+    /// Recorded dependency edges.
+    pub trace_edges: usize,
+    /// Reverse dependency edges.
+    pub dependent_edges: usize,
+    /// Expression-site records.
+    pub sites: usize,
+    /// Logical units.
+    pub units: usize,
+    /// Component invocations.
+    pub invocations: usize,
+    /// Registered View regions.
+    pub regions: usize,
+}
+
+impl Inner {
+    /// Reclaims nodes that no root, subscription, View unit, or trace can reach.
+    ///
+    /// Reclamation only loses reuse: a later demand reconstructs the graph.
+    /// Nodes that still define derived units are never reclaimed, because their
+    /// definitions would otherwise disappear from the region.
+    pub fn collect(&self) -> ReclaimStats {
+        let mut state = self.lock();
+        let mut reachable: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        let mut stack: Vec<NodeId> = Vec::new();
+        if let Some(root) = &state.root {
+            stack.push(root.body);
+            stack.extend(root.outputs.iter().copied());
+        }
+        for region in state.regions.values() {
+            stack.push(region.content_node);
+            for (_, slot) in region.units.iter() {
+                stack.push(slot.node);
+            }
+        }
+        for (_, node) in state.units.iter() {
+            stack.push(*node);
+        }
+        while let Some(node) = stack.pop() {
+            if !reachable.insert(node) {
+                continue;
+            }
+            for dep in &state.node(node).trace {
+                stack.push(dep.node);
+            }
+        }
+
+        let nodes_before = state.nodes.len();
+        let mut doomed: Vec<NodeId> = Vec::new();
+        for (index, record) in state.nodes.iter().enumerate() {
+            let id = NodeId(index as u32);
+            if reachable.contains(&id) {
+                continue;
+            }
+            if matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) {
+                continue;
+            }
+            if !record.definitions.is_empty() {
+                continue;
+            }
+            if record.is_running() {
+                continue;
+            }
+            doomed.push(id);
+        }
+        let doomed_set: std::collections::HashSet<NodeId> = doomed.iter().copied().collect();
+        for node in &doomed {
+            let trace = state.node(*node).trace.clone();
+            for dep in trace {
+                state.remove_dependent(dep.node, *node);
+            }
+        }
+        for node in &doomed {
+            let record = state.node_mut(*node);
+            record.value = None;
+            record.trace.clear();
+            record.state = NodeState::Vacant;
+            record.verified_at = 0;
+            record.suspect_at = 0;
+            record.changed_at = 0;
+            record.failure = None;
+            record.dependents.clear();
+        }
+        state.sites.retain(|_, node| !doomed_set.contains(node));
+        let mut invocations_reclaimed = 0;
+        for entries in state.invocations.values_mut() {
+            let before = entries.len();
+            entries.retain(|invocation| !doomed_set.contains(&invocation.body));
+            invocations_reclaimed += before - entries.len();
+        }
+        state
+            .invocations
+            .retain(|_, entries| !entries.is_empty());
+        ReclaimStats {
+            nodes_before,
+            nodes_after: state.nodes.len(),
+            nodes_reclaimed: doomed.len(),
+            invocations_reclaimed,
+        }
+    }
+
+    /// Reports memory held by runtime metadata and committed values.
+    #[must_use]
+    pub fn memory_report(&self) -> MemoryReport {
+        let state = self.lock();
+        let mut value_bytes = 0;
+        let mut trace_edges = 0;
+        let mut dependent_edges = 0;
+        for node in &state.nodes {
+            if let Some(value) = &node.value {
+                value_bytes += std::mem::size_of_val(value.as_ref());
+            }
+            trace_edges += node.trace.len();
+            dependent_edges += node.dependents.len();
+        }
+        MemoryReport {
+            nodes: state.nodes.len(),
+            value_bytes,
+            trace_edges,
+            dependent_edges,
+            sites: state.sites.len(),
+            units: state.units.len(),
+            invocations: state.invocations.values().map(Vec::len).sum(),
+            regions: state.regions.len(),
+        }
+    }
+}

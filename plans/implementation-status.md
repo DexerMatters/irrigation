@@ -109,7 +109,7 @@ implementation does not claim to eliminate.
 | 2 — fine-grained generated components | complete except the enum-group tree macro |
 | 3 — all collection Views and delta operators | partial: list/map/set complete; graph/tree, joins, and `GeneralComponent` pending |
 | 4 — parallel, pipelined execution | partial: pool, parallel map, invariance, deep recursion; continuation scheduling, cancellation tests, and schedule perturbation pending |
-| 5 — fixed points, resource control, performance | partial: fixed points implemented; eviction, memory accounting, and a full benchmark suite pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, and memory accounting implemented; the full benchmark matrix is pending |
 
 ## Known deviations, stated explicitly
 
@@ -135,4 +135,4 @@ implementation does not claim to eliminate.
 4. Indexed joins and lawful balanced reductions.
 5. Continuation-based scheduling, cancellation API, and schedule perturbation
    tests.
-6. Cache eviction, memory accounting, and the full benchmark matrix.
+6. The full benchmark matrix (joins, trees, fixed points, worker scaling).

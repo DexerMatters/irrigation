@@ -296,6 +296,20 @@ impl Runtime {
         }
     }
 
+    /// Reclaims nodes unreachable from roots, subscriptions, or View units.
+    ///
+    /// Reclamation only loses reuse; correctness is unaffected because a later
+    /// demand reconstructs what it needs.
+    pub fn collect(&self) -> crate::inner::ReclaimStats {
+        self.inner.collect()
+    }
+
+    /// Reports memory held by the runtime.
+    #[must_use]
+    pub fn memory_report(&self) -> crate::inner::MemoryReport {
+        self.inner.memory_report()
+    }
+
     /// A structured explanation of the current graph.
     #[must_use]
     pub fn explain(&self) -> Explain {

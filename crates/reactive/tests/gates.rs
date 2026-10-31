@@ -620,3 +620,77 @@ fn cancelling_an_idle_runtime_is_harmless() {
         0
     );
 }
+
+// ---------------------------------------------------------------------------
+// Reclamation and memory accounting
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Toggle {
+    flag: bool,
+    left: u64,
+    right: u64,
+}
+
+#[reactive]
+mod branching {
+    use super::Toggle;
+
+    #[component]
+    pub fn pick(toggle: &Toggle) -> u64 {
+        if toggle.flag() {
+            let left = toggle.left();
+            left + 1
+        } else {
+            let right = toggle.right();
+            right + 2
+        }
+    }
+}
+
+#[test]
+fn abandoned_branches_are_reclaimed_without_changing_results() {
+    let runtime = Runtime::new();
+    runtime.install(branching::Pick).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut view = edit.view::<Toggle>();
+            view.set_flag(true);
+            view.set_left(10);
+            view.set_right(20);
+        })
+        .expect("edit");
+    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 11);
+    let before = runtime.memory_report();
+    assert!(before.nodes > 0);
+    assert!(before.trace_edges > 0);
+
+    // Switch branches: the old branch's nodes become unreachable.
+    runtime
+        .edit(|edit| {
+            edit.view::<Toggle>().set_flag(false);
+        })
+        .expect("edit");
+    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 22);
+    let reclaimed = runtime.collect();
+    assert!(
+        reclaimed.nodes_reclaimed > 0,
+        "expected abandoned nodes to be reclaimed, got {reclaimed:?}"
+    );
+
+    // Correctness after reclamation: the live branch still repairs.
+    runtime
+        .edit(|edit| {
+            edit.view::<Toggle>().set_right(30);
+        })
+        .expect("edit");
+    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 32);
+
+    // Switching back reconstructs the abandoned branch.
+    runtime
+        .edit(|edit| {
+            edit.view::<Toggle>().set_flag(true);
+        })
+        .expect("edit");
+    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 11);
+}
