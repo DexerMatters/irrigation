@@ -182,5 +182,20 @@ fn main() {
             "from-scratch\t{size}\t-\t-\t{}",
             elapsed.as_micros()
         );
+
+        // Whole-function memoization baseline: an edit invalidates the entry,
+        // so every transaction recomputes the whole function.
+        let mut cache: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();
+        let started = Instant::now();
+        for edit in 0..10u64 {
+            // A new edit changes the fingerprint, missing the cache.
+            let key = values.len() as u64 + edit;
+            total = *cache.entry(key).or_insert_with(|| values.iter().sum());
+        }
+        let elapsed = started.elapsed() / 10;
+        println!(
+            "memoized-miss\t{size}\t-\t-\t{}",
+            elapsed.as_micros()
+        );
     }
 }
