@@ -109,4 +109,5 @@ cargo test -p reactive --test suspension       # suspended demand
 |---|---|
 | Mapped-body executions are independent of list length | `examples/scaling.rs` |
 | Balanced reduction combines logarithmically | `examples/reduction.rs` |
-| No-op, unrelated-key and tree workloads | `examples/workloads.rs` |
+| No-op, unrelated-key and tree workloads, plus from-scratch, memoized and handwritten baselines | `examples/workloads.rs` |
+| Independent list members benefit from extra workers | `examples/parallel.rs` |

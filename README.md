@@ -160,6 +160,7 @@ cargo test --release --workspace # the same suite with optimizations on
 cargo run --release --example scaling -p reactive
 cargo run --release --example reduction -p reactive
 cargo run --release --example workloads -p reactive
+cargo run --release --example parallel -p reactive
 ```
 
 Measured on this machine (release, one worker, one point edit at the middle of
@@ -194,6 +195,19 @@ point edit because it does no validation at all. Incremental machinery pays off
 when the per-element computation is expensive (a type checker, a parser, a
 graph analysis), which is exactly the tradeoff the plan's cost model predicts.
 No speedup is claimed for trivial payloads.
+
+Worker scaling re-evaluates a mapped list whose 1,000 members each burn a fixed
+amount of CPU, changing only `RuntimeConfig::workers`:
+
+| workers | median edit + read | speedup |
+|---|---|---|
+| 1 | 5.4 ms | 1.00 |
+| 2 | 3.3 ms | 1.65 |
+| 4 | 2.2 ms | 2.40 |
+
+The chunk threads run the member work in parallel; the remainder is the serial
+commit path, where every member re-execution takes the metadata lock to publish
+its value.
 
 Balanced reduction (`cargo run --release --example reduction -p reactive
 cargo run --release --example workloads -p reactive`) grows

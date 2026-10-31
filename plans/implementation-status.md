@@ -146,7 +146,7 @@ implementation does not claim to eliminate.
 | 2 — fine-grained generated components | complete: the enum-group tree macro and identity-preserving tree edits are implemented |
 | 3 — all collection Views and delta operators | complete for the implemented surface: list/map/set/graph/tree, `GeneralComponent`, and an incremental equi-join |
 | 4 — parallel, pipelined execution | complete for the implemented surface: pool, suspended demand, parallel map, worker-count and repeated-schedule invariance, concurrent host reads, cross-thread single-flight contention, deep recursion, cancellation, progress counters |
-| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, and a workload matrix implemented; from-scratch, whole-function memoization, and handwritten incremental baselines are reported in the workload matrix; Salsa and Differential Dataflow baselines are pending |
+| 5 — fixed points, resource control, performance | partial: fixed points, reclamation, memory accounting, balanced reductions, a join operator, a workload matrix, and a worker-scaling example implemented; from-scratch, whole-function memoization, and handwritten incremental baselines are reported in the workload matrix; Salsa and Differential Dataflow baselines are pending |
 
 ## Known deviations, stated explicitly
 
