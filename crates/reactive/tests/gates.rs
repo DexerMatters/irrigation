@@ -1844,3 +1844,67 @@ fn runtimes_are_isolated_namespaces() {
     assert_eq!(first.revision(), 1);
     assert_eq!(second.revision(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Result values and `?` are ordinary tracked data
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct TextInput {
+    text: String,
+}
+
+fn parse_number(text: &str) -> Result<u64, String> {
+    text.parse::<u64>().map_err(|error| error.to_string())
+}
+
+#[reactive]
+mod parser {
+    use super::{parse_number, TextInput};
+
+    #[component]
+    pub fn parse_value(input: &TextInput) -> Result<u64, String> {
+        let text = input.text();
+        let value = parse_number(&text)?;
+        Ok(value * 2)
+    }
+}
+
+#[test]
+fn result_control_flow_is_tracked_like_any_other_value() {
+    let runtime = Runtime::new();
+    runtime.install(parser::ParseValue).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<TextInput>().set_text(String::from("21"));
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<parser::ParseValue>()
+            .expect("outputs"),
+        Ok(42)
+    );
+
+    runtime
+        .edit(|edit| {
+            edit.view::<TextInput>().set_text(String::from("nope"));
+        })
+        .expect("edit");
+    let result = runtime
+        .read_outputs::<parser::ParseValue>()
+        .expect("outputs");
+    assert!(result.is_err());
+
+    runtime
+        .edit(|edit| {
+            edit.view::<TextInput>().set_text(String::from("5"));
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<parser::ParseValue>()
+            .expect("outputs"),
+        Ok(10)
+    );
+}

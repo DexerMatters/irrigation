@@ -214,7 +214,9 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
 * a dynamic expansion that routes two providers at one unit being diagnosed deterministically;
 * a panic failing one execution scope, releasing its single-flight slot, and
   recovering on the next revision;
-* two runtimes staying fully isolated (separate Views, graphs, and revisions).
+* two runtimes staying fully isolated (separate Views, graphs, and revisions);
+* `Result` values and `?` flowing through components as tracked data, including
+  error-to-success recovery.
 * tree reads, identity-preserving replacement and subtree moves, subtree retraction, and leaf edits that do not rebuild the tree;
 * missing-key reads as dependencies, with unrelated keys executing nothing;
 * general components initialize, update from change batches, honour the default reset policy, and commit state atomically;
