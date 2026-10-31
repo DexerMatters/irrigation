@@ -98,6 +98,7 @@ dependencies = [
  "reactive-plan",
  "reactive-runtime",
  "reactive-store",
+ "reactive-test",
 ]
 
 [[package]]

@@ -35,34 +35,13 @@ fn oracle(numbers: &[u64], strict: bool) -> u64 {
     if strict { total + 1 } else { total }
 }
 
-/// Deterministic small LCG; the test is reproducible without an RNG crate.
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.0 >> 33
-    }
-
-    fn below(&mut self, bound: usize) -> usize {
-        if bound == 0 {
-            0
-        } else {
-            (self.next() as usize) % bound
-        }
-    }
-}
-
 #[test]
 fn randomized_transactions_match_from_scratch_evaluation() {
     let runtime = Runtime::new();
     runtime.install(model_analysis::Analyze).expect("install");
     let mut model: Vec<u64> = Vec::new();
     let mut strict = false;
-    let mut rng = Lcg(0x5eed);
+    let mut rng = reactive_test::Lcg::new(0x5eed);
 
     for _ in 0..2000 {
         let choice = rng.below(6);
@@ -71,7 +50,7 @@ fn randomized_transactions_match_from_scratch_evaluation() {
                 let mut view = edit.view::<Model>();
                 match choice {
                     0 => {
-                        let value = rng.next() % 100;
+                        let value = rng.next_u64() % 100;
                         view.numbers().push(value);
                         model.push(value);
                     }
@@ -82,7 +61,7 @@ fn randomized_transactions_match_from_scratch_evaluation() {
                     }
                     2 if !model.is_empty() => {
                         let index = rng.below(model.len());
-                        let value = rng.next() % 100;
+                        let value = rng.next_u64() % 100;
                         view.numbers().set(index, value);
                         model[index] = value;
                     }

@@ -67,7 +67,8 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | `reactive-runtime` | node arena, ordered validation, change cutoff, reverse-edge invalidation, edits, derived regions, snapshots, subscriptions, worker pool, fixed points |
 | `reactive-collections` | source list/map/set with per-entity observations, tracked parameter handles, per-member operators, derived collections |
 | `reactive-macros` | `#[view]`, `#[component]`, `#[reactive]` lowering to tracked primitives |
-| `reactive-test` | oracle and trace hooks |
+| `reactive-plan` | lowering vocabulary: sites, projections, generators, observations |
+| `reactive-test` | deterministic generators, oracle trait, execution accounting |
 | `reactive` | public facade |
 
 ### How a change flows
