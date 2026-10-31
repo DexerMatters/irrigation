@@ -24,7 +24,7 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 | List | implemented for source Views (stable element ids, per-element units, rank reads observe structure) |
 | Set | implemented for source Views (per-member membership units) |
 | Map | implemented for source and derived Views (membership + value per key) |
-| Graph | pending (persistent store exists in `reactive-store`; no generated View) |
+| Graph | implemented for source Views: topology, per-node payload, per-edge payload and per-node adjacency units; node deletion retracts incident edges |
 | Tree | pending (persistent store exists; `#[tree_view]` macro not implemented) |
 
 Negative reads are dependencies: membership units default to `false` and are
@@ -61,7 +61,7 @@ updated on insertion/removal, so `get(k) == None` wakes when `k` appears.
 | Worker pool, no user code under metadata locks | implemented (`scheduler.rs`) |
 | Suspended continuations / work stealing | partially: waiting threads block on the metadata condvar; queued work is not stolen. Nested demand runs inline instead of yielding |
 | Glitch-free publication | implemented (dependency certification precedes use; cutoff keeps versions) |
-| Progress accounting, cancellation, failure | partially: failures are cached per revision, cycles are detected, cancellation tokens exist but no public cancel API drives them |
+| Progress accounting, cancellation, failure | partially: failures are cached per revision, cycles are detected, and cancellation is enforced; explicit progress/frontier accounting is not implemented |
 
 ## §9 Recursion and fixed points
 

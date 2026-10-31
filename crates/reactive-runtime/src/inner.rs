@@ -98,6 +98,8 @@ pub struct Inner {
     self_ref: OnceLock<Weak<Inner>>,
     /// Workers that execute derived computation.
     pub pool: crate::scheduler::Pool,
+    /// Cancellation token of the demand currently running.
+    active_cancel: Mutex<Option<CancelToken>>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -121,6 +123,7 @@ impl Inner {
             revision: AtomicU64::new(0),
             self_ref: OnceLock::new(),
             pool,
+            active_cancel: Mutex::new(None),
         });
         let _ = inner.self_ref.set(Arc::downgrade(&inner));
         inner
@@ -318,6 +321,11 @@ impl Inner {
         eq: &dyn Fn(&Value, &Value) -> bool,
     ) -> Result<Value> {
         let me = thread::current().id();
+        if frame::current()
+            .is_some_and(|frame| frame.cancel().is_cancelled())
+        {
+            return Err(ComputeError::Cancelled);
+        }
         loop {
             let action = {
                 let mut state = self.lock();
@@ -419,6 +427,9 @@ impl Inner {
         let deps = frame.take_deps();
         drop(guard);
 
+        if frame::current().is_some_and(|frame| frame.cancel().is_cancelled()) {
+            return self.fail(node, ComputeError::Cancelled, revision);
+        }
         match result {
             Ok(Ok(value)) => {
                 let committed = self.commit(node, value, deps, definitions, eq, revision)?;
@@ -842,7 +853,7 @@ impl Inner {
     }
 
     /// Demands the installed root at the current revision.
-    pub fn demand_root(&self) -> Result<()> {
+    pub fn demand_root(&self, cancel: &CancelToken) -> Result<()> {
         let root = {
             let state = self.lock();
             state.root.clone()
@@ -853,6 +864,16 @@ impl Inner {
             ));
         };
         let runtime: Arc<dyn RuntimeOps> = self.arc();
+        // Frames are thread-local execution state; see the note in `eval`.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let scope_frame = Arc::new(Frame::scoped(
+            Arc::clone(&runtime),
+            NodeId::NONE,
+            ScopeId::ROOT,
+            0,
+            cancel.clone(),
+        ));
+        let _guard = FrameGuard::push(scope_frame);
         catch_engine(|| {
             let body_value = crate::component::eval_value(
                 &runtime,
@@ -895,6 +916,26 @@ impl Inner {
     #[must_use]
     pub fn workers(&self) -> usize {
         self.pool.workers()
+    }
+
+    /// Marks the running demand as cancelled, if there is one.
+    pub fn cancel_active(&self) {
+        let active = self
+            .active_cancel
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(token) = active.as_ref() {
+            token.cancel();
+        }
+    }
+
+    /// Installs the token of the demand about to run.
+    pub(crate) fn set_active_cancel(&self, token: Option<CancelToken>) {
+        let mut active = self
+            .active_cancel
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *active = token;
     }
 }
 

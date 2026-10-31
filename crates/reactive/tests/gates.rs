@@ -584,3 +584,39 @@ fn graph_neighbours_follow_edges() {
         .expect("edit");
     let _ = runtime.read_outputs::<graph_stats::Stats>().expect("outputs");
 }
+
+// ---------------------------------------------------------------------------
+// Cancellation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_cancelled_demand_publishes_nothing() {
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    let token = reactive::CancelToken::new(1);
+    token.cancel();
+    let error = runtime.read_with_cancel(token).unwrap_err();
+    assert!(error.is_cancelled(), "expected cancellation, got {error:?}");
+    assert_eq!(runtime.revision(), 0);
+
+    // The cancelled attempt left no cached value behind.
+    assert_eq!(
+        runtime
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("outputs"),
+        0
+    );
+}
+
+#[test]
+fn cancelling_an_idle_runtime_is_harmless() {
+    let runtime = Runtime::new();
+    runtime.install(model_analysis::Analyze).expect("install");
+    runtime.cancel();
+    assert_eq!(
+        runtime
+            .read_outputs::<model_analysis::Analyze>()
+            .expect("outputs"),
+        0
+    );
+}

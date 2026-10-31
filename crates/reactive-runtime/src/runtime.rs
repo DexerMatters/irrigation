@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use reactive_core::error::{ComputeError, Result};
+use reactive_core::frame::CancelToken;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{ComponentId, Revision, Version, ViewId};
 use reactive_core::ops::catch_engine;
@@ -113,13 +114,38 @@ impl Runtime {
     ///
     /// Fails when no root is installed or when a component fails.
     pub fn read(&self) -> Result<Snapshot> {
+        self.read_with_cancel(CancelToken::default())
+    }
+
+    /// Demands the installed root with an explicit cancellation token.
+    ///
+    /// A cancelled demand never publishes: work already staged by it is
+    /// discarded and the nodes it touched stay vacant for the next demand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComputeError::Cancelled`] when the token was cancelled before
+    /// or during the demand.
+    pub fn read_with_cancel(&self, cancel: CancelToken) -> Result<Snapshot> {
         let pool_owner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         pool_owner.pool.run(move || {
-            let _gate = task.gate.read();
-            task.demand_root()?;
-            Ok(task.capture_snapshot())
+            task.set_active_cancel(Some(cancel.clone()));
+            let result = {
+                let _gate = task.gate.read();
+                task.demand_root(&cancel)
+                    .map(|()| task.capture_snapshot())
+            };
+            task.set_active_cancel(None);
+            result
         })
+    }
+
+    /// Cancels the demand currently running, if any.
+    ///
+    /// Cancelled work cannot publish; a later demand recomputes normally.
+    pub fn cancel(&self) {
+        self.inner.cancel_active();
     }
 
     /// Demands the installed root and returns its typed output product.
@@ -129,41 +155,59 @@ impl Runtime {
     /// Fails when no root is installed, when a component fails, or when `R`
     /// does not match the installed root.
     pub fn read_outputs<R: RootComponent>(&self) -> Result<R::Output> {
+        self.read_outputs_with_cancel::<R>(CancelToken::default())
+    }
+
+    /// Demands the installed root's typed output with a cancellation token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComputeError::Cancelled`] when the token was cancelled.
+    pub fn read_outputs_with_cancel<R: RootComponent>(
+        &self,
+        cancel: CancelToken,
+    ) -> Result<R::Output> {
         let pool_owner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         pool_owner.pool.run(move || {
-            let _gate = task.gate.read();
-            task.demand_root()?;
-            let root = {
-                let state = task.lock();
-                state.root.clone()
-            };
-            let Some(root) = root else {
-                return Err(ComputeError::internal("no root component installed"));
-            };
-            let parts: Vec<Value> = {
-                let state = task.lock();
-                root.outputs
-                    .iter()
-                    .map(|node| {
-                        state
-                            .node(*node)
-                            .value
-                            .clone()
-                            .expect("root output was demanded")
+            task.set_active_cancel(Some(cancel.clone()));
+            let result = {
+                let _gate = task.gate.read();
+                task.demand_root(&cancel).and_then(|()| {
+                    let root = {
+                        let state = task.lock();
+                        state.root.clone()
+                    };
+                    let Some(root) = root else {
+                        return Err(ComputeError::internal("no root component installed"));
+                    };
+                    let parts: Vec<Value> = {
+                        let state = task.lock();
+                        root.outputs
+                            .iter()
+                            .map(|node| {
+                                state
+                                    .node(*node)
+                                    .value
+                                    .clone()
+                                    .expect("root output was demanded")
+                            })
+                            .collect()
+                    };
+                    catch_engine(|| {
+                        (root.reconstruct)(&parts)
+                            .downcast_ref::<R::Output>()
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                reactive_core::ops::panic_engine(ComputeError::internal(
+                                    "root output type does not match the installed root",
+                                ))
+                            })
                     })
-                    .collect()
+                })
             };
-            catch_engine(|| {
-                (root.reconstruct)(&parts)
-                    .downcast_ref::<R::Output>()
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        reactive_core::ops::panic_engine(ComputeError::internal(
-                            "root output type does not match the installed root",
-                        ))
-                    })
-            })
+            task.set_active_cancel(None);
+            result
         })
     }
 

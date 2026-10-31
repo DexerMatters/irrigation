@@ -107,16 +107,17 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | Parallel worker pool, large stacks, nested-demand inline execution | implemented |
 | Parallel list `map` across worker chunks, deterministic order | implemented |
 | Single-flight claims, cross-thread wait graph, cycle detection | implemented |
+| Cancellation: a cancelled demand cannot publish | implemented |
 | Snapshots pinned to a revision | implemented |
 | Subscriptions that keep observation roots active | implemented |
 | Declared fixed points (lattice, monotone transfer, budget, reset deletion) | implemented |
 | Deep recursion (10,000 levels) | implemented with large worker stacks |
-| Graph and tree View families | **pending** |
-| `#[tree_view]` enum-group macro | **pending** |
+| Graph View family (topology, payloads, adjacency, node deletion) | implemented |
+| Tree View family and `#[tree_view]` | **pending** |
 | `GeneralComponent` trait and output transactions | **pending** |
 | Indexed joins and balanced lawful reductions | **pending** |
 | Cache eviction, memory accounting, benchmarks | **partial** |
-| Async `GeneralComponent` futures, cancellation API | **pending** |
+| Async `GeneralComponent` futures | **pending** |
 
 The pending items are tracked in
 [`plans/implementation-status.md`](plans/implementation-status.md).

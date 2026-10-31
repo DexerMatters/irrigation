@@ -15,7 +15,7 @@ pub use reactive_collections::{
 };
 pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use reactive_core::error::{ComputeError, Result};
-pub use reactive_core::frame::Dep;
+pub use reactive_core::frame::{CancelToken, Dep};
 pub use reactive_core::hash::hash_one;
 pub use reactive_core::ids::{
     ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId, const_hash,
