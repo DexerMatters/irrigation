@@ -787,6 +787,11 @@ impl Inner {
         generation: u64,
         cancel: &CancelToken,
     ) -> Result<Value> {
+        let route_selector = self
+            .route_selector
+            .lock()
+            .ok()
+            .and_then(|selector| selector.clone());
         let mut state = self.lock();
         // A commit from a claim that is no longer ours must not publish. This is
         // the generation check the plan requires; it also makes the retirement
@@ -825,6 +830,7 @@ impl Inner {
                 definitions,
                 revision,
                 enforce_views,
+                route_selector.as_ref(),
                 &mut changed_nodes,
             )
         {
@@ -988,6 +994,7 @@ impl Inner {
         drafts: Vec<DefinitionDraft>,
         revision: Revision,
         enforce_views: bool,
+        selector: Option<&Arc<dyn crate::runtime::RouteSelector>>,
         changed_nodes: &mut Vec<NodeId>,
     ) -> Result<()> {
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
@@ -1072,6 +1079,7 @@ impl Inner {
                 provider,
                 &drafts,
                 revision,
+                selector,
                 changed_nodes,
                 &mut installed,
             );
@@ -1139,6 +1147,7 @@ impl Inner {
         provider: NodeId,
         drafts: &[DefinitionDraft],
         revision: Revision,
+        selector: Option<&Arc<dyn crate::runtime::RouteSelector>>,
         changed_nodes: &mut Vec<NodeId>,
         installed: &mut Vec<DefinitionRecord>,
     ) -> Result<()> {
@@ -1165,16 +1174,31 @@ impl Inner {
             let previous_owner = region.owners.get(&owner).map(|existing| existing.node);
             if let Some(existing) = region.owners.get(&owner) {
                 if existing.node != provider {
-                    // Resolve at the end of the revision: if the earlier owner
-                    // is still reachable then both providers are live and the
-                    // revision fails; if it retired during the revision, this
-                    // was a handover.
-                    state.pending_conflicts.push(crate::state::PendingConflict {
-                        unit: draft.unit.clone(),
-                        first: existing.node,
-                        second: provider,
-                        second_location: draft.location,
-                    });
+                    if let Some(selector) = selector {
+                        // An installed route selector is the authority at
+                        // install time: the selected provider keeps the unit,
+                        // the other claim is rejected or transferred now.
+                        let winner = selector.select(&draft.unit, existing.node, provider);
+                        if winner == existing.node {
+                            continue;
+                        }
+                        let previous = existing.node;
+                        state.node_mut(previous).definitions.retain(|definition| {
+                            definition.unit != draft.unit || definition.provider != previous
+                        });
+                        force_recompute(state, &[previous], revision);
+                    } else {
+                        // Resolve at the end of the revision: if the earlier
+                        // owner is still reachable then both providers are live
+                        // and the revision fails; if it retired during the
+                        // revision, this was a handover.
+                        state.pending_conflicts.push(crate::state::PendingConflict {
+                            unit: draft.unit.clone(),
+                            first: existing.node,
+                            second: provider,
+                            second_location: draft.location,
+                        });
+                    }
                 }
             }
             let value_node = match region.units.get(&draft.unit) {

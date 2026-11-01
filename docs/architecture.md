@@ -226,12 +226,13 @@ claim), so a host can install a revisioned recipe as the routing authority.
 ## Route selection
 
 When two live providers claim one unit, an installed `RouteSelector` is the
-explicit authority: it names the winner, the loser's definition record is
-dropped, and the winner's committed value is restored as the authoritative
-post-state (definition records retain their committed value for this). Both
-providers are forced to re-execute on their next demand so their definitions
-are restaged against the selected route. Without a selector, a live duplicate
-remains a `DuplicateDefinition` error.
+explicit authority at install time: it names the winner; if the existing owner
+wins, the new claim is rejected before anything publishes; if the new claim
+wins, the previous definition record is dropped and its provider is forced to
+re-execute on its next demand, so both providers restage against the selected
+route. Definition records retain their committed values so a later
+end-of-revision resolution can also restore the selected post-state. Without a
+selector, a live duplicate remains a `DuplicateDefinition` error.
 
 ## Definition capabilities
 
