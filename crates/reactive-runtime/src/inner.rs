@@ -247,9 +247,17 @@ impl Inner {
     pub fn site_node(&self, scope: ScopeId, site: SiteId) -> NodeId {
         let mut state = self.lock();
         if let Some(node) = state.sites.get(&(scope, site)) {
+            state
+                .stats
+                .site_reuses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return *node;
         }
         let node = state.alloc(NodeRecord::site(scope, site));
+        state
+            .stats
+            .site_creations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         state.sites.insert((scope, site), node);
         node
     }
@@ -1404,6 +1412,12 @@ impl Inner {
         Waiters { tasks, wakers }
     }
 
+    /// Returns the node cycles in the current wait graph.
+    #[must_use]
+    pub fn wait_cycles(&self) -> Vec<Vec<NodeId>> {
+        wait_cycles(&self.lock())
+    }
+
     fn would_cycle(&self, state: &State, from: TaskId, target: TaskId) -> bool {
         let mut current = from;
         let mut visited = HashSet::new();
@@ -1732,6 +1746,40 @@ fn membership_key(unit: &UnitKey) -> UnitKey {
 #[must_use]
 pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
     hash_one(args)
+}
+
+/// Returns the node cycles in a wait graph.
+pub(crate) fn wait_cycles(state: &State) -> Vec<Vec<NodeId>> {
+    let mut cycles = Vec::new();
+    let mut visited: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
+    for &start in state.wait_graph.keys() {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut path_tasks: Vec<TaskId> = Vec::new();
+        let mut path_nodes: Vec<NodeId> = Vec::new();
+        let mut current = Some(start);
+        while let Some(task) = current {
+            if let Some(index) = path_tasks.iter().position(|existing| *existing == task) {
+                cycles.push(path_nodes[index..].to_vec());
+                break;
+            }
+            if visited.contains(&task) {
+                break;
+            }
+            path_tasks.push(task);
+            let Some(&node) = state.wait_graph.get(&task) else {
+                break;
+            };
+            path_nodes.push(node);
+            current = match state.node(node).state {
+                NodeState::Running { owner, .. } => Some(owner),
+                _ => None,
+            };
+        }
+        visited.extend(path_tasks);
+    }
+    cycles
 }
 
 /// Tasks and future wakers released when a node completes.
@@ -2243,6 +2291,39 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_cycles_reports_a_task_cycle() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let (first, second, task_a, task_b) = {
+            let mut state = inner.lock();
+            let task_a = state.alloc_task(None, TaskMode::Pooled, false, CancelToken::default());
+            let task_b = state.alloc_task(None, TaskMode::Pooled, false, CancelToken::default());
+            let first = state.alloc(NodeRecord::empty("first", NodeKind::Unit));
+            let second = state.alloc(NodeRecord::empty("second", NodeKind::Unit));
+            state.node_mut(first).state = NodeState::Running {
+                owner: task_b,
+                generation: 1,
+            };
+            state.node_mut(second).state = NodeState::Running {
+                owner: task_a,
+                generation: 1,
+            };
+            state.wait_graph.insert(task_a, first);
+            state.wait_graph.insert(task_b, second);
+            (first, second, task_a, task_b)
+        };
+        let _ = (task_a, task_b);
+        let cycles = inner.wait_cycles();
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].len(), 2);
+        assert!(cycles[0].contains(&first));
+        assert!(cycles[0].contains(&second));
+    }
 
     #[test]
     fn a_pooled_request_suspends_the_whole_task() {

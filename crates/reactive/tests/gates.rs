@@ -5271,3 +5271,25 @@ fn request_receipts_are_awaitable() {
         (2, 4, 6)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Identity reuse and cycle diagnostics (C4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn site_identity_reuse_is_counted() {
+    let runtime = Runtime::new();
+    runtime.install(churn::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<ChurnKey>().set_value(1))
+        .expect("seed");
+    let _ = runtime.read_outputs::<churn::Root>().expect("read");
+    let _ = runtime.read_outputs::<churn::Root>().expect("read");
+    let stats = runtime.stats();
+    assert!(stats.site_creations > 0, "{stats:?}");
+    assert!(stats.site_reuses > 0, "{stats:?}");
+    let explain = runtime.explain();
+    assert_eq!(explain.site_creations, stats.site_creations);
+    assert_eq!(explain.site_reuses, stats.site_reuses);
+    assert!(runtime.wait_cycles().is_empty());
+}

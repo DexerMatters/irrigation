@@ -194,6 +194,10 @@ diagnostics, tooling, and future backends.
 
 ## Explanation
 
+Site identity reuse is counted (`site_creations`/`site_reuses`) in runtime
+statistics and explanations, and `wait_cycles` reports node cycles in the wait
+graph alongside `wait_edges`.
+
 Every node records `executed_at` and `validated_at` separately, plus its
 scheduling state and waiter count. `explain_node` exposes them with the
 dependency versions, so a host can tell "replayed from a validated trace" from

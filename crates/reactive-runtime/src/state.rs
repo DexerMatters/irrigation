@@ -489,6 +489,10 @@ pub struct Stats {
     pub invalidations: std::sync::atomic::AtomicU64,
     /// Automatic collections triggered on demand entry.
     pub auto_collects: std::sync::atomic::AtomicU64,
+    /// Site nodes created on first interning.
+    pub site_creations: std::sync::atomic::AtomicU64,
+    /// Site-node lookups that reused an existing identity.
+    pub site_reuses: std::sync::atomic::AtomicU64,
 }
 
 /// Everything the runtime protects with its metadata lock.

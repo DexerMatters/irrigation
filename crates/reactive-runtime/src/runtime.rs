@@ -623,6 +623,8 @@ impl Runtime {
             revisions: state.stats.revisions.load(Ordering::Relaxed),
             invalidations: state.stats.invalidations.load(Ordering::Relaxed),
             auto_collects: state.stats.auto_collects.load(Ordering::Relaxed),
+            site_creations: state.stats.site_creations.load(Ordering::Relaxed),
+            site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
             tasks,
         }
@@ -667,6 +669,8 @@ impl Runtime {
             views: state.views.len(),
             subscriptions: state.subscriptions.len(),
             waiting_tasks: state.wait_graph.len(),
+            site_creations: state.stats.site_creations.load(Ordering::Relaxed),
+            site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
         }
     }
 
@@ -699,6 +703,12 @@ impl Runtime {
             .nodes
             .get(node.index())
             .is_some_and(|record| record.generation == node.generation() && !record.freed)
+    }
+
+    /// Returns the node cycles currently present in the wait graph.
+    #[must_use]
+    pub fn wait_cycles(&self) -> Vec<Vec<reactive_core::ids::NodeId>> {
+        self.inner.wait_cycles()
     }
 
     /// Returns the current wait graph edges as `(task, awaited node)`.
@@ -952,6 +962,10 @@ pub struct RuntimeStats {
     pub tasks: TaskCounts,
     /// Automatic collections triggered on demand entry.
     pub auto_collects: u64,
+    /// Site nodes created on first interning.
+    pub site_creations: u64,
+    /// Site-node lookups that reused an existing identity.
+    pub site_reuses: u64,
 }
 
 /// Why one node changed.
@@ -1048,6 +1062,10 @@ pub struct Explain {
     pub subscriptions: usize,
     /// Tasks currently suspended on a node.
     pub waiting_tasks: usize,
+    /// Site nodes created on first interning.
+    pub site_creations: u64,
+    /// Site-node lookups that reused an existing identity.
+    pub site_reuses: u64,
 }
 
 fn root_project<R: RootComponent>(value: &Value, index: usize) -> Value {
