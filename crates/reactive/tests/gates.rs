@@ -5756,3 +5756,90 @@ fn definitions_require_a_declared_view() {
         "the declared definition commits"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Local executor: non-Send state (C3)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct LocalMode {
+    mode: u64,
+}
+
+struct LocalSum;
+
+impl reactive::LocalGeneralComponent for LocalSum {
+    type State = std::rc::Rc<std::cell::RefCell<Vec<u64>>>;
+    type Output = u64;
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0007);
+    const NAME: &'static str = "gates::LocalSum";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<LocalMode as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let mode: u64 = cx.read_typed(reactive::UnitKey::field(
+            <LocalMode as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            reactive::UnitKind::Value,
+        ))?;
+        let state = std::rc::Rc::new(std::cell::RefCell::new(vec![mode]));
+        Ok((state, mode))
+    }
+
+    fn update(
+        &self,
+        cx: &mut reactive::GeneralCx,
+        state: &Self::State,
+        _changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let mode: u64 = cx.read_typed(reactive::UnitKey::field(
+            <LocalMode as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            reactive::UnitKind::Value,
+        ))?;
+        state.borrow_mut().push(mode);
+        let output = *state.borrow().last().expect("state has a mode");
+        Ok((std::rc::Rc::clone(state), output))
+    }
+}
+
+#[test]
+fn local_components_keep_non_send_state() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        workers: 0,
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime
+        .install_local_general(LocalSum)
+        .expect("install local");
+    runtime
+        .edit(|edit| edit.view::<LocalMode>().set_mode(5))
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::LocalAdapter<LocalSum>>()
+            .expect("initialize"),
+        5
+    );
+    runtime
+        .edit(|edit| edit.view::<LocalMode>().set_mode(9))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::LocalAdapter<LocalSum>>()
+            .expect("update"),
+        9
+    );
+
+    // A pooled runtime rejects local components up front.
+    let pooled = Runtime::new();
+    assert!(pooled.install_local_general(LocalSum).is_err());
+}

@@ -205,6 +205,15 @@ An undefined structure unit initializes from the family's structure projection
 snapshot over a source collection that has never been edited sees an empty
 structure instead of a type error.
 
+## Local executor
+
+`LocalGeneralComponent` keeps its state as a plain `'static` type (`Rc`,
+`RefCell`, ...) on the installing thread. `LocalAdapter` stores the component
+and its state in a thread-local slot and implements `GeneralComponent` with a
+trivial `()` state; `Runtime::install_local_general` requires a workerless
+runtime, so every demand runs inline on the owner thread with the normal frame,
+dependency, and definition recording. A demand from another thread is rejected.
+
 ## Definition capabilities
 
 A computation may define units only in Views it has declared: `ensure_view`

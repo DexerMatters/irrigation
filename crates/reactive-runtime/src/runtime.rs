@@ -120,6 +120,24 @@ impl Runtime {
         self.install_general(crate::general::TypedAdapter::new(component))
     }
 
+    /// Installs a local (non-`Send` state) algorithm as the runtime's root.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the runtime has pooled workers (demands must run on the
+    /// installing thread) or when a root is already installed.
+    pub fn install_local_general<C: crate::general::LocalGeneralComponent>(
+        &self,
+        component: C,
+    ) -> Result<()> {
+        if self.inner.workers() != 0 {
+            return Err(ComputeError::internal(
+                "local components require a workerless runtime (`workers = 0`)",
+            ));
+        }
+        self.install_general(crate::general::LocalAdapter::new(component))
+    }
+
     /// Installs a custom incremental algorithm as the runtime's root.
     ///
     /// # Errors

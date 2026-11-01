@@ -547,6 +547,206 @@ impl<T: TypedGeneralComponent> GeneralComponent for TypedAdapter<T> {
     }
 }
 
+/// A general component whose retained state need not be `Send`.
+///
+/// The component and its state live on the thread that installs it; demands
+/// must therefore use a workerless runtime and run on that thread. State is
+/// replaced through the runtime's atomic commit, exactly like a
+/// [`GeneralComponent`].
+pub trait LocalGeneralComponent: 'static {
+    /// Retained algorithm state; it may be thread-local (`Rc`, `RefCell`, ...).
+    type State: Clone + 'static;
+    /// Published output product; it crosses to the runtime, so it is `Send`.
+    type Output: Clone + PartialEq + Send + Sync + 'static;
+
+    /// Stable component identity.
+    const ID: reactive_core::ComponentId;
+    /// Fully qualified name for diagnostics.
+    const NAME: &'static str;
+    /// Views this component reads, registered at install time.
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// How requested-dependency invalidation is handled.
+    fn dependency_updates(&self) -> DependencyUpdates {
+        DependencyUpdates::Reset
+    }
+
+    /// Runs on first demand.
+    ///
+    /// # Errors
+    ///
+    /// Any failure aborts the attempt; nothing is published.
+    fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)>;
+
+    /// Runs when an observed dependency changed under
+    /// [`DependencyUpdates::Incremental`].
+    ///
+    /// # Errors
+    ///
+    /// Any failure aborts the attempt; the previous state stays valid.
+    fn update(
+        &self,
+        cx: &mut GeneralCx,
+        state: &Self::State,
+        changes: &ChangeBatch,
+    ) -> Result<(Self::State, Self::Output)>;
+}
+
+/// Type-erased local slot stored on the owner thread.
+trait LocalSlot {
+    fn policy(&self) -> DependencyUpdates;
+    fn initialize(&mut self, cx: &mut GeneralCx) -> Result<Value>;
+    fn update(&mut self, cx: &mut GeneralCx, changes: &ChangeBatch) -> Result<Value>;
+}
+
+struct Slot<C: LocalGeneralComponent> {
+    component: C,
+    state: Option<C::State>,
+}
+
+impl<C: LocalGeneralComponent> LocalSlot for Slot<C> {
+    fn policy(&self) -> DependencyUpdates {
+        self.component.dependency_updates()
+    }
+
+    fn initialize(&mut self, cx: &mut GeneralCx) -> Result<Value> {
+        let (state, output) = self.component.initialize(cx)?;
+        self.state = Some(state);
+        Ok(value_of(output))
+    }
+
+    fn update(&mut self, cx: &mut GeneralCx, changes: &ChangeBatch) -> Result<Value> {
+        let Some(state) = self.state.as_ref() else {
+            return Err(ComputeError::internal(
+                "local component was updated before it was initialized",
+            ));
+        };
+        let (next, output) = self.component.update(cx, state, changes)?;
+        self.state = Some(next);
+        Ok(value_of(output))
+    }
+}
+
+thread_local! {
+    static LOCAL_SLOTS: std::cell::RefCell<
+        std::collections::HashMap<u64, Box<dyn LocalSlot>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+static NEXT_LOCAL_SLOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Adapter installing a [`LocalGeneralComponent`] as a runtime general.
+///
+/// The runtime must be workerless (`workers = 0`) and demands must run on the
+/// installing thread; the component's non-`Send` state never leaves it.
+pub struct LocalAdapter<C: LocalGeneralComponent> {
+    key: u64,
+    owner: std::thread::ThreadId,
+    marker: std::marker::PhantomData<fn() -> C>,
+}
+
+impl<C: LocalGeneralComponent> std::fmt::Debug for LocalAdapter<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LocalAdapter")
+    }
+}
+
+impl<C: LocalGeneralComponent> LocalAdapter<C> {
+    /// Registers the component on the current thread and builds the adapter.
+    #[must_use]
+    pub fn new(component: C) -> Self {
+        let key = NEXT_LOCAL_SLOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        LOCAL_SLOTS.with(|slots| {
+            slots.borrow_mut().insert(
+                key,
+                Box::new(Slot {
+                    component,
+                    state: None,
+                }),
+            );
+        });
+        Self {
+            key,
+            owner: std::thread::current().id(),
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    fn check_owner(&self) -> Result<()> {
+        if std::thread::current().id() != self.owner {
+            return Err(ComputeError::internal(
+                "a local component was demanded on a thread other than its owner",
+            ));
+        }
+        Ok(())
+    }
+
+    fn with_slot<T>(
+        &self,
+        run: impl FnOnce(&mut dyn LocalSlot) -> Result<T>,
+    ) -> Result<T> {
+        self.check_owner()?;
+        LOCAL_SLOTS.with(|slots| {
+            let mut map = slots.borrow_mut();
+            let Some(slot) = map.get_mut(&self.key) else {
+                return Err(ComputeError::internal("local component slot is missing"));
+            };
+            run(slot.as_mut())
+        })
+    }
+}
+
+impl<C: LocalGeneralComponent> Drop for LocalAdapter<C> {
+    fn drop(&mut self) {
+        if std::thread::current().id() == self.owner {
+            LOCAL_SLOTS.with(|slots| {
+                slots.borrow_mut().remove(&self.key);
+            });
+        }
+    }
+}
+
+impl<C: LocalGeneralComponent> GeneralComponent for LocalAdapter<C> {
+    type State = ();
+    type Output = C::Output;
+
+    const ID: reactive_core::ComponentId = C::ID;
+    const NAME: &'static str = C::NAME;
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = C::VIEWS;
+
+    fn dependency_updates(&self) -> DependencyUpdates {
+        self.with_slot(|slot| Ok(slot.policy()))
+            .unwrap_or(DependencyUpdates::Reset)
+    }
+
+    fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
+        let value = self.with_slot(|slot| slot.initialize(cx))?;
+        let output = value
+            .downcast_ref::<C::Output>()
+            .cloned()
+            .ok_or_else(|| ComputeError::TypeMismatch {
+                expected: std::any::type_name::<C::Output>(),
+            })?;
+        Ok(((), output))
+    }
+
+    fn update(
+        &self,
+        cx: &mut GeneralCx,
+        _state: &Self::State,
+        changes: &ChangeBatch,
+    ) -> Result<(Self::State, Self::Output)> {
+        let value = self.with_slot(|slot| slot.update(cx, changes))?;
+        let output = value
+            .downcast_ref::<C::Output>()
+            .cloned()
+            .ok_or_else(|| ComputeError::TypeMismatch {
+                expected: std::any::type_name::<C::Output>(),
+            })?;
+        Ok(((), output))
+    }
+}
+
 /// Type-erased form stored by the runtime.
 pub(crate) trait ErasedGeneral: Send + Sync + 'static {
     fn name(&self) -> &'static str;
