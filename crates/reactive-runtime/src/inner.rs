@@ -828,10 +828,11 @@ impl Inner {
         if !changed_nodes.is_empty() {
             invalidate(&mut state, changed_nodes, revision);
         }
-        let queued = Self::wake_waiters(&mut state, node);
+        let mut waiters = Self::wake_waiters(&mut state, node);
         drop(state);
         self.wake.notify_all();
-        self.enqueue(queued);
+        self.enqueue(std::mem::take(&mut waiters.tasks));
+        waiters.wake();
         Ok(value)
     }
 
@@ -910,10 +911,11 @@ impl Inner {
                 record.failed_at = revision;
             }
         }
-        let queued = Self::wake_waiters(&mut state, node);
+        let mut waiters = Self::wake_waiters(&mut state, node);
         drop(state);
         self.wake.notify_all();
-        self.enqueue(queued);
+        self.enqueue(std::mem::take(&mut waiters.tasks));
+        waiters.wake();
         Err(error)
     }
 
@@ -1382,9 +1384,10 @@ impl Inner {
 
     /// Queues the tasks suspended on `node`. Called under the state lock; the
     /// caller enqueues the returned tasks once the lock is released.
-    pub(crate) fn wake_waiters(state: &mut State, node: NodeId) -> Vec<TaskId> {
+    pub(crate) fn wake_waiters(state: &mut State, node: NodeId) -> Waiters {
         let waiters = std::mem::take(&mut state.node_mut(node).waiters);
-        let mut queued = Vec::new();
+        let wakers = std::mem::take(&mut state.node_mut(node).wakers);
+        let mut tasks = Vec::new();
         for waiter in waiters {
             let pooled = match state.tasks.get_mut(&waiter) {
                 Some(slot) if slot.status == TaskStatus::Waiting(node) => {
@@ -1395,10 +1398,10 @@ impl Inner {
                 _ => false,
             };
             if pooled {
-                queued.push(waiter);
+                tasks.push(waiter);
             }
         }
-        queued
+        Waiters { tasks, wakers }
     }
 
     fn would_cycle(&self, state: &State, from: TaskId, target: TaskId) -> bool {
@@ -1731,6 +1734,29 @@ pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
     hash_one(args)
 }
 
+/// Tasks and future wakers released when a node completes.
+pub(crate) struct Waiters {
+    /// Pooled tasks to enqueue.
+    pub tasks: Vec<TaskId>,
+    /// Future wakers to call after the state lock is dropped.
+    pub wakers: Vec<std::task::Waker>,
+}
+
+impl Waiters {
+    /// Wakes every registered future waker.
+    pub fn wake(&mut self) {
+        for waker in std::mem::take(&mut self.wakers) {
+            waker.wake();
+        }
+    }
+
+    /// Merges another batch into this one.
+    pub fn merge(&mut self, other: Waiters) {
+        self.tasks.extend(other.tasks);
+        self.wakers.extend(other.wakers);
+    }
+}
+
 enum Outcome {
     Return(Value, Version, Version),
     Fail(ComputeError),
@@ -1838,6 +1864,64 @@ impl RuntimeOps for Inner {
 
     fn changed_at(&self, node: NodeId) -> Version {
         Inner::changed_at(self, node)
+    }
+
+    fn try_read_unit(
+        &self,
+        node: NodeId,
+        waker: &std::task::Waker,
+    ) -> Result<std::task::Poll<Value>> {
+        let outcome = {
+            let mut state = self.lock();
+            let revision = state.revision;
+            let record = state.node_mut(node);
+            if let Some(failure) = &record.failure {
+                if record.failed_at == revision {
+                    return Err(failure.clone());
+                }
+                record.failure = None;
+                record.state = NodeState::Vacant;
+            }
+            if record.is_running() {
+                record.wakers.push(waker.clone());
+                return Ok(std::task::Poll::Pending);
+            }
+            if record.verified_at == revision {
+                match &record.value {
+                    Some(value) => {
+                        (value.clone(), record.changed_at, record.routing_at)
+                    }
+                    None => {
+                        return Err(ComputeError::internal(format!(
+                            "unit {} is undefined",
+                            record
+                                .unit
+                                .as_ref()
+                                .map_or_else(|| String::from("?"), |unit| format!("{unit:?}"))
+                        )));
+                    }
+                }
+            } else if record.suspect_at <= record.verified_at && record.value.is_some() {
+                record.verified_at = revision;
+                (
+                    record.value.clone().expect("checked"),
+                    record.changed_at,
+                    record.routing_at,
+                )
+            } else {
+                return Err(ComputeError::internal(format!(
+                    "read of undefined unit {:?}",
+                    record.unit
+                )));
+            }
+        };
+        let (value, version, routing) = outcome;
+        frame::record_dep(Dep {
+            node,
+            version,
+            routing,
+        });
+        Ok(std::task::Poll::Ready(value))
     }
 
     fn observe(&self, node: NodeId) -> Result<()> {
@@ -2144,6 +2228,41 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_request_registers_and_wakes_its_waker() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct Flag(Arc<AtomicBool>);
+        impl std::task::Wake for Flag {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let node = {
+            let mut state = inner.lock();
+            let node = state.alloc(NodeRecord::empty("unit", NodeKind::Unit));
+            state.node_mut(node).state = NodeState::Running {
+                owner: 99,
+                generation: 1,
+            };
+            node
+        };
+        let flag = Arc::new(AtomicBool::new(false));
+        let waker = std::task::Waker::from(Arc::new(Flag(Arc::clone(&flag))));
+        let poll = inner.try_read_unit(node, &waker).expect("poll");
+        assert!(matches!(poll, std::task::Poll::Pending));
+        let mut waiters = Inner::wake_waiters(&mut inner.lock(), node);
+        waiters.wake();
+        assert!(flag.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn trace_validation_rejects_a_routing_change_with_an_equal_value() {

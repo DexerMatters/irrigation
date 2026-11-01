@@ -272,7 +272,10 @@ layers typed `Inputs` (re-read before each run), fixed `Params`, and typed
 `GeneralComponent` and `Runtime::install_typed_general` installs it.
 `AsyncGeneralComponent` futures are driven to completion: a pending future
 parks the demanding thread until its waker (possibly another thread) unparks
-it, then polls again. The commit stays atomic; the worker is held while the
+it, then polls again. `cx.request(unit).await`/`request_typed` return a receipt
+future: a certified or cleanly replayable unit completes immediately, and a
+unit being computed by another task registers the future's waker, which the
+runtime wakes when the node completes. The commit stays atomic; the worker is held while the
 future is pending, so true worker suspension is still future work. With signed `i64` sides and
 multiplication the equi-join is a bilinear bag join; negative weights retract.
 `Reset` reinitializes (always sound); `Incremental` calls `update`. State,

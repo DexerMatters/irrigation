@@ -16,7 +16,7 @@ use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::CancelToken;
 use reactive_core::ids::NodeId;
 
-use crate::inner::Inner;
+use crate::inner::{Inner, Waiters};
 use crate::state::{NodeState, State};
 use crate::task::{self, Attempt, Task, TaskId, TaskMode, TaskStatus};
 
@@ -152,17 +152,18 @@ impl Inner {
     /// Returns the body when the task still has one, so the caller can deliver
     /// its result outside the metadata lock.
     fn close_task(&self, id: TaskId) -> Option<Box<dyn Task>> {
-        let (queued, gate, body) = {
+        let (mut waiters, gate, body) = {
             let mut state = self.lock();
             let mut slot = state.tasks.remove(&id)?;
             state.wait_graph.remove(&id);
             let held = std::mem::take(&mut slot.held);
-            let queued = Self::release_claims(&mut state, id, &held);
-            (queued, slot.gate, slot.body)
+            let waiters = Self::release_claims(&mut state, id, &held);
+            (waiters, slot.gate, slot.body)
         };
         self.clear_active_task(id);
         self.wake.notify_all();
-        self.enqueue(queued);
+        self.enqueue(std::mem::take(&mut waiters.tasks));
+        waiters.wake();
         if gate {
             self.gate.exit_read();
         }
@@ -170,15 +171,18 @@ impl Inner {
     }
 
     /// Releases claims a task still owns after its last attempt.
-    fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Vec<TaskId> {
-        let mut queued = Vec::new();
+    fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Waiters {
+        let mut waiters = Waiters {
+            tasks: Vec::new(),
+            wakers: Vec::new(),
+        };
         for &node in held {
             if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {
                 state.node_mut(node).state = NodeState::Vacant;
-                queued.extend(Self::wake_waiters(state, node));
+                waiters.merge(Self::wake_waiters(state, node));
             }
         }
-        queued
+        waiters
     }
 
     fn clear_active_task(&self, id: TaskId) {

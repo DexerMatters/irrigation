@@ -5171,3 +5171,103 @@ fn tree_flatten_map_publishes_one_entry_per_node() {
     assert_eq!(tags.iter().filter(|(_, tag)| *tag == 0).count(), 1);
     assert_eq!(tags.iter().filter(|(_, tag)| *tag == 1).count(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// request().await receipts (C3)
+// ---------------------------------------------------------------------------
+
+struct AsyncRequestSum;
+
+impl reactive::AsyncGeneralComponent for AsyncRequestSum {
+    type State = (u64, u64);
+    type Output = (u64, u64, u64);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0006);
+    const NAME: &'static str = "gates::AsyncRequestSum";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<AsyncSource as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+    ) -> reactive::ComponentFuture<'a, ((u64, u64), (u64, u64, u64))> {
+        Box::pin(async move {
+            let view = <AsyncSource as reactive::ViewSchema>::DESCRIPTOR.id;
+            let left: u64 = cx
+                .request_typed(reactive::UnitKey::field(
+                    view,
+                    reactive::FieldId(0),
+                    reactive::UnitKind::Value,
+                ))
+                .await?;
+            let right: u64 = cx
+                .request_typed(reactive::UnitKey::field(
+                    view,
+                    reactive::FieldId(1),
+                    reactive::UnitKind::Value,
+                ))
+                .await?;
+            Ok(((left, right), (left, right, left + right)))
+        })
+    }
+
+    fn update<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+        _state: &'a (u64, u64),
+        _changes: &'a reactive::ChangeBatch,
+    ) -> reactive::ComponentFuture<'a, ((u64, u64), (u64, u64, u64))> {
+        Box::pin(async move {
+            let view = <AsyncSource as reactive::ViewSchema>::DESCRIPTOR.id;
+            let left: u64 = cx
+                .request_typed(reactive::UnitKey::field(
+                    view,
+                    reactive::FieldId(0),
+                    reactive::UnitKind::Value,
+                ))
+                .await?;
+            let right: u64 = cx
+                .request_typed(reactive::UnitKey::field(
+                    view,
+                    reactive::FieldId(1),
+                    reactive::UnitKind::Value,
+                ))
+                .await?;
+            Ok(((left, right), (left, right, left + right)))
+        })
+    }
+}
+
+#[test]
+fn request_receipts_are_awaitable() {
+    let runtime = Runtime::new();
+    runtime
+        .install_general(reactive::AsyncAdapter::new(AsyncRequestSum))
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut source = edit.view::<AsyncSource>();
+            source.set_left(2);
+            source.set_right(3);
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncRequestSum>>()
+            .expect("initialize"),
+        (2, 3, 5)
+    );
+    runtime
+        .edit(|edit| edit.view::<AsyncSource>().set_right(4))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncRequestSum>>()
+            .expect("update"),
+        (2, 4, 6)
+    );
+}

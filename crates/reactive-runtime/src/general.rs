@@ -155,6 +155,33 @@ impl GeneralCx {
         OutputTxn { cx: self }
     }
 
+    /// Requests one unit as a future receipt.
+    ///
+    /// The future completes with the value when the unit is certified or
+    /// cleanly replayable. When another task is computing it, the future
+    /// registers its waker and returns `Pending`; the runtime wakes it when the
+    /// unit completes.
+    pub fn request(&mut self, unit: UnitKey) -> Request<'_> {
+        if let Some(scope) = self.scope {
+            self.unit_scopes.insert(unit.clone(), scope);
+        }
+        Request {
+            cx: self,
+            unit: Some(unit),
+        }
+    }
+
+    /// Reads one unit as a future receipt with an expected type.
+    pub fn request_typed<T: Clone + Send + Sync + 'static>(
+        &mut self,
+        unit: UnitKey,
+    ) -> TypedRequest<'_, T> {
+        TypedRequest {
+            request: self.request(unit),
+            marker: std::marker::PhantomData,
+        }
+    }
+
     /// The revision being computed.
     #[must_use]
     pub fn revision(&self) -> Revision {
@@ -217,6 +244,78 @@ impl GeneralCx {
             eq: values_equal::<T>,
             label,
         });
+    }
+}
+
+/// A future receipt for one unit request.
+pub struct Request<'a> {
+    cx: &'a mut GeneralCx,
+    unit: Option<UnitKey>,
+}
+
+impl std::fmt::Debug for Request<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Request")
+    }
+}
+
+impl std::future::Future for Request<'_> {
+    type Output = Result<Value>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        let Some(unit) = this.unit.take() else {
+            return std::task::Poll::Ready(Err(ComputeError::internal(
+                "request polled after completion",
+            )));
+        };
+        let runtime = Arc::clone(&this.cx.runtime);
+        let node = runtime.unit_node(unit.view, Arc::new(unit.clone()));
+        match runtime.try_read_unit(node, context.waker()) {
+            Ok(std::task::Poll::Ready(value)) => std::task::Poll::Ready(Ok(value)),
+            Ok(std::task::Poll::Pending) => {
+                this.unit = Some(unit);
+                std::task::Poll::Pending
+            }
+            Err(error) => std::task::Poll::Ready(Err(error)),
+        }
+    }
+}
+
+/// A typed variant of [`Request`].
+pub struct TypedRequest<'a, T> {
+    request: Request<'a>,
+    marker: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> std::fmt::Debug for TypedRequest<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TypedRequest")
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> std::future::Future for TypedRequest<'_, T> {
+    type Output = Result<T>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut this.request).poll(context) {
+            std::task::Poll::Ready(Ok(value)) => std::task::Poll::Ready(
+                value.downcast_ref::<T>().cloned().ok_or_else(|| {
+                    ComputeError::TypeMismatch {
+                        expected: std::any::type_name::<T>(),
+                    }
+                }),
+            ),
+            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(error)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
 

@@ -36,8 +36,8 @@ pub use field::{ScalarEditor, ScalarRef, ViewFieldHandle};
 pub use fixed_point::{FixedPoint, FixedPointProblem, Lattice, solve, solve_with_budget};
 pub use general::{
     AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
-    GeneralComponent, GeneralCx, GeneralHandle, GeneralInputs, TypedAdapter,
-    TypedGeneralComponent, drive,
+    GeneralComponent, GeneralCx, GeneralHandle, GeneralInputs, Request, TypedAdapter,
+    TypedGeneralComponent, TypedRequest, drive,
 };
 pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_content};
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};

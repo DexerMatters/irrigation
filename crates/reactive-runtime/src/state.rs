@@ -109,6 +109,8 @@ pub struct NodeRecord {
     pub general_retained_scopes: std::collections::HashSet<u64>,
     /// Tasks suspended on this node, to be queued when it completes.
     pub waiters: Vec<TaskId>,
+    /// Future wakers waiting for this node to be certified.
+    pub wakers: Vec<std::task::Waker>,
 }
 
 impl NodeRecord {
@@ -141,6 +143,7 @@ impl NodeRecord {
             general_unit_scopes: std::collections::HashMap::new(),
             general_retained_scopes: std::collections::HashSet::new(),
             waiters: Vec::new(),
+            wakers: Vec::new(),
         }
     }
 

@@ -89,6 +89,16 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// same demand; it never executes the observed node.
     fn observe(&self, node: NodeId) -> Result<()>;
 
+    /// Non-blocking unit read for a future receipt.
+    ///
+    /// Returns `Ready` when the unit can be served (certifying a clean value),
+    /// or `Pending` after registering `waker` when another task is computing it.
+    fn try_read_unit(
+        &self,
+        node: NodeId,
+        waker: &std::task::Waker,
+    ) -> Result<std::task::Poll<Value>>;
+
     /// Registers a View namespace if it is not registered yet.
     fn register_view(&self, descriptor: &'static crate::descriptor::ViewDescriptor);
 
