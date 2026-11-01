@@ -771,7 +771,7 @@ fn randomized_set_edits_match_the_from_scratch_oracle() {
         })
         .expect("keys");
     let mut model: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-    let mut rng = reactive_test::Lcg::new(0x5e_7);
+    let mut rng = reactive_test::Lcg::new(0x05e7);
     for step in 0..150 {
         let member = rng.below(8) as u32;
         if rng.one_in(2) {
