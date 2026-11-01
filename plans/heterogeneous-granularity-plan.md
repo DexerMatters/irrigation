@@ -572,7 +572,9 @@ Gates: `join_view_updates_only_changed_keys`,
 `Runtime::observe_units` watches a set of logical units and
 `Runtime::observe_entry` watches one map entry's membership and value units;
 the callback fires only when a watched unit's version moves
-(`a_per_key_observer_ignores_other_keys`). `collect` now prunes interned
+(`a_per_key_observer_ignores_other_keys`,
+`a_per_key_observer_completes_before_the_whole_view_is_rematerialized`: a
+source-entry observer fires without demanding the installed root). `collect` now prunes interned
 scopes that no live node references, `ReclaimStats` reports them, and
 `memory_report` gains `scopes` and `tasks`
 (`collect_reclaims_unreachable_scopes`). Argument churn is bounded by

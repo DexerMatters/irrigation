@@ -84,7 +84,7 @@ C0 is complete.
 | N11 | Tree replacement reconciles the new build against the existing subtree and reuses children whose variant is unchanged | `replacing_a_variant_reuses_unchanged_children` |
 | N12 | `Runtime::read_projection`/`call_projection` demand one projection node; siblings stay unevaluated | `reading_one_projection_does_not_evaluate_the_other`, `a_call_projection_is_independently_demandable` |
 | N16 | `RuntimeStats::invalidations` records the nodes marked suspect by each invalidation cone | `invalidation_cost_is_counted` |
-| F9 | Unit-scoped and per-entry observers fire only for watched units | `a_per_key_observer_ignores_other_keys` |
+| F9 | Unit-scoped and per-entry observers fire only for watched units; source-only entry observers do not rematerialize the root | `a_per_key_observer_ignores_other_keys`, `a_per_key_observer_completes_before_the_whole_view_is_rematerialized` |
 | F10 | `collect` prunes unreachable scopes, reuses arena slots through generation-checked `NodeId`s, and `memory_report` reports scopes, tasks, and structure units; `RuntimeConfig::auto_collect_every` makes reclamation automatic | `collect_reclaims_unreachable_scopes`, `collect_reuses_arena_slots_and_detects_stale_ids`, `argument_churn_stays_within_the_retention_policy`, `automatic_collection_reclaims_on_demand_entry` |
 | N15 (partial) | Explanations carry `executed_at`/`validated_at`, scheduling state, waiter count, and `Explain::waiting_tasks` | `explanations_distinguish_validation_from_execution` (identity-reuse and cycle inspectors still open) |
 | N20 | `reactive-plan` is published through `reactive::plan` as the lowering vocabulary; the unused runtime dependency is removed | `the_plan_vocabulary_is_public` |

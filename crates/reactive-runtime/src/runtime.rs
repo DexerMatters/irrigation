@@ -870,10 +870,25 @@ impl Runtime {
         if !has_subscriptions {
             return Ok(());
         }
-        // Observers keep the root's observation roots active when one is
-        // installed. A source-only runtime has no root to demand, so its
-        // snapshot is captured directly.
-        let snapshot = if self.inner.has_root() {
+        // Whole-View subscriptions and subscriptions on derived units need the
+        // root brought up to date. A subscription that only watches source
+        // units is already current: firing it must not rematerialize the root.
+        let (has_root, needs_demand) = {
+            let state = self.inner.lock();
+            let needs_demand = state.subscriptions.iter().any(|subscription| {
+                subscription.units.is_empty()
+                    || subscription.units.iter().any(|unit| {
+                        state.views.get(&unit.view).is_none_or(|descriptor| {
+                            descriptor.kind == reactive_core::descriptor::ViewKind::Derived
+                        })
+                    })
+            });
+            (
+                state.root.is_some() || state.general_root.is_some(),
+                needs_demand,
+            )
+        };
+        let snapshot = if has_root && needs_demand {
             self.read()?
         } else {
             self.snapshot()

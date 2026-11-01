@@ -5384,3 +5384,58 @@ fn invocation_cap_bounds_the_cache() {
         "the cap must evict unreferenced invocations"
     );
 }
+
+#[reactive]
+mod source_entry_root {
+    use super::ConsumerTable;
+
+    #[component]
+    pub fn root(table: &ConsumerTable) -> u64 {
+        let entries = table.entries();
+        let keys = entries.keys();
+        keys.into_iter()
+            .map(|key| entries.get(&key).unwrap_or(0))
+            .sum::<u64>()
+    }
+}
+
+#[test]
+fn a_per_key_observer_completes_before_the_whole_view_is_rematerialized() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let runtime = Runtime::new();
+    runtime.install(source_entry_root::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+        })
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<source_entry_root::Root>()
+        .expect("warm");
+    let executions = runtime.stats().executions;
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::clone(&seen);
+    let _subscription = runtime
+        .observe_entry::<ConsumerTable, u32>(reactive::FieldId(0), 1u32, move |_snapshot| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .expect("observe entry");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        runtime.stats().executions,
+        executions,
+        "a source-only entry observer must not rematerialize the root"
+    );
+}

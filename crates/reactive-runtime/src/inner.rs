@@ -1677,11 +1677,6 @@ impl Inner {
     }
 
     /// Returns `true` when a root component (ordinary or general) is installed.
-    pub(crate) fn has_root(&self) -> bool {
-        let state = self.lock();
-        state.root.is_some() || state.general_root.is_some()
-    }
-
     /// Marks the most recently started demand as cancelled, if there is one.
     pub fn cancel_active(&self) {
         let task = *self
