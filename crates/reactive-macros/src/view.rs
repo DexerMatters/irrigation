@@ -87,13 +87,6 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                      a `#[view]` struct cannot own an enum-group tree",
                 ));
             }
-            FieldShape::Reduced(_) if derived => {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "derived views cannot declare `Reduced` fields; \
-                     maintain a reduction with a `GeneralComponent` or a source view",
-                ));
-            }
             FieldShape::Graph(_, _) if derived => {
                 return Err(syn::Error::new_spanned(
                     &field.ty,
@@ -563,17 +556,13 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.#ident().define(key, value, #name_str);
                         }
                     },
-                    FieldShape::Reduced(reduction) => {
-                    let aggregate = format_ident!("{}_aggregate", ident);
-                    quote! {
-                        #vis fn #ident(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
-                            self.content.#ident.to_vec()
+                    FieldShape::Reduced(reduction) => quote! {
+                        #vis fn #define_name<I>(&self, items: I)
+                        where I: IntoIterator<Item = <#reduction as reactive::Reduction>::Item> {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
+                            self.#ident().define_all(items, #name_str);
                         }
-                        #vis fn #aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
-                            self.content.#ident.aggregate()
-                        }
-                    }
-                }
+                    },
                 FieldShape::Graph(_, _) => {
                     let nodes = format_ident!("{}_nodes", ident);
                     let edges = format_ident!("{}_edges", ident);
@@ -975,27 +964,42 @@ fn single_field_forwarding(
             }
         }
         FieldShape::Reduced(reduction) => quote! {
-            impl #name {
-                /// The cached aggregate.
-                #[must_use]
-                pub fn aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
-                    self.#accessor().aggregate()
-                }
-                /// Number of elements.
-                #[must_use]
-                pub fn len(&self) -> usize {
-                    self.#accessor().len()
-                }
-                /// Returns `true` when empty.
-                #[must_use]
-                pub fn is_empty(&self) -> bool {
-                    self.len() == 0
-                }
-                /// Reads every element.
-                #[must_use]
-                pub fn to_vec(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
-                    self.#accessor().to_vec()
-                }
+            /// The cached aggregate.
+            #[must_use]
+            pub fn aggregate(&self) -> <#reduction as reactive::Reduction>::Aggregate {
+                self.#accessor().aggregate()
+            }
+            /// Number of elements.
+            #[must_use]
+            pub fn len(&self) -> usize {
+                self.#accessor().len()
+            }
+            /// Returns `true` when empty.
+            #[must_use]
+            pub fn is_empty(&self) -> bool {
+                self.len() == 0
+            }
+            /// Reads every element.
+            #[must_use]
+            pub fn to_vec(&self) -> Vec<<#reduction as reactive::Reduction>::Item> {
+                self.#accessor().to_vec()
+            }
+            /// Defines the whole sequence.
+            pub fn define_all<I>(&self, items: I)
+            where
+                I: IntoIterator<Item = <#reduction as reactive::Reduction>::Item>,
+            {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
+                self.#accessor().define_all(items, #name_str);
+            }
+            /// Defines the whole sequence.
+            pub fn from<I>(items: I) -> Self
+            where
+                I: IntoIterator<Item = <#reduction as reactive::Reduction>::Item>,
+            {
+                let handle = Self;
+                handle.define_all(items);
+                handle
             }
         },
         FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote!(),
@@ -1007,18 +1011,6 @@ fn single_field_forwarding(
 mod tests {
     use super::*;
     use quote::quote;
-
-    #[test]
-    fn a_derived_reduced_field_is_a_clear_diagnostic() {
-        let error = expand_inner(quote!(derived), quote!(struct Bad(Reduced<Sum>);))
-            .expect_err("derived reductions must be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("derived views cannot declare `Reduced`"),
-            "unexpected diagnostic: {error}"
-        );
-    }
 
     #[test]
     fn a_derived_graph_field_is_a_clear_diagnostic() {

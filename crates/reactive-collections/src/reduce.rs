@@ -11,7 +11,7 @@ use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
-use reactive_runtime::helpers::read_unit_value;
+use reactive_runtime::helpers::{define_unit, read_unit_value};
 use reactive_store::aggregate::AggSeq;
 use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
@@ -62,6 +62,9 @@ impl<R: Reduction> ViewField for Reduced<R> {
         key: &dyn reactive_core::key::AnyKey,
         value: Value,
     ) -> Self::Storage {
+        if let Some(sequence) = value.downcast_ref::<AggSeq<R::Aggregate, R::Item>>() {
+            return sequence.clone();
+        }
         let Some(item) = value.downcast_ref::<R::Item>() else {
             return storage.clone();
         };
@@ -74,7 +77,7 @@ impl<R: Reduction> ViewField for Reduced<R> {
     fn retract(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
         match key.as_any().downcast_ref::<u64>() {
             Some(index) => storage.remove(*index as usize).0,
-            None => storage.clone(),
+            None => AggSeq::new(R::leaf, R::combine, R::identity()),
         }
     }
 
@@ -161,6 +164,22 @@ impl<R: Reduction> ReducedRef<R> {
     #[must_use]
     pub fn get(&self, index: usize) -> Option<R::Item> {
         self.sequence().get(index).cloned()
+    }
+
+    /// Defines the whole sequence from the currently executing computation.
+    pub fn define_all<I>(&self, items: I, label: &'static str)
+    where
+        I: IntoIterator<Item = R::Item>,
+    {
+        let mut sequence = AggSeq::new(R::leaf, R::combine, R::identity());
+        for item in items {
+            sequence = sequence.push(item);
+        }
+        define_unit(
+            UnitKey::field(self.view, self.field, UnitKind::Value),
+            sequence,
+            label,
+        );
     }
 
     /// Reads every element in order.

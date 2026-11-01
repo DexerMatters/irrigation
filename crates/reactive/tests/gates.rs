@@ -3671,3 +3671,84 @@ fn derived_list_filter_and_flat_map_memoize_per_identity() {
         3
     );
 }
+
+// ---------------------------------------------------------------------------
+// Derived Reduced fields (Phase 3)
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct DerivedTotals(Reduced<Sum>);
+
+#[view(source)]
+pub struct TotalsMode {
+    n: u64,
+}
+
+#[reactive]
+mod derived_reduced {
+    use super::{DerivedTotals, TotalsMode};
+
+    #[component]
+    pub fn root(mode: &TotalsMode) -> (Vec<u64>, u64) {
+        if mode.n() == 0 {
+            DerivedTotals.define_all([1u64, 2, 3]);
+        } else {
+            DerivedTotals.define_all([4u64]);
+        }
+        (DerivedTotals.to_vec(), DerivedTotals.aggregate())
+    }
+}
+
+#[test]
+fn a_derived_reduction_defines_and_redefines_its_sequence() {
+    let runtime = Runtime::new();
+    runtime.install(derived_reduced::Root).expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs::<derived_reduced::Root>()
+            .expect("read"),
+        (vec![1, 2, 3], 6)
+    );
+    runtime
+        .edit(|edit| edit.view::<TotalsMode>().set_n(1))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<derived_reduced::Root>()
+            .expect("read"),
+        (vec![4], 4)
+    );
+}
+
+#[view(derived)]
+pub struct DerivedSummary {
+    total: Reduced<Sum>,
+}
+
+#[reactive]
+mod derived_reduced_named {
+    use super::DerivedSummary;
+
+    #[component]
+    pub fn root() -> (Vec<u64>, u64) {
+        DerivedSummary.define_total([5u64, 6]);
+        (
+            DerivedSummary.total().to_vec(),
+            DerivedSummary.total().aggregate(),
+        )
+    }
+}
+
+#[test]
+fn a_named_derived_reduction_uses_generated_accessors() {
+    let runtime = Runtime::new();
+    runtime
+        .install(derived_reduced_named::Root)
+        .expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs::<derived_reduced_named::Root>()
+            .expect("read"),
+        (vec![5, 6], 11)
+    );
+}

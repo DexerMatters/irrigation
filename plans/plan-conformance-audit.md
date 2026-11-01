@@ -79,7 +79,7 @@ C0 is complete.
 | Finding | Fix | Gate |
 |---|---|---|
 | F1 | Derived collection structure units are projected from committed content and refreshed on membership changes, with cutoff on value-only edits | `derived_map_structure_follows_definition_changes`, `derived_map_value_edits_do_not_touch_structure` |
-| F2 | Derived `Reduced`/`Graph` fields are rejected with attribute-level diagnostics | `a_derived_reduced_field_is_a_clear_diagnostic`, `a_derived_graph_field_is_a_clear_diagnostic` (macro unit tests) |
+| F2 | Derived `Graph` fields are rejected with attribute-level diagnostics; derived `Reduced` is now supported (Phase 3) | `a_derived_graph_field_is_a_clear_diagnostic` (macro unit test), `a_derived_reduction_defines_and_redefines_its_sequence`, `a_named_derived_reduction_uses_generated_accessors` |
 | N24 (new) | Statement-position `if`/`match`/block statements are nodes, so a switched-off branch retires definitions before the next statement reads their units | covered by the statement form of `derived_map_structure_follows_definition_changes` |
 | N11 | Tree replacement reconciles the new build against the existing subtree and reuses children whose variant is unchanged | `replacing_a_variant_reuses_unchanged_children` |
 | N12 | `Runtime::read_projection`/`call_projection` demand one projection node; siblings stay unevaluated | `reading_one_projection_does_not_evaluate_the_other`, `a_call_projection_is_independently_demandable` |
