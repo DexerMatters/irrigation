@@ -16,20 +16,42 @@ pub type Revision = u64;
 /// `changed_at == 0` means "never changed since creation".
 pub type Version = u64;
 
-/// Index of a memoized computation node in the runtime arena.
+/// Index and generation of a memoized computation node in the runtime arena.
 ///
+/// The low 20 bits are the arena slot and the high 12 bits the slot's
+/// generation. A reclaimed slot is reused only after its generation advances,
+/// so a stale `NodeId` can be detected instead of silently observing a new node.
 /// A `NodeId` is only meaningful inside the runtime that produced it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
 impl NodeId {
+    /// Number of low bits used for the arena index.
+    pub const INDEX_BITS: u32 = 20;
+    /// Mask of the arena index.
+    pub const INDEX_MASK: u32 = (1 << Self::INDEX_BITS) - 1;
+    /// Maximum generation before the slot is retired.
+    pub const MAX_GENERATION: u32 = (1 << (32 - Self::INDEX_BITS)) - 1;
+
     /// A sentinel used where an optional node is convenient.
     pub const NONE: Self = Self(u32::MAX);
 
-    /// Returns the raw arena index.
+    /// Builds a node identity from a slot and generation.
+    #[must_use]
+    pub const fn new(index: u32, generation: u32) -> Self {
+        Self(((generation & Self::MAX_GENERATION) << Self::INDEX_BITS) | (index & Self::INDEX_MASK))
+    }
+
+    /// Returns the arena slot.
     #[must_use]
     pub const fn index(self) -> usize {
-        self.0 as usize
+        (self.0 & Self::INDEX_MASK) as usize
+    }
+
+    /// Returns the slot generation.
+    #[must_use]
+    pub const fn generation(self) -> u32 {
+        self.0 >> Self::INDEX_BITS
     }
 }
 
@@ -37,8 +59,10 @@ impl fmt::Debug for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if *self == Self::NONE {
             f.write_str("NodeId(NONE)")
+        } else if self.generation() == 0 {
+            write!(f, "NodeId({})", self.index())
         } else {
-            write!(f, "NodeId({})", self.0)
+            write!(f, "NodeId({}@{})", self.index(), self.generation())
         }
     }
 }
@@ -158,7 +182,10 @@ mod tests {
 
     #[test]
     fn node_id_none_is_distinct_from_real_indices() {
-        assert_eq!(NodeId::NONE.index(), u32::MAX as usize);
+        assert_eq!(NodeId::NONE.index(), NodeId::INDEX_MASK as usize);
         assert_eq!(NodeId(7).index(), 7);
+        assert_eq!(NodeId(7).generation(), 0);
+        assert_eq!(NodeId::new(7, 3).index(), 7);
+        assert_eq!(NodeId::new(7, 3).generation(), 3);
     }
 }

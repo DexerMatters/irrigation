@@ -61,6 +61,10 @@ pub enum NodeKind {
 pub struct NodeRecord {
     /// Human-readable kind for diagnostics.
     pub label: &'static str,
+    /// Slot generation, packed into the `NodeId`.
+    pub generation: u32,
+    /// Whether the slot was reclaimed and awaits reuse.
+    pub freed: bool,
     /// What the node represents.
     pub kind: NodeKind,
     /// Identity scope for site nodes.
@@ -113,6 +117,8 @@ impl NodeRecord {
     pub fn site(scope: ScopeId, site: SiteId) -> Self {
         Self {
             label: "site",
+            generation: 0,
+            freed: false,
             kind: NodeKind::Site,
             scope,
             site,
@@ -507,6 +513,8 @@ pub struct State {
     pub next_task: TaskId,
     /// Next claim generation.
     pub next_generation: u64,
+    /// Reclaimed arena slots available for reuse.
+    pub free_nodes: Vec<u32>,
     /// Active subscriptions.
     pub subscriptions: Vec<SubscriptionRecord>,
     /// Next subscription id.
@@ -536,24 +544,60 @@ pub struct State {
 }
 
 impl State {
-    /// Allocates a node record.
-    pub fn alloc(&mut self, record: NodeRecord) -> NodeId {
-        let id = NodeId(self.nodes.len() as u32);
-        self.nodes.push(record);
+    /// Allocates a node record, reusing a reclaimed slot when possible.
+    pub fn alloc(&mut self, mut record: NodeRecord) -> NodeId {
+        let index = if let Some(index) = self.free_nodes.pop() {
+            let slot = index as usize;
+            let generation = (self.nodes[slot].generation + 1) & NodeId::MAX_GENERATION;
+            record.generation = generation;
+            record.freed = false;
+            self.nodes[slot] = record;
+            index
+        } else {
+            let index = self.nodes.len() as u32;
+            record.generation = 0;
+            record.freed = false;
+            self.nodes.push(record);
+            index
+        };
         self.stats
             .nodes_created
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        id
+        NodeId::new(index, self.nodes[index as usize].generation)
     }
 
     /// Returns a node record.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the identity refers to a reclaimed or reused slot.
     #[must_use]
     pub fn node(&self, id: NodeId) -> &NodeRecord {
-        &self.nodes[id.index()]
+        let record = &self.nodes[id.index()];
+        assert_eq!(
+            record.generation,
+            id.generation(),
+            "stale NodeId {id:?} for slot {}",
+            id.index()
+        );
+        assert!(!record.freed, "reclaimed NodeId {id:?}");
+        record
     }
 
     /// Returns a mutable node record.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the identity refers to a reclaimed or reused slot.
     pub fn node_mut(&mut self, id: NodeId) -> &mut NodeRecord {
+        let generation = self.nodes[id.index()].generation;
+        assert_eq!(
+            generation,
+            id.generation(),
+            "stale NodeId {id:?} for slot {}",
+            id.index()
+        );
+        assert!(!self.nodes[id.index()].freed, "reclaimed NodeId {id:?}");
         &mut self.nodes[id.index()]
     }
 

@@ -1936,6 +1936,8 @@ pub struct MemoryReport {
     pub scopes: usize,
     /// Demand task records.
     pub tasks: usize,
+    /// Structure units (collection identity projections).
+    pub structure_units: usize,
 }
 
 impl Inner {
@@ -1992,9 +1994,13 @@ impl Inner {
         }
 
         let nodes_before = state.nodes.len();
+        let free: std::collections::HashSet<u32> = state.free_nodes.iter().copied().collect();
         let mut doomed: Vec<NodeId> = Vec::new();
         for (index, record) in state.nodes.iter().enumerate() {
-            let id = NodeId(index as u32);
+            if free.contains(&(index as u32)) {
+                continue;
+            }
+            let id = NodeId::new(index as u32, record.generation);
             if reachable.contains(&id) {
                 continue;
             }
@@ -2027,12 +2033,18 @@ impl Inner {
             record.changed_at = 0;
             record.failure = None;
             record.dependents.clear();
+            record.freed = true;
         }
         let live_scopes: std::collections::HashSet<ScopeId> = reachable
             .iter()
             .map(|node| state.node(*node).scope)
             .collect();
         let scopes_reclaimed = state.scopes.prune(&live_scopes);
+        // Reclaimed slots stay allocated but become reusable; a later allocation
+        // advances the slot generation so stale ids are detectable.
+        state
+            .free_nodes
+            .extend(doomed.iter().map(|node| node.index() as u32));
         let doomed_keys: Vec<Arc<dyn AnyKey>> = state
             .units
             .iter()
@@ -2070,12 +2082,20 @@ impl Inner {
         let mut value_bytes = 0;
         let mut trace_edges = 0;
         let mut dependent_edges = 0;
+        let mut structure_units = 0;
         for node in &state.nodes {
             if let Some(value) = &node.value {
                 value_bytes += std::mem::size_of_val(value.as_ref());
             }
             trace_edges += node.trace.len();
             dependent_edges += node.dependents.len();
+            if node
+                .unit
+                .as_ref()
+                .is_some_and(|unit| unit.kind == UnitKind::Structure)
+            {
+                structure_units += 1;
+            }
         }
         MemoryReport {
             nodes: state.nodes.len(),
@@ -2088,6 +2108,7 @@ impl Inner {
             regions: state.regions.len(),
             scopes: state.scopes.len(),
             tasks: state.tasks.len(),
+            structure_units,
         }
     }
 }

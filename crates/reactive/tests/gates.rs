@@ -4643,3 +4643,54 @@ fn a_strict_component_runs_a_declared_primitive() {
         42
     );
 }
+
+// ---------------------------------------------------------------------------
+// Arena slot reuse and stale identity detection (F10)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collect_reuses_arena_slots_and_detects_stale_ids() {
+    let runtime = Runtime::new();
+    for tag in 0..32u64 {
+        let _ = runtime
+            .call::<call_projection_gate::__PairSpec>(
+                call_projection_gate::__PairArgs { tag },
+            )
+            .expect("call");
+    }
+    let before = runtime.memory_report().nodes;
+    let stale = runtime
+        .dump()
+        .into_iter()
+        .find(|node| node.kind == "InvocationBody")
+        .expect("a body")
+        .id;
+    let stats = runtime.collect();
+    assert!(stats.nodes_reclaimed > 0);
+    assert!(!runtime.is_live(stale), "a reclaimed id is stale");
+
+    for tag in 100..132u64 {
+        let _ = runtime
+            .call::<call_projection_gate::__PairSpec>(
+                call_projection_gate::__PairArgs { tag },
+            )
+            .expect("call");
+    }
+    let after = runtime.memory_report().nodes;
+    assert!(
+        after <= before + 8,
+        "reclaimed slots must be reused: {before} -> {after}"
+    );
+    assert!(
+        !runtime.is_live(stale),
+        "the stale id must not alias a reused slot"
+    );
+    let live = runtime
+        .dump()
+        .into_iter()
+        .filter(|node| node.kind == "InvocationBody")
+        .map(|node| node.id)
+        .find(|id| runtime.is_live(*id))
+        .expect("a live body");
+    assert!(runtime.is_live(live));
+}

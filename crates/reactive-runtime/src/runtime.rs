@@ -667,6 +667,19 @@ impl Runtime {
         self.inner.routing_generation(unit)
     }
 
+    /// Whether a node identity still names a live arena slot.
+    ///
+    /// A reclaimed slot that has been reused fails this check even when its
+    /// index matches, because the generation differs.
+    #[must_use]
+    pub fn is_live(&self, node: reactive_core::ids::NodeId) -> bool {
+        let state = self.inner.lock();
+        state
+            .nodes
+            .get(node.index())
+            .is_some_and(|record| record.generation == node.generation() && !record.freed)
+    }
+
     /// Returns the current wait graph edges as `(task, awaited node)`.
     ///
     /// A task appears here while one of its attempts is suspended on another
@@ -745,7 +758,7 @@ impl Runtime {
             .iter()
             .enumerate()
             .map(|(index, node)| NodeInfo {
-                id: reactive_core::ids::NodeId(index as u32),
+                id: reactive_core::ids::NodeId::new(index as u32, node.generation),
                 label: node.label,
                 kind: format!("{:?}", node.kind),
                 changed_at: node.changed_at,

@@ -398,8 +398,13 @@ grows; `State::nodes` is an append-only `Vec` (`state.rs:396`); `collect`
 invocations are retained per distinct argument tuple with no bound; plan §9.2
 asks for bounded caching to prevent unbounded history. `collect` is manual.
 
-**Status.** Confirmed by inspection; no test asserts memory stability under
-churn.
+**Status: fixed.** `collect` prunes unreachable scopes, arena slots are reused
+with generation-checked `NodeId`s, the invocation cache is bounded by
+reachability, and `memory_report` reports scopes, task records, and structure
+units. Automatic collection and a configurable invocation cap remain open
+policy choices. Gates: `collect_reclaims_unreachable_scopes`,
+`collect_reuses_arena_slots_and_detects_stale_ids`,
+`argument_churn_stays_within_the_retention_policy`.
 
 **Effect.** A long-lived runtime with high argument churn grows the arena, the
 scope table, and the invocation map even after `collect`. `memory_report` does

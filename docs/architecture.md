@@ -216,9 +216,11 @@ contribution count is the reset's cost.
 
 `collect` reclaims unreachable nodes, absence-predicate unit cells, invocation
 records, and interned scopes that no live node references; `ReclaimStats`
-reports each count and `memory_report` exposes scopes and task records. Arena
-slots are still not reused (that needs generational `NodeId`s), so the node
-arena only grows.
+reports each count and `memory_report` exposes scopes, task records, and
+structure units. Reclaimed arena slots are reused: `NodeId` packs a 20-bit slot
+and a 12-bit generation, allocation advances the generation, and a stale id
+fails the generation check (`Runtime::is_live` reports it without panicking).
+Automatic collection is still a manual host decision.
 
 ## Demand surfaces
 
