@@ -5587,3 +5587,77 @@ fn explanations_expose_scope_identity() {
     );
     assert_ne!(invocation_explanation.scope, root_explanation.scope);
 }
+
+// ---------------------------------------------------------------------------
+// Schedule perturbation (C5)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct PerturbSeeds {
+    values: List<u32>,
+}
+
+static PERTURB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn perturb(value: u32) -> u64 {
+    let spins = PERTURB.load(std::sync::atomic::Ordering::Relaxed) % 16;
+    for _ in 0..spins {
+        std::hint::spin_loop();
+    }
+    if spins % 3 == 0 {
+        std::thread::yield_now();
+    }
+    u64::from(value) * 3
+}
+
+#[reactive]
+mod perturb_map {
+    use super::{perturb, PerturbSeeds};
+
+    #[component]
+    pub fn total(seeds: &PerturbSeeds) -> u64 {
+        let values = seeds.values();
+        values.map(|n| perturb(*n)).iter().sum::<u64>()
+    }
+}
+
+#[test]
+fn schedule_perturbation_preserves_parallel_results() {
+    for workers in [1usize, 2, 4] {
+        let runtime = Runtime::with_config(reactive::RuntimeConfig {
+            workers,
+            stack_size: 32 * 1024 * 1024,
+            ..reactive::RuntimeConfig::default()
+        });
+        runtime.install(perturb_map::Total).expect("install");
+        let mut model: Vec<u32> = (0..64).collect();
+        runtime
+            .edit(|edit| {
+                let mut seeds = edit.view::<PerturbSeeds>();
+                let mut values = seeds.values();
+                for value in 0..64u32 {
+                    values.push(value);
+                }
+            })
+            .expect("seed");
+        for round in 0..8 {
+            PERTURB.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let index = (round * 7) % model.len();
+            let value = 100 + round as u32;
+            model[index] = value;
+            runtime
+                .edit(|edit| {
+                    let mut seeds = edit.view::<PerturbSeeds>();
+                    let mut values = seeds.values();
+                    values.set(index, value);
+                })
+                .expect("edit");
+            let expected: u64 = model.iter().map(|value| u64::from(*value) * 3).sum();
+            assert_eq!(
+                runtime.read_outputs::<perturb_map::Total>().expect("read"),
+                expected,
+                "workers {workers}, round {round}"
+            );
+        }
+    }
+}

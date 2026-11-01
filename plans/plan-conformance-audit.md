@@ -587,10 +587,14 @@ arena reclamation, bounded invocation caches.
 
 ### Phase C5 — Evidence gaps
 
-Join cross-term and bag-semantics gates (N21), a phase-4 gate for "downstream
-progress before unrelated upstream units finish", concurrent schedule
-perturbation beyond the current tests, and the external baselines that remain
-unavailable offline.
+Join cross-term and bag-semantics gates (N21) are implemented
+(`signed_weight_join_applies_the_bilinear_rule`,
+`a_join_tracks_both_inputs_changing_in_one_transaction`). Schedule-perturbation
+coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
+parallel map under 1/2/4 workers with randomized spins/yields and eight edits
+per configuration. Still open: a phase-4 gate for "downstream progress before
+unrelated upstream units finish" (needs body-level projection demand), and the
+external baselines, which remain unavailable offline.
 
 ## 5. Risks and ordering
 
