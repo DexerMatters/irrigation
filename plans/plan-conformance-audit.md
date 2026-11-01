@@ -95,6 +95,7 @@ C0 is complete.
 | N15 (partial) | `Runtime::wait_edges` exposes the wait graph, `wait_cycles` reports the node cycles, and `RuntimeStats`/`Explain` count site identity creations and reuses | `site_identity_reuse_is_counted`, `wait_cycles_reports_a_task_cycle` (failure-specific identity diagnosis still open) |
 | N19 (partial) | `FixedPoint::contributions` reports the work of a from-scratch reset | `fixed_point::tests::reachability_matches_a_from_scratch_traversal` (SCC localization still open) |
 | Phase 4 gate | Invocation churn is bounded by reachability: `collect` drops old invocation records and scopes | `argument_churn_stays_within_the_retention_policy` |
+| §12.1 differential testing | Randomized map and source-list edit sequences are checked after every step against from-scratch oracles | `randomized_map_edits_match_the_from_scratch_oracle`, `randomized_list_edits_match_the_from_scratch_oracle` |
 | N21 | A two-sided join transaction is gated against the from-scratch join; the join can publish a per-key target map | `a_join_tracks_both_inputs_changing_in_one_transaction`, `join_view_updates_only_changed_keys` (bag-join semantics still open) |
 | F12/F13 | `TaskStatus::Done` removed; `MapRef::len/is_empty` read the structure map directly | covered by the existing map/join gates |
 
