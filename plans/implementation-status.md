@@ -191,6 +191,9 @@ The audit of granularity between View families and the follow-up plan are in
 [`heterogeneous-granularity-plan.md`](heterogeneous-granularity-plan.md). It
 records the confirmed defects (derived-map structure unit, source-only
 observers, macro shapes) and the family matrix this list should be read against.
+The second pass, a section-by-section comparison with the source plan plus the
+defects found afterwards, is in
+[`plan-conformance-audit.md`](plan-conformance-audit.md).
 
 1. External comparative baselines (Salsa, Differential Dataflow) where the
    crates are available; the workload matrix currently reports from-scratch and

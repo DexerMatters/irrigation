@@ -16,6 +16,10 @@ Relation to the other documents:
   coverage.
 - [`../docs/architecture.md`](../docs/architecture.md) explains the node and
   unit model this plan extends.
+- [`plan-conformance-audit.md`](plan-conformance-audit.md) is the second audit
+  pass: a section-by-section comparison with the source plan and the defects
+  found after this document was written (derived-list live reads, whole-field
+  retraction, `call` conflicts, hash identities, and others).
 
 ## 1. What "perfect" means here
 
