@@ -499,6 +499,7 @@ pub struct TreeImportReport {
     pub ambiguous: usize,
 }
 
+/// Transactional editor for a tree View.
 pub struct TreeEditor<'a> {
     edit: &'a mut Edit,
     view: ViewId,
