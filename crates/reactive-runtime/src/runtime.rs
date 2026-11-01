@@ -749,6 +749,15 @@ impl Runtime {
         self.inner.provider_of(unit)
     }
 
+    /// Captures the current provider recipe for one View region.
+    #[must_use]
+    pub fn routing_recipe(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Option<RoutingRecipe> {
+        self.inner.routing_recipe(view)
+    }
+
     /// Installs the provider-selection policy for live definition conflicts.
     pub fn set_route_selector(&self, selector: Arc<dyn RouteSelector>) {
         *self
@@ -1112,6 +1121,67 @@ pub trait RouteSelector: Send + Sync + 'static {
         first: reactive_core::ids::NodeId,
         second: reactive_core::ids::NodeId,
     ) -> reactive_core::ids::NodeId;
+}
+
+/// A captured provider recipe for one View region.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoutingRecipe {
+    /// The routing revision this recipe was captured at.
+    pub stamp: RoutingStamp,
+    /// One provider per installed logical unit, unsorted.
+    pub providers: Vec<(reactive_core::descriptor::UnitKey, reactive_core::ids::NodeId)>,
+}
+
+/// A [`RouteSelector`] that prefers the providers captured in a recipe.
+pub struct RecipeSelector {
+    preferences: std::collections::HashMap<
+        reactive_core::descriptor::UnitKey,
+        reactive_core::ids::NodeId,
+    >,
+    fallback_second: bool,
+}
+
+impl RecipeSelector {
+    /// Builds a selector from a captured recipe, preferring the later claim
+    /// for units the recipe does not name.
+    #[must_use]
+    pub fn new(recipe: &RoutingRecipe) -> Self {
+        Self {
+            preferences: recipe.providers.iter().cloned().collect(),
+            fallback_second: true,
+        }
+    }
+
+    /// Falls back to the earlier claim for unlisted units.
+    #[must_use]
+    pub fn with_fallback_first(mut self) -> Self {
+        self.fallback_second = false;
+        self
+    }
+}
+
+impl std::fmt::Debug for RecipeSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecipeSelector")
+            .field("preferences", &self.preferences.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl RouteSelector for RecipeSelector {
+    fn select(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+        first: reactive_core::ids::NodeId,
+        second: reactive_core::ids::NodeId,
+    ) -> reactive_core::ids::NodeId {
+        match self.preferences.get(unit) {
+            Some(&preferred) if preferred == first => first,
+            Some(&preferred) if preferred == second => second,
+            _ if self.fallback_second => second,
+            _ => first,
+        }
+    }
 }
 
 /// A revisioned routing certificate for one View region.

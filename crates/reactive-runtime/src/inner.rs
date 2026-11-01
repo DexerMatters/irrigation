@@ -692,6 +692,29 @@ impl Inner {
             .map(|provider| provider.node)
     }
 
+    /// Captures the current provider recipe for one View region.
+    #[must_use]
+    pub fn routing_recipe(&self, view: ViewId) -> Option<crate::runtime::RoutingRecipe> {
+        let state = self.lock();
+        let region = state.regions.get(&view)?;
+        let mut providers = Vec::new();
+        for (key, _) in region.units.iter() {
+            let Some(unit) = key.as_any().downcast_ref::<UnitKey>() else {
+                continue;
+            };
+            if let Some(provider) = region.owners.get(&owner_key(unit)) {
+                providers.push((unit.clone(), provider.node));
+            }
+        }
+        Some(crate::runtime::RoutingRecipe {
+            stamp: crate::runtime::RoutingStamp {
+                view,
+                version: region.routing_version,
+            },
+            providers,
+        })
+    }
+
     /// Returns a unit's routing generation.
     #[must_use]
     pub fn routing_generation(&self, unit: &UnitKey) -> Version {

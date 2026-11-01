@@ -5968,3 +5968,44 @@ fn a_route_selector_resolves_live_conflicts() {
         .expect("first");
     assert_eq!(runtime.snapshot().view::<CallSlot>().field0(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Routing recipes as selector policies (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn routing_recipes_select_their_provider() {
+    let runtime = Runtime::new();
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+            .expect("first"),
+        1
+    );
+    let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let recipe = runtime.routing_recipe(view).expect("recipe");
+    assert!(runtime.validate_routing(&recipe.stamp));
+    let unit = reactive::UnitKey::field(
+        view,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    );
+    assert!(
+        recipe.providers.iter().any(|(key, _)| *key == unit),
+        "the recipe names the installed unit"
+    );
+    runtime.set_route_selector(std::sync::Arc::new(
+        reactive::RecipeSelector::new(&recipe),
+    ));
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 })
+            .expect("second"),
+        2
+    );
+    assert_eq!(
+        runtime.snapshot().view::<CallSlot>().field0(),
+        1,
+        "the recipe keeps its provider"
+    );
+}

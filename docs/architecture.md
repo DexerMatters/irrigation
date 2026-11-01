@@ -216,6 +216,13 @@ trivial `()` state; `Runtime::install_local_general` requires a workerless
 runtime, so every demand runs inline on the owner thread with the normal frame,
 dependency, and definition recording. A demand from another thread is rejected.
 
+## Routing recipes
+
+`Runtime::routing_recipe(view)` captures the region's provider mapping and
+routing stamp. `RecipeSelector` turns a captured recipe into a `RouteSelector`
+that prefers the recorded providers (falling back to the later or earlier
+claim), so a host can install a revisioned recipe as the routing authority.
+
 ## Route selection
 
 When two live providers claim one unit, an installed `RouteSelector` is the
