@@ -749,6 +749,15 @@ impl Runtime {
         self.inner.provider_of(unit)
     }
 
+    /// Installs the provider-selection policy for live definition conflicts.
+    pub fn set_route_selector(&self, selector: Arc<dyn RouteSelector>) {
+        *self
+            .inner
+            .route_selector
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(selector);
+    }
+
     /// Captures a revisioned routing certificate for one View region.
     #[must_use]
     pub fn routing_stamp(
@@ -1087,6 +1096,22 @@ pub struct RuntimeStats {
     pub invocations_evicted: u64,
     /// Nanoseconds spent marking invalidation cones.
     pub invalidation_ns: u64,
+}
+
+/// Chooses which provider owns a unit when two live providers claim it.
+///
+/// The selector is the explicit routing authority for live conflicts; without
+/// one, a live duplicate remains a `DuplicateDefinition` error. A selector that
+/// prefers the earlier provider retracts the later definition, leaving the
+/// earlier provider to restore its value on its next demand.
+pub trait RouteSelector: Send + Sync + 'static {
+    /// Returns the winning provider (one of `first` or `second`).
+    fn select(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+        first: reactive_core::ids::NodeId,
+        second: reactive_core::ids::NodeId,
+    ) -> reactive_core::ids::NodeId;
 }
 
 /// A revisioned routing certificate for one View region.

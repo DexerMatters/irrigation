@@ -105,6 +105,8 @@ pub struct Inner {
     pub config: RuntimeConfig,
     /// Metadata and node arena.
     pub state: Mutex<State>,
+    /// Explicit provider-selection policy for live definition conflicts.
+    pub route_selector: Mutex<Option<Arc<dyn crate::runtime::RouteSelector>>>,
     /// Wakes waiters when a node completes.
     pub wake: Condvar,
     /// Serializes edits against active derived-computation revisions.
@@ -136,6 +138,7 @@ impl Inner {
         let inner = Arc::new(Self {
             config,
             state: Mutex::new(State::default()),
+            route_selector: Mutex::new(None),
             wake: Condvar::new(),
             gate: crate::gate::Gate::new(),
             revision: AtomicU64::new(0),
@@ -1245,6 +1248,7 @@ impl Inner {
             installed.push(DefinitionRecord {
                 unit: draft.unit.clone(),
                 provider,
+                value: Arc::clone(&draft.value),
             });
         }
         let content_changed = {
@@ -1500,6 +1504,11 @@ impl Inner {
     }
 
     pub(crate) fn resolve_conflicts(&self, revision: Revision) -> Result<()> {
+        let selector = self
+            .route_selector
+            .lock()
+            .ok()
+            .and_then(|selector| selector.clone());
         let mut state = self.lock();
         let conflicts = std::mem::take(&mut state.pending_conflicts);
         if conflicts.is_empty() {
@@ -1516,6 +1525,74 @@ impl Inner {
                 .iter()
                 .any(|definition| definition.unit == conflict.unit);
             if !first_live {
+                continue;
+            }
+            if let Some(selector) = &selector {
+                let winner = selector.select(&conflict.unit, conflict.first, conflict.second);
+                let view = conflict.unit.view;
+                if winner == conflict.second {
+                    // The later provider keeps the unit; drop the earlier
+                    // provider's stale definition record without touching the
+                    // committed content.
+                    let first = state.node_mut(conflict.first);
+                    first.definitions.retain(|definition| {
+                        definition.unit != conflict.unit
+                            || definition.provider != conflict.first
+                    });
+                    force_recompute(&mut state, &[conflict.first, conflict.second], revision);
+                    continue;
+                }
+                // The earlier provider keeps the route; retract the late one
+                // and restore the selected provider's committed post-state.
+                let restored = state
+                    .node(conflict.first)
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.unit == conflict.unit)
+                    .map(|definition| definition.value.clone());
+                let owner = owner_key(&conflict.unit);
+                let provider_ref = state
+                    .regions
+                    .get(&view)
+                    .and_then(|region| region.owners.get(&owner))
+                    .cloned();
+                if let Some(mut region) = state.regions.remove(&view) {
+                    let mut changed = Vec::new();
+                    let _ = self.retract_unit(
+                        &mut state,
+                        &mut region,
+                        conflict.second,
+                        &conflict.unit,
+                        revision,
+                        &mut changed,
+                    );
+                    if let (Some(value), Some(provider_ref)) = (restored, provider_ref) {
+                        region.content = (region.descriptor.content.define)(
+                            &region.content,
+                            &conflict.unit,
+                            Arc::clone(&value),
+                        );
+                        region.owners.insert(Arc::new(owner), provider_ref);
+                        if let Some(slot) = region.units.get(&conflict.unit) {
+                            let node = slot.node;
+                            let record = state.node_mut(node);
+                            record.value = Some(value);
+                            record.changed_at = revision;
+                            record.verified_at = revision;
+                            record.suspect_at = 0;
+                            record.state = NodeState::Ready;
+                        }
+                        changed.push(
+                            region
+                                .units
+                                .get(&conflict.unit)
+                                .map(|slot| slot.node)
+                                .unwrap_or(conflict.first),
+                        );
+                    }
+                    state.regions.insert(view, region);
+                }
+                force_recompute(&mut state, &[conflict.first, conflict.second], revision);
                 continue;
             }
             let unit = format!("{:?}", conflict.unit);
@@ -1827,6 +1904,31 @@ fn cycle_path(state: &State, me: TaskId, node: NodeId) -> Vec<String> {
         waited = current.and_then(|task| state.wait_graph.get(&task).copied());
     }
     path
+}
+
+/// Forces providers and their dependents to re-execute on the next demand.
+///
+/// Clearing the value rather than only marking suspect makes the replay paths
+/// (including the revision-zero fast path) re-execute the whole cone.
+fn force_recompute(state: &mut State, nodes: &[NodeId], revision: Revision) {
+    let mut stack: Vec<NodeId> = nodes.to_vec();
+    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    while let Some(node) = stack.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        let dependents = {
+            let record = state.node_mut(node);
+            if record.is_running() {
+                continue;
+            }
+            record.value = None;
+            record.verified_at = 0;
+            record.suspect_at = revision;
+            record.dependents.clone()
+        };
+        stack.extend(dependents);
+    }
 }
 
 /// Formats a provider description with its source location.

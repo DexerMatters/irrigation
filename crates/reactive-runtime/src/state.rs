@@ -184,13 +184,33 @@ impl NodeRecord {
 }
 
 /// One committed definition: which provider defined which unit.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct DefinitionRecord {
     /// The defined unit.
     pub unit: UnitKey,
     /// The defining node.
     pub provider: NodeId,
+    /// The committed value of the definition, kept so a route conflict can
+    /// restore the selected provider's post-state.
+    pub value: Value,
 }
+
+impl std::fmt::Debug for DefinitionRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefinitionRecord")
+            .field("unit", &self.unit)
+            .field("provider", &self.provider)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for DefinitionRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.unit == other.unit && self.provider == other.provider
+    }
+}
+
+impl Eq for DefinitionRecord {}
 
 /// One in-flight demand.
 pub struct TaskSlot {

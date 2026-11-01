@@ -216,6 +216,16 @@ trivial `()` state; `Runtime::install_local_general` requires a workerless
 runtime, so every demand runs inline on the owner thread with the normal frame,
 dependency, and definition recording. A demand from another thread is rejected.
 
+## Route selection
+
+When two live providers claim one unit, an installed `RouteSelector` is the
+explicit authority: it names the winner, the loser's definition record is
+dropped, and the winner's committed value is restored as the authoritative
+post-state (definition records retain their committed value for this). Both
+providers are forced to re-execute on their next demand so their definitions
+are restaged against the selected route. Without a selector, a live duplicate
+remains a `DuplicateDefinition` error.
+
 ## Definition capabilities
 
 A computation may define units only in Views it has declared: `ensure_view`

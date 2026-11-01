@@ -50,8 +50,8 @@ pub use reactive_runtime::fixed_point::{
     FixedPoint, FixedPointProblem, Lattice, solve as solve_fixed_point,
 };
 pub use reactive_runtime::{
-    ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, RoutingStamp, Runtime,
-    RuntimeConfig,
+    ComponentSpec, DerivedView, Edit, EditableView, Explain, RootComponent, RouteSelector,
+    RoutingStamp, Runtime, RuntimeConfig,
     DependencyExplanation, Explanation, MemoryReport, ReclaimStats, RuntimeStats, Snapshot,
     TaskCounts,
     ChangeSummary, SourceView, Subscription, ViewSchema, call_component, define_unit,

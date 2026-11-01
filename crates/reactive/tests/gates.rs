@@ -5878,3 +5878,93 @@ fn snapshots_carry_routing_certificates() {
         .expect("fresh routing stamp");
     assert!(runtime.validate_routing(&fresh));
 }
+
+// ---------------------------------------------------------------------------
+// Explicit route selection for live conflicts (C2)
+// ---------------------------------------------------------------------------
+
+/// Sticky selector: the first conflict picks `prefer_second`, and the choice
+/// is then authoritative for later claims of the same route.
+struct StickySelector {
+    winner: std::sync::Mutex<Option<reactive::NodeId>>,
+    prefer_second: bool,
+}
+
+impl reactive::RouteSelector for StickySelector {
+    fn select(
+        &self,
+        _unit: &reactive::UnitKey,
+        first: reactive::NodeId,
+        second: reactive::NodeId,
+    ) -> reactive::NodeId {
+        let mut winner = self
+            .winner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *winner.get_or_insert(if self.prefer_second { second } else { first })
+    }
+}
+
+#[test]
+fn a_route_selector_resolves_live_conflicts() {
+    let runtime = Runtime::new();
+    runtime.set_route_selector(std::sync::Arc::new(StickySelector {
+        winner: std::sync::Mutex::new(None),
+        prefer_second: true,
+    }));
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+            .expect("first"),
+        1
+    );
+    assert_eq!(runtime.snapshot().view::<CallSlot>().field0(), 1);
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 })
+            .expect("second"),
+        2
+    );
+    assert_eq!(
+        runtime.snapshot().view::<CallSlot>().field0(),
+        2,
+        "the selector keeps the later provider"
+    );
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+            .expect("first again"),
+        1
+    );
+    assert_eq!(
+        runtime.snapshot().view::<CallSlot>().field0(),
+        2,
+        "the selected route stays authoritative"
+    );
+
+    // Preferring the earlier provider retracts the later definition; the
+    // earlier provider restores the value on its next demand.
+    let runtime = Runtime::new();
+    runtime.set_route_selector(std::sync::Arc::new(StickySelector {
+        winner: std::sync::Mutex::new(None),
+        prefer_second: false,
+    }));
+    let _ = runtime
+        .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+        .expect("first");
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 })
+            .expect("second"),
+        2
+    );
+    assert_eq!(
+        runtime.snapshot().view::<CallSlot>().field0(),
+        1,
+        "the earlier route is restored"
+    );
+    let _ = runtime
+        .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+        .expect("first");
+    assert_eq!(runtime.snapshot().view::<CallSlot>().field0(), 1);
+}
