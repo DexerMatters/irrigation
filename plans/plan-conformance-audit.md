@@ -47,12 +47,31 @@ New defects in this pass:
 | N22 | Tree cross-references and whole-tree import ambiguity reporting are absent (§5.7) | medium |
 | N23 | Whole-context component arguments rekey every recursive call (the plan's §13.3 counterexample) | medium |
 
-Already reported, still open: F1 (derived map structure unit), F2 (derived
-`Reduced`/`Graph` macro errors), F3 (observer without a root; N4 is the broader
-version), F4 (retirement of running nodes), F5 (partial definition install),
-F6 (derived collections are whole-value), F7 (no derived graph/tree), F8 (join
-output is a whole map), F9 (whole-View observers), F10 (retention), F11 (docs),
-F12/F13 (minor).
+Already reported: F1 (derived map structure unit), F2 (derived `Reduced`/`Graph`
+macro errors), F3 (observer without a root; fixed with N4), F4 (retirement of
+running nodes; fixed), F5 (partial definition install; fixed), F6 (derived
+collections are whole-value), F7 (no derived graph/tree), F8 (join output is a
+whole map), F9 (whole-View observers), F10 (retention), F11 (docs), F12/F13
+(minor).
+
+### C0 progress
+
+Implemented and gated (commit `fd0a4ce`…`d9f…`):
+
+| Finding | Fix | Gate |
+|---|---|---|
+| N1 | `DerivedListRef` reads the stored `PSeq<T>` | `derived_list_live_reads_match_the_snapshot` |
+| N2 | Whole-field retraction reverts content and unit to empty and invalidates readers | `a_retracted_whole_field_definition_reverts_to_empty` |
+| N3 | Conflicts resolve by "the earlier provider still claims the unit", on root and `call` demands | `two_called_components_cannot_define_one_unit` |
+| N4/F3 | `edit` reports the commit; refresh failures go to `Runtime::notification_error`; source-only runtimes snapshot without a root | `a_source_only_edit_notifies_its_observer`, `an_edit_is_not_failed_by_a_failing_root` |
+| N7 | Parallel members resume the original engine payload | `a_cycle_inside_a_parallel_member_stays_a_cycle` |
+| N8 | `NodeState::Running` carries a claim generation; `commit` rejects stale claims | `commit_rejects_a_stale_generation` (unit) |
+| N9 | `commit` checks the cancel token under the metadata lock | `commit_checks_cancellation_under_the_lock` (unit) |
+| N10 | `collect` reclaims false membership cells that no live trace keeps | `absence_cells_are_reclaimed_with_their_consumers` |
+| F4 | Retirement skips nodes with a live claim or waiters | `retirement_leaves_a_running_node_alone` (unit) |
+| F5 | Definition installs validate all target regions before mutating | `a_failed_definition_install_is_atomic` |
+
+Remaining from C0: N5 (collision-free identities).
 
 ## 2. Section-by-section conformance
 

@@ -415,7 +415,18 @@ impl Runtime {
                 token.clone(),
             ));
             let _guard = reactive_core::frame::FrameGuard::push(frame);
-            catch_engine(|| crate::component::call_component::<S>(args.clone()))
+            let result = catch_engine(|| crate::component::call_component::<S>(args.clone()));
+            match result {
+                Ok(output) => {
+                    // A call is a demand root: pending definition conflicts are
+                    // resolved before the result is handed back, so two called
+                    // providers cannot silently share one unit.
+                    let revision = task.current_revision();
+                    task.resolve_conflicts(revision)?;
+                    Ok(output)
+                }
+                Err(error) => Err(error),
+            }
         })
     }
 

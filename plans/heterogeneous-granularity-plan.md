@@ -1,10 +1,11 @@
 # Heterogeneous View granularity: audit and plan
 
-Status: audit complete, plan for review. Findings F1–F3 and the macro
-breakages in F2 are confirmed with reproducers; F4–F5 are confirmed by code
-inspection and need schedule-perturbation gates. No runtime change is included
-in this document; commit `fea9055` (transaction normalization) came out of the
-audit and is already merged.
+Status: audit complete; Phase C0 fixes are in progress in the companion audit.
+F3, F4 and F5 are fixed with gates (see `plan-conformance-audit.md`, C0
+progress): observer refresh no longer fails edits, retirement skips live
+claims, and definition installs are two-phase. F1, F2 and the structural F6–F13
+items remain open. Commit `fea9055` (transaction normalization) came out of the
+first audit and is merged.
 
 Relation to the other documents:
 

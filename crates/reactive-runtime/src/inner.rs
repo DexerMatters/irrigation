@@ -1214,51 +1214,28 @@ impl Inner {
         self.lock().alloc_entity()
     }
 
-    /// Marks nodes reachable from roots, subscriptions, and View units.
-    fn reachable_nodes(state: &State) -> std::collections::HashSet<NodeId> {
-        let mut reachable = std::collections::HashSet::new();
-        let mut stack: Vec<NodeId> = Vec::new();
-        if let Some(root) = &state.root {
-            stack.push(root.body);
-            stack.extend(root.outputs.iter().copied());
-        }
-        if let Some(general) = state.general_root {
-            stack.push(general);
-        }
-        for region in state.regions.values() {
-            stack.push(region.content_node);
-            for (_, slot) in region.units.iter() {
-                stack.push(slot.node);
-            }
-        }
-        for (_, node) in state.units.iter() {
-            stack.push(*node);
-        }
-        while let Some(node) = stack.pop() {
-            if !reachable.insert(node) {
-                continue;
-            }
-            for dep in &state.node(node).trace {
-                stack.push(dep.node);
-            }
-        }
-        reachable
-    }
-
-    /// Fails the revision if two reachable providers still claim one unit.
-    fn resolve_conflicts(&self, revision: Revision) -> Result<()> {
+    pub(crate) fn resolve_conflicts(&self, revision: Revision) -> Result<()> {
         let mut state = self.lock();
         let conflicts = std::mem::take(&mut state.pending_conflicts);
         if conflicts.is_empty() {
             return Ok(());
         }
-        let reachable = Self::reachable_nodes(&state);
         for conflict in conflicts {
-            if !reachable.contains(&conflict.first) {
+            // The earlier provider is still live when it still claims this
+            // unit. A provider that retired during the revision released its
+            // claim, which makes this a handover rather than a conflict. This
+            // test works for root demands and for call-only demands alike.
+            let first_live = state
+                .node(conflict.first)
+                .definitions
+                .iter()
+                .any(|definition| definition.unit == conflict.unit);
+            if !first_live {
                 continue;
             }
             let unit = format!("{:?}", conflict.unit);
-            let label = state.node(conflict.second).label.to_string();
+            let first = state.node(conflict.first).label.to_string();
+            let second = state.node(conflict.second).label.to_string();
             let view = conflict.unit.view;
             if let Some(mut region) = state.regions.remove(&view) {
                 let mut changed = Vec::new();
@@ -1274,8 +1251,8 @@ impl Inner {
             }
             return Err(ComputeError::DuplicateDefinition {
                 unit,
-                first: label.clone(),
-                second: label,
+                first,
+                second,
             });
         }
         Ok(())
@@ -1628,6 +1605,8 @@ pub struct ReclaimStats {
     pub nodes_after: usize,
     /// Nodes whose record was cleared.
     pub nodes_reclaimed: usize,
+    /// Absence-predicate unit cells dropped with their consumers.
+    pub units_reclaimed: usize,
     /// Invocation records dropped with their bodies.
     pub invocations_reclaimed: usize,
 }
@@ -1654,6 +1633,19 @@ pub struct MemoryReport {
 }
 
 impl Inner {
+    /// Whether a unit node is a false membership cell (a queried absence).
+    fn is_absent_membership(record: &NodeRecord) -> bool {
+        record
+            .unit
+            .as_ref()
+            .is_some_and(|unit| unit.kind == UnitKind::Membership)
+            && record
+                .value
+                .as_ref()
+                .and_then(|value| value.downcast_ref::<bool>())
+                .is_some_and(|present| !*present)
+    }
+
     /// Reclaims nodes that no root, subscription, View unit, or trace can reach.
     ///
     /// Reclamation only loses reuse: a later demand reconstructs the graph.
@@ -1677,6 +1669,11 @@ impl Inner {
             }
         }
         for (_, node) in state.units.iter() {
+            // An absence-predicate cell is kept alive only by a live trace, so
+            // `collect` can drop it with the consumer that queried it.
+            if Self::is_absent_membership(state.node(*node)) {
+                continue;
+            }
             stack.push(*node);
         }
         while let Some(node) = stack.pop() {
@@ -1695,7 +1692,8 @@ impl Inner {
             if reachable.contains(&id) {
                 continue;
             }
-            if matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) {
+            let absent_membership = record.kind == NodeKind::Unit && Self::is_absent_membership(record);
+            if matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) && !absent_membership {
                 continue;
             }
             if !record.definitions.is_empty() {
@@ -1724,6 +1722,16 @@ impl Inner {
             record.failure = None;
             record.dependents.clear();
         }
+        let doomed_keys: Vec<Arc<dyn AnyKey>> = state
+            .units
+            .iter()
+            .filter(|(_, node)| doomed_set.contains(node))
+            .map(|(key, _)| Arc::clone(key))
+            .collect();
+        let units_reclaimed = doomed_keys.len();
+        for key in doomed_keys {
+            state.units.remove(key.as_ref());
+        }
         state.sites.retain(|_, node| !doomed_set.contains(node));
         let mut invocations_reclaimed = 0;
         for entries in state.invocations.values_mut() {
@@ -1738,6 +1746,7 @@ impl Inner {
             nodes_before,
             nodes_after: state.nodes.len(),
             nodes_reclaimed: doomed.len(),
+            units_reclaimed,
             invocations_reclaimed,
         }
     }

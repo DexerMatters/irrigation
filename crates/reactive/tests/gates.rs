@@ -2595,3 +2595,132 @@ fn a_failed_definition_install_is_atomic() {
         "a rejected install must not retract earlier definitions"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Unique definitions on the call path (N3)
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct CallSlot(u64);
+
+#[reactive]
+mod call_conflict {
+    use super::CallSlot;
+
+    #[component]
+    pub fn first(tag: u64) -> u64 {
+        let _ = tag;
+        let slot = CallSlot;
+        slot.define_field0(1);
+        1
+    }
+
+    #[component]
+    pub fn second(tag: u64) -> u64 {
+        let _ = tag;
+        let slot = CallSlot;
+        slot.define_field0(2);
+        2
+    }
+}
+
+#[test]
+fn two_called_components_cannot_define_one_unit() {
+    let runtime = Runtime::new();
+    let first = runtime.call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 });
+    assert_eq!(first.expect("first call"), 1);
+    let second = runtime.call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 });
+    assert!(
+        matches!(
+            second,
+            Err(reactive::ComputeError::DuplicateDefinition { .. })
+        ),
+        "expected a duplicate definition, got {second:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Absence predicate cells are reclaimed with their consumers (N10)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct AbsenceFlag {
+    on: bool,
+}
+
+#[view(source)]
+pub struct AbsenceTable {
+    entries: Map<u32, u64>,
+}
+
+#[view(source)]
+pub struct AbsenceQueries {
+    keys: List<u32>,
+}
+
+#[reactive]
+mod absence_probe {
+    use super::{AbsenceFlag, AbsenceQueries, AbsenceTable};
+
+    #[component]
+    pub fn root(flag: &AbsenceFlag, table: &AbsenceTable, queries: &AbsenceQueries) -> usize {
+        if flag.on() {
+            let entries = table.entries();
+            let keys = queries.keys().to_vec();
+            keys.iter()
+                .filter(|key| entries.get(*key).is_none())
+                .count()
+        } else {
+            0
+        }
+    }
+}
+
+#[test]
+fn absence_cells_are_reclaimed_with_their_consumers() {
+    let runtime = Runtime::new();
+    runtime.install(absence_probe::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            edit.view::<AbsenceFlag>().set_on(true);
+            let mut queries = edit.view::<AbsenceQueries>();
+            let mut keys = queries.keys();
+            for key in 1_000..1_100u32 {
+                keys.push(key);
+            }
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime.read_outputs::<absence_probe::Root>().expect("read"),
+        100
+    );
+    let before = runtime.memory_report().units;
+
+    // The branch that queried 100 absent keys is gone; the cells go with it.
+    runtime
+        .edit(|edit| edit.view::<AbsenceFlag>().set_on(false))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<absence_probe::Root>().expect("read"),
+        0
+    );
+    let stats = runtime.collect();
+    assert!(
+        stats.units_reclaimed >= 100,
+        "expected the 100 absence cells to be reclaimed, got {stats:?}"
+    );
+    let after = runtime.memory_report().units;
+    assert!(
+        after + 100 <= before,
+        "units before={before} after={after}"
+    );
+
+    // The same query recreates its cells and still answers correctly.
+    runtime
+        .edit(|edit| edit.view::<AbsenceFlag>().set_on(true))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<absence_probe::Root>().expect("read"),
+        100
+    );
+}
