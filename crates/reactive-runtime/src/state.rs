@@ -282,6 +282,8 @@ pub struct Invocation {
     pub body: NodeId,
     /// Output projection nodes.
     pub outputs: Vec<NodeId>,
+    /// Revision at which this invocation was last demanded.
+    pub last_used: Revision,
 }
 
 impl std::fmt::Debug for Invocation {
@@ -514,6 +516,8 @@ pub struct Stats {
     pub site_creations: std::sync::atomic::AtomicU64,
     /// Site-node lookups that reused an existing identity.
     pub site_reuses: std::sync::atomic::AtomicU64,
+    /// Invocation records evicted by the cache cap.
+    pub invocations_evicted: std::sync::atomic::AtomicU64,
 }
 
 /// Everything the runtime protects with its metadata lock.

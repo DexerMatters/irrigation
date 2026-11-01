@@ -76,6 +76,12 @@ pub struct RuntimeConfig {
     ///
     /// `None` keeps reclamation manual.
     pub auto_collect_every: Option<u64>,
+    /// Optional cap on retained component invocations.
+    ///
+    /// When exceeded, the least recently used invocations whose bodies are not
+    /// referenced by any live trace are evicted. `None` keeps the
+    /// reachability-only policy.
+    pub max_invocations: Option<usize>,
 }
 
 impl Default for RuntimeConfig {
@@ -86,6 +92,7 @@ impl Default for RuntimeConfig {
             max_depth: 250_000,
             wait_slice: Duration::from_millis(20),
             auto_collect_every: None,
+            max_invocations: None,
         }
     }
 }
@@ -2014,13 +2021,16 @@ impl RuntimeOps for Inner {
         args_eq: &dyn Fn(&dyn Any, &dyn Any) -> bool,
     ) -> (NodeId, Vec<NodeId>) {
         let mut state = self.lock();
-        if let Some(entries) = state.invocations.get(&(component, args_hash)) {
-            for invocation in entries {
+        let revision = state.revision;
+        if let Some(entries) = state.invocations.get_mut(&(component, args_hash)) {
+            for invocation in entries.iter_mut() {
                 if args_eq(invocation.args.as_ref(), args.as_ref()) {
+                    invocation.last_used = revision;
                     return (invocation.body, invocation.outputs.clone());
                 }
             }
         }
+        self.evict_invocations(&mut state);
         let invocation_id = state.next_invocation + 1;
         state.next_invocation = invocation_id;
         let invocation_scope = state.scopes.child(scope, invocation_id);
@@ -2043,8 +2053,51 @@ impl RuntimeOps for Inner {
                 scope,
                 body,
                 outputs: outputs.clone(),
+                last_used: revision,
             });
         (body, outputs)
+    }
+}
+
+impl Inner {
+    /// Evicts the least recently used unreferenced invocations above the cap.
+    fn evict_invocations(&self, state: &mut State) {
+        let Some(cap) = self.config.max_invocations else {
+            return;
+        };
+        loop {
+            let total: usize = state.invocations.values().map(Vec::len).sum();
+            if total <= cap {
+                return;
+            }
+            let mut candidate: Option<((ComponentId, u64), usize, u64)> = None;
+            for (&key, entries) in &state.invocations {
+                for (index, invocation) in entries.iter().enumerate() {
+                    if !state.node(invocation.body).dependents.is_empty() {
+                        continue;
+                    }
+                    let used = invocation.last_used;
+                    if candidate.is_none_or(|(_, _, best)| used < best) {
+                        candidate = Some((key, index, used));
+                    }
+                }
+            }
+            let Some((key, index, _)) = candidate else {
+                return;
+            };
+            if let Some(entries) = state.invocations.get_mut(&key) {
+                if index < entries.len() {
+                    entries.remove(index);
+                }
+                if entries.is_empty() {
+                    state.invocations.remove(&key);
+                }
+            }
+            state
+                .stats
+                .invocations_evicted
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 

@@ -669,6 +669,7 @@ impl Runtime {
             auto_collects: state.stats.auto_collects.load(Ordering::Relaxed),
             site_creations: state.stats.site_creations.load(Ordering::Relaxed),
             site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
+            invocations_evicted: state.stats.invocations_evicted.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
             tasks,
         }
@@ -715,6 +716,7 @@ impl Runtime {
             waiting_tasks: state.wait_graph.len(),
             site_creations: state.stats.site_creations.load(Ordering::Relaxed),
             site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
+            invocations_evicted: state.stats.invocations_evicted.load(Ordering::Relaxed),
         }
     }
 
@@ -1017,6 +1019,8 @@ pub struct RuntimeStats {
     pub site_creations: u64,
     /// Site-node lookups that reused an existing identity.
     pub site_reuses: u64,
+    /// Invocation records evicted by the cache cap.
+    pub invocations_evicted: u64,
 }
 
 /// Why one node changed.
@@ -1117,6 +1121,8 @@ pub struct Explain {
     pub site_creations: u64,
     /// Site-node lookups that reused an existing identity.
     pub site_reuses: u64,
+    /// Invocation records evicted by the cache cap.
+    pub invocations_evicted: u64,
 }
 
 fn root_project<R: RootComponent>(value: &Value, index: usize) -> Value {

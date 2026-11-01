@@ -5353,3 +5353,34 @@ fn routing_subscriptions_fire_only_on_provider_changes() {
     assert_eq!(source_fired.load(Ordering::SeqCst), 0);
     assert_eq!(fired.load(Ordering::SeqCst), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Bounded invocation cache (Phase 4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn invocation_cap_bounds_the_cache() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        max_invocations: Some(2),
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(churn::Root).expect("install");
+    for value in 0..16u64 {
+        runtime
+            .edit(|edit| edit.view::<ChurnKey>().set_value(value))
+            .expect("edit");
+        assert_eq!(
+            runtime.read_outputs::<churn::Root>().expect("read"),
+            value
+        );
+        assert!(
+            runtime.memory_report().invocations <= 3,
+            "the cache must stay bounded at step {value}: {}",
+            runtime.memory_report().invocations
+        );
+    }
+    assert!(
+        runtime.stats().invocations_evicted > 0,
+        "the cap must evict unreferenced invocations"
+    );
+}

@@ -228,6 +228,10 @@ and a 12-bit generation, allocation advances the generation, and a stale id
 fails the generation check (`Runtime::is_live` reports it without panicking).
 `RuntimeConfig::auto_collect_every` optionally reclaims on demand entry after a
 revision interval; the default keeps collection manual.
+`RuntimeConfig::max_invocations` bounds the invocation cache: when exceeded, the
+least recently used invocations whose bodies no live trace references are
+evicted (referenced entries are kept, so the cache can exceed the cap by the
+in-flight set).
 
 ## Demand surfaces
 
