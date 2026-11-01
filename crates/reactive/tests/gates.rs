@@ -4959,3 +4959,122 @@ fn automatic_collection_reclaims_on_demand_entry() {
     assert!(runtime.memory_report().invocations <= 2);
     assert!(runtime.memory_report().scopes <= 2);
 }
+
+// ---------------------------------------------------------------------------
+// Async general component: pending futures (C3)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct AsyncSource {
+    left: u64,
+    right: u64,
+}
+
+struct PendingOnce(bool);
+
+impl std::future::Future for PendingOnce {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+}
+
+struct AsyncSum;
+
+impl reactive::AsyncGeneralComponent for AsyncSum {
+    type State = (u64, u64);
+    type Output = (u64, u64, u64);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0005);
+    const NAME: &'static str = "gates::AsyncSum";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<AsyncSource as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+    ) -> reactive::ComponentFuture<'a, ((u64, u64), (u64, u64, u64))> {
+        Box::pin(async move {
+            let view = <AsyncSource as reactive::ViewSchema>::DESCRIPTOR.id;
+            let left: u64 = cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(0),
+                reactive::UnitKind::Value,
+            ))?;
+            let right: u64 = cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(1),
+                reactive::UnitKind::Value,
+            ))?;
+            PendingOnce(false).await;
+            Ok(((left, right), (left, right, left + right)))
+        })
+    }
+
+    fn update<'a>(
+        &'a self,
+        cx: &'a mut reactive::GeneralCx,
+        _state: &'a (u64, u64),
+        _changes: &'a reactive::ChangeBatch,
+    ) -> reactive::ComponentFuture<'a, ((u64, u64), (u64, u64, u64))> {
+        Box::pin(async move {
+            let view = <AsyncSource as reactive::ViewSchema>::DESCRIPTOR.id;
+            let left: u64 = cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(0),
+                reactive::UnitKind::Value,
+            ))?;
+            let right: u64 = cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(1),
+                reactive::UnitKind::Value,
+            ))?;
+            PendingOnce(false).await;
+            Ok(((left, right), (left, right, left + right)))
+        })
+    }
+}
+
+#[test]
+fn pending_component_futures_are_driven_to_completion() {
+    let runtime = Runtime::new();
+    runtime
+        .install_general(reactive::AsyncAdapter::new(AsyncSum))
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut source = edit.view::<AsyncSource>();
+            source.set_left(2);
+            source.set_right(3);
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncSum>>()
+            .expect("initialize"),
+        (2, 3, 5)
+    );
+    runtime
+        .edit(|edit| edit.view::<AsyncSource>().set_right(4))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::AsyncAdapter<AsyncSum>>()
+            .expect("update"),
+        (2, 4, 6)
+    );
+}

@@ -522,31 +522,49 @@ impl std::fmt::Debug for GeneralHandle {
 pub type ComponentFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send + 'a>>;
 
-/// Drives a component future to completion.
+/// Drives a component future to completion on the demanding thread.
+///
+/// A pending future parks the thread until its waker unparks it, then polls
+/// again. This keeps the atomic commit contract and supports futures woken by
+/// another thread (a timer, an I/O completion). The demanding worker is held
+/// while the future is pending; true worker suspension remains future work.
 ///
 /// # Errors
 ///
-/// Returns [`ComputeError::Unsupported`] when the future is still pending,
-/// which means it awaited work this runtime does not provide.
+/// Returns the future's own error.
 pub fn drive<T>(future: ComponentFuture<'_, T>) -> Result<T> {
-    use std::task::{Context, Poll};
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
 
-    let waker = std::task::Waker::noop();
-    let mut context = Context::from_waker(waker);
+    struct Unpark(std::thread::Thread);
+
+    impl Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
     let mut future = future;
-    match future.as_mut().poll(&mut context) {
-        Poll::Ready(result) => result,
-        Poll::Pending => Err(ComputeError::unsupported(
-            "component future is pending; awaiting external work needs a dedicated executor",
-        )),
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(result) => return result,
+            Poll::Pending => std::thread::park(),
+        }
     }
 }
 
 /// An async form of [`GeneralComponent`].
 ///
-/// The runtime polls the returned future to completion. Synchronous algorithms
-/// can still return a ready future, and the driver keeps the same atomic
-/// state/output commit as the synchronous trait.
+/// The runtime polls the returned future to completion, parking the demanding
+/// thread while it is pending. Synchronous algorithms can still return a ready
+/// future, and the driver keeps the same atomic state/output commit as the
+/// synchronous trait.
 pub trait AsyncGeneralComponent: Send + Sync + 'static {
     /// Retained algorithm state.
     type State: Clone + Send + Sync + 'static;
