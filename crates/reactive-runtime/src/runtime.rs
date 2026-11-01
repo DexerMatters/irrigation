@@ -152,6 +152,7 @@ impl Runtime {
     ///
     /// Fails when no general component is installed or when it fails.
     pub fn read_outputs_general<T: crate::general::GeneralComponent>(&self) -> Result<T::Output> {
+        self.auto_collect();
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let cancel = CancelToken::default();
@@ -277,6 +278,7 @@ impl Runtime {
     /// Fails when no root is installed, when a component fails, or when `R`
     /// does not match the installed root.
     pub fn read_outputs<R: RootComponent>(&self) -> Result<R::Output> {
+        self.auto_collect();
         self.read_outputs_with_cancel::<R>(CancelToken::default())
     }
 
@@ -339,6 +341,7 @@ impl Runtime {
     /// Fails when no root is installed, the index is out of range, or the
     /// demand fails.
     pub fn read_projection<R: RootComponent>(&self, index: usize) -> Result<Value> {
+        self.auto_collect();
         self.read_projection_with_cancel::<R>(index, CancelToken::default())
     }
 
@@ -569,6 +572,7 @@ impl Runtime {
     ///
     /// Fails when called outside a demand context or when the component fails.
     pub fn call<S: ComponentSpec>(&self, args: S::Args) -> Result<S::Output> {
+        self.auto_collect();
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let cancel = CancelToken::default();
@@ -618,9 +622,14 @@ impl Runtime {
             validations: state.stats.validations.load(Ordering::Relaxed),
             revisions: state.stats.revisions.load(Ordering::Relaxed),
             invalidations: state.stats.invalidations.load(Ordering::Relaxed),
+            auto_collects: state.stats.auto_collects.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
             tasks,
         }
+    }
+
+    fn auto_collect(&self) {
+        let _ = self.inner.maybe_collect();
     }
 
     /// Reclaims nodes unreachable from roots, subscriptions, or View units.
@@ -941,6 +950,8 @@ pub struct RuntimeStats {
     pub nodes: usize,
     /// In-flight demand tasks.
     pub tasks: TaskCounts,
+    /// Automatic collections triggered on demand entry.
+    pub auto_collects: u64,
 }
 
 /// Why one node changed.

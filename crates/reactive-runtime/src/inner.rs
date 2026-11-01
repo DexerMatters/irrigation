@@ -72,6 +72,10 @@ pub struct RuntimeConfig {
     /// Pooled tasks do not poll: they suspend and are queued when the node
     /// completes. Only nested and workerless demands use this slice.
     pub wait_slice: Duration,
+    /// Automatically reclaim after this many revisions on demand entry.
+    ///
+    /// `None` keeps reclamation manual.
+    pub auto_collect_every: Option<u64>,
 }
 
 impl Default for RuntimeConfig {
@@ -81,6 +85,7 @@ impl Default for RuntimeConfig {
             stack_size: 256 * 1024 * 1024,
             max_depth: 250_000,
             wait_slice: Duration::from_millis(20),
+            auto_collect_every: None,
         }
     }
 }
@@ -1959,6 +1964,29 @@ impl Inner {
     /// Reclamation only loses reuse: a later demand reconstructs the graph.
     /// Nodes that still define derived units are never reclaimed, because their
     /// definitions would otherwise disappear from the region.
+    /// Runs `collect` when the configured revision interval has elapsed.
+    pub fn maybe_collect(&self) -> Option<ReclaimStats> {
+        let interval = self.config.auto_collect_every?;
+        if interval == 0 {
+            return None;
+        }
+        let revision = {
+            let state = self.lock();
+            if state.revision.saturating_sub(state.last_collect) < interval {
+                return None;
+            }
+            state.revision
+        };
+        let stats = self.collect();
+        self.lock().last_collect = revision;
+        self.lock()
+            .stats
+            .auto_collects
+            .fetch_add(1, Ordering::Relaxed);
+        Some(stats)
+    }
+
+    /// Reclaims unreachable nodes, their units, scopes, and invocation records.
     pub fn collect(&self) -> ReclaimStats {
         // Reclamation must not race a demand that is midway through committing
         // a trace; wait for in-flight demands instead.

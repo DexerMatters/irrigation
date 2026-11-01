@@ -484,6 +484,8 @@ pub struct Stats {
     pub revisions: std::sync::atomic::AtomicU64,
     /// Nodes marked suspect by invalidation.
     pub invalidations: std::sync::atomic::AtomicU64,
+    /// Automatic collections triggered on demand entry.
+    pub auto_collects: std::sync::atomic::AtomicU64,
 }
 
 /// Everything the runtime protects with its metadata lock.
@@ -515,6 +517,8 @@ pub struct State {
     pub next_generation: u64,
     /// Reclaimed arena slots available for reuse.
     pub free_nodes: Vec<u32>,
+    /// Revision of the last reclamation.
+    pub last_collect: Revision,
     /// Active subscriptions.
     pub subscriptions: Vec<SubscriptionRecord>,
     /// Next subscription id.

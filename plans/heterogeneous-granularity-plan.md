@@ -401,8 +401,9 @@ asks for bounded caching to prevent unbounded history. `collect` is manual.
 **Status: fixed.** `collect` prunes unreachable scopes, arena slots are reused
 with generation-checked `NodeId`s, the invocation cache is bounded by
 reachability, and `memory_report` reports scopes, task records, and structure
-units. Automatic collection and a configurable invocation cap remain open
-policy choices. Gates: `collect_reclaims_unreachable_scopes`,
+units. `RuntimeConfig::auto_collect_every` optionally reclaims on demand
+entry. A configurable numeric invocation cap remains a policy choice; the
+reachability bound is the current policy. Gates: `collect_reclaims_unreachable_scopes`,
 `collect_reuses_arena_slots_and_detects_stale_ids`,
 `argument_churn_stays_within_the_retention_policy`.
 

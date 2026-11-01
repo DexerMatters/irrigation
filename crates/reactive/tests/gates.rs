@@ -4929,3 +4929,33 @@ fn typed_general_components_publish_typed_returns() {
         (2, 4, 80)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Automatic collection policy (Phase 4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn automatic_collection_reclaims_on_demand_entry() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        auto_collect_every: Some(1),
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(churn::Root).expect("install");
+    for value in 0..6u64 {
+        runtime
+            .edit(|edit| edit.view::<ChurnKey>().set_value(value))
+            .expect("edit");
+        assert_eq!(
+            runtime.read_outputs::<churn::Root>().expect("read"),
+            value
+        );
+    }
+    assert!(
+        runtime.stats().auto_collects > 0,
+        "the interval policy must reclaim without a manual collect"
+    );
+    // The interval reclaims before each demand, so at most the current and the
+    // previous invocation remain until the next pass.
+    assert!(runtime.memory_report().invocations <= 2);
+    assert!(runtime.memory_report().scopes <= 2);
+}

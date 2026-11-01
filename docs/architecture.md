@@ -220,7 +220,8 @@ reports each count and `memory_report` exposes scopes, task records, and
 structure units. Reclaimed arena slots are reused: `NodeId` packs a 20-bit slot
 and a 12-bit generation, allocation advances the generation, and a stale id
 fails the generation check (`Runtime::is_live` reports it without panicking).
-Automatic collection is still a manual host decision.
+`RuntimeConfig::auto_collect_every` optionally reclaims on demand entry after a
+revision interval; the default keeps collection manual.
 
 ## Demand surfaces
 
