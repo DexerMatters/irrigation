@@ -92,6 +92,13 @@ were retired only at the enclosing component's commit, after later statements
 had already read the stale units. The lowering now gives control-flow statements
 their own `eval` node.
 
+Phase 1 of the granularity plan (one structure contract for every family) is
+also complete: map, list, set, graph and reduced fields all project structure;
+the runtime maintains it for whole-value definitions and retractions;
+`value_only_edits_do_not_run_structure_consumers` and
+`structure_changes_do_not_run_value_consumers` show the cutoff split. Derived
+lists and sets keep whole-value semantics until Phase 2.
+
 Still open from C1: N6 (declared primitives). The body still computes the whole
 output tuple, so per-projection demand saves the sibling projection node but not
 sibling body work; splitting tuple construction into lazy projections is part of

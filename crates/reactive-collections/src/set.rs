@@ -142,6 +142,14 @@ where
 
     /// Reads every member in order.
     #[must_use]
+    pub fn members(&self) -> PSet<T> {
+        read_unit_value(structure_unit(self.view, self.field), |content| {
+            Some((self.content)(content))
+        })
+    }
+
+    /// Reads every member.
+    /// Reads every member in order.
     pub fn to_vec(&self) -> Vec<T> {
         let structure: PSet<T> = read_unit_value(structure_unit(self.view, self.field), |content| {
             Some((self.content)(content))
@@ -292,15 +300,15 @@ where
         true
     }
 
+    fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
+        Some(value_of(storage.clone()))
+    }
+
     fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
         Some(reactive_core::descriptor::Structure {
             value: value_of(storage.clone()),
             eq: |left, right| left.downcast_ref::<PSet<T>>() == right.downcast_ref::<PSet<T>>(),
         })
-    }
-
-    fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
-        Some(value_of(storage.clone()))
     }
 }
 
@@ -333,6 +341,13 @@ impl<T> DerivedSetRef<T>
 where
     T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
 {
+    /// The structure projection (the whole member set).
+    pub fn members(&self) -> PSet<T> {
+        read_unit_value(structure_unit(self.view, self.field), |content| {
+            Some((self.content)(content))
+        })
+    }
+
     /// Builds a handle for one derived set field.
     #[must_use]
     pub fn new(view: ViewId, field: FieldId, content: fn(&dyn Any) -> PSet<T>) -> Self {

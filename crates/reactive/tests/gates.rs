@@ -3122,3 +3122,199 @@ fn invalidation_cost_is_counted() {
         "a no-op transaction must not invalidate"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1: one structure contract (F1 completion)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct ConsumerTable {
+    entries: Map<u32, u64>,
+}
+
+#[reactive]
+mod structure_consumers {
+    use super::ConsumerTable;
+
+    #[component]
+    pub fn keys_only(table: &ConsumerTable) -> Vec<u32> {
+        table.entries().keys()
+    }
+
+    #[component]
+    pub fn one_value(table: &ConsumerTable) -> Option<u64> {
+        table.entries().get(&1)
+    }
+}
+
+#[test]
+fn value_only_edits_do_not_run_structure_consumers() {
+    let runtime = Runtime::new();
+    runtime
+        .install(structure_consumers::KeysOnly)
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<structure_consumers::KeysOnly>()
+            .expect("read"),
+        vec![1]
+    );
+    let executions = runtime.stats().executions;
+
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<structure_consumers::KeysOnly>()
+            .expect("read"),
+        vec![1]
+    );
+    assert_eq!(
+        runtime.stats().executions,
+        executions,
+        "a value-only edit must not execute a structure consumer"
+    );
+}
+
+#[test]
+fn structure_changes_do_not_run_value_consumers() {
+    let runtime = Runtime::new();
+    runtime
+        .install(structure_consumers::OneValue)
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<structure_consumers::OneValue>()
+            .expect("read"),
+        Some(10)
+    );
+    let executions = runtime.stats().executions;
+
+    // Adding an unrelated key changes structure, membership for key 2, and the
+    // content, but none of the units the value consumer observed.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(2, 20);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<structure_consumers::OneValue>()
+            .expect("read"),
+        Some(10)
+    );
+    assert_eq!(
+        runtime.stats().executions,
+        executions,
+        "a structure change must not execute a value consumer"
+    );
+
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 12);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<structure_consumers::OneValue>()
+            .expect("read"),
+        Some(12)
+    );
+    assert!(runtime.stats().executions > executions);
+}
+
+#[view(source)]
+pub struct FamiliesFlag {
+    count: u64,
+}
+
+#[view(derived)]
+pub struct WholeList(List<u64>);
+
+#[view(derived)]
+pub struct WholeSet(Set<u64>);
+
+#[reactive]
+mod derived_families {
+    use super::{FamiliesFlag, WholeList, WholeSet};
+
+    #[component]
+    pub fn root(flag: &FamiliesFlag) -> (Vec<u64>, Vec<u64>) {
+        if flag.count() == 2 {
+            let _ = WholeList::from([10u64, 20]);
+            let _ = WholeSet::from([1u64, 2]);
+        } else {
+            let _ = WholeList::from([10u64, 20, 30]);
+            let _ = WholeSet::from([1u64, 2, 3]);
+        }
+        (
+            WholeList.ids().to_vec(),
+            WholeSet.members().iter().cloned().collect(),
+        )
+    }
+}
+
+#[test]
+fn structure_is_maintained_for_every_family() {
+    let runtime = Runtime::new();
+    runtime.install(derived_families::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<FamiliesFlag>().set_count(3))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<derived_families::Root>()
+            .expect("read"),
+        (vec![0, 1, 2], vec![1, 2, 3])
+    );
+    let structure_units = |runtime: &Runtime| {
+        runtime
+            .dump()
+            .into_iter()
+            .filter(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| unit.contains("Structure"))
+            })
+            .count()
+    };
+    assert!(
+        structure_units(&runtime) >= 2,
+        "list and set structure units must exist"
+    );
+
+    runtime
+        .edit(|edit| edit.view::<FamiliesFlag>().set_count(2))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<derived_families::Root>()
+            .expect("read"),
+        (vec![0, 1], vec![1, 2])
+    );
+}

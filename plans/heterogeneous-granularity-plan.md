@@ -476,9 +476,17 @@ present and demonstrably failing before its fix (where a reproducer exists).
 4. **Coverage.** Lists and sets keep their whole-value derived behavior in this
    phase; the structure unit exists for them and is the foundation for Phase 2.
 
-Gates: `structure_is_maintained_for_every_family`,
+**Status: complete.** Every collection marker has a structure projection
+(map keys, list ids, set members, graph topology, reduced sequence); the runtime
+recomputes the structure unit after whole-value definitions and retractions as
+well as membership changes, with equality cutoff. Derived lists and sets still
+have whole-value semantics; their structure unit is the positional id sequence
+or member set that Phase 2 will key identities with. Source editors remain the
+writers for source views. Gates:
+`structure_is_maintained_for_every_family`,
 `value_only_edits_do_not_run_structure_consumers`,
-`structure_changes_notify_only_structure_consumers`.
+`structure_changes_do_not_run_value_consumers`,
+`graph_structure_projects_topology`, `reduced_structure_projects_the_sequence`.
 
 ### Phase 2 — Identity-preserving derived collections
 

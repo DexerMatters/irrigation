@@ -801,6 +801,11 @@ fn single_field_forwarding(
             pub fn to_vec(&self) -> Vec<#elem> {
                 self.#accessor().to_vec()
             }
+            /// Element identity sequence.
+            #[must_use]
+            pub fn ids(&self) -> reactive::PSeq<u64> {
+                self.#accessor().ids()
+            }
             /// Number of elements.
             #[must_use]
             pub fn len(&self) -> usize {
@@ -839,6 +844,11 @@ fn single_field_forwarding(
             #[must_use]
             pub fn to_vec(&self) -> Vec<#elem> {
                 self.#accessor().to_vec()
+            }
+            /// The structure projection (the whole member set).
+            #[must_use]
+            pub fn members(&self) -> reactive::PSet<#elem> {
+                self.#accessor().members()
             }
             /// Number of members.
             #[must_use]

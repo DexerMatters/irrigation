@@ -1056,6 +1056,12 @@ impl Inner {
                 }
             }
             content = (descriptor.content.define)(&content, &draft.unit, Arc::clone(&draft.value));
+            if draft.unit.entity.is_none()
+                && (descriptor.content.structure)(&content, draft.unit.field).is_some()
+                && !dirty_fields.contains(&draft.unit.field)
+            {
+                dirty_fields.push(draft.unit.field);
+            }
             region.owners.insert(
                 Arc::new(owner),
                 ProviderRef {
@@ -1178,7 +1184,10 @@ impl Inner {
             changed_nodes.push(region.content_node);
         }
         region.content = content;
-        if removed_membership {
+        if removed_membership
+            || (unit.entity.is_none()
+                && (descriptor.content.structure)(&region.content, unit.field).is_some())
+        {
             Self::refresh_structure(state, region, unit.field, revision, changed_nodes);
         }
         Ok(())

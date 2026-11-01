@@ -114,6 +114,15 @@ where
         }
     }
 
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(topology_of(storage)),
+            eq: |left, right| {
+                left.downcast_ref::<GraphTopology>() == right.downcast_ref::<GraphTopology>()
+            },
+        })
+    }
+
     fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         if let Some(node) = key.as_any().downcast_ref::<NodeKey>() {
             storage.node(node.0).map(|value| value_of(value.clone()))
@@ -543,6 +552,20 @@ mod tests {
         let edited = graph.set_edge(edge, 9);
         assert_eq!(topology_of(&edited), topology);
         assert_eq!(adjacency_of(&edited, 1), vec![(edge, 2)]);
+    }
+
+    #[test]
+    fn graph_structure_projects_topology() {
+        let graph: GraphStore<u32, u32> = GraphStore::new().add_node(1, 10).add_node(2, 20);
+        let (graph, _) = graph.add_edge(1, 2, 5);
+        let structure = <Graph<u32, u32> as ViewField>::structure(&graph).expect("structure");
+        let topology = structure
+            .value
+            .downcast_ref::<GraphTopology>()
+            .expect("topology");
+        assert_eq!(topology.node_count(), 2);
+        assert_eq!(topology.edge_count(), 1);
+        assert!((structure.eq)(&structure.value, &structure.value));
     }
 
     #[test]

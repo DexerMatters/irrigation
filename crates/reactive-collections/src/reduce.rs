@@ -82,6 +82,16 @@ impl<R: Reduction> ViewField for Reduced<R> {
         true
     }
 
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(storage.clone()),
+            eq: |left, right| {
+                left.downcast_ref::<AggSeq<R::Aggregate, R::Item>>()
+                    == right.downcast_ref::<AggSeq<R::Aggregate, R::Item>>()
+            },
+        })
+    }
+
     fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         match key.as_any().downcast_ref::<u64>() {
             Some(index) => storage.get(*index as usize).map(|item| value_of(item.clone())),
@@ -238,5 +248,50 @@ impl<R: Reduction> ReducedEditor<'_, R> {
     fn stage(&mut self) {
         let sequence = self.storage.clone();
         self.edit.set(structure_unit(self.view, self.field), sequence);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reactive_store::aggregate::AggSeq;
+
+    #[derive(Clone, PartialEq)]
+    struct Sum;
+
+    impl Reduction for Sum {
+        type Item = u64;
+        type Aggregate = u64;
+
+        fn leaf(item: &u64) -> u64 {
+            *item
+        }
+
+        fn combine(left: &u64, right: &u64) -> u64 {
+            *left + *right
+        }
+
+        fn identity() -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn reduced_structure_projects_the_sequence() {
+        let sequence: AggSeq<u64, u64> =
+            AggSeq::new(Sum::leaf, Sum::combine, Sum::identity())
+                .push(1)
+                .push(2);
+        let structure = <Reduced<Sum> as ViewField>::structure(&sequence).expect("structure");
+        let projected = structure
+            .value
+            .downcast_ref::<AggSeq<u64, u64>>()
+            .expect("aggregate sequence");
+        assert_eq!(projected.to_vec(), vec![1, 2]);
+        assert!((structure.eq)(
+            &structure.value,
+            &reactive_core::value::value_of(projected.clone())
+        ));
     }
 }

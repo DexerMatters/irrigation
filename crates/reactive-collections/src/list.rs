@@ -507,6 +507,16 @@ where
     fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         Some(value_of(storage.clone()))
     }
+
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        let ids: PSeq<u64> = (0..storage.len() as u64).collect();
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(ids),
+            eq: |left, right| {
+                left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>()
+            },
+        })
+    }
 }
 
 /// Tracked read handle for a derived list.
@@ -550,6 +560,15 @@ where
 
     fn unit(&self) -> UnitKey {
         UnitKey::field(self.view, self.field, UnitKind::Value)
+    }
+
+    /// The positional identity sequence of the whole-value list.
+    #[must_use]
+    pub fn ids(&self) -> PSeq<u64> {
+        read_unit_value(structure_unit(self.view, self.field), |content| {
+            let list = (self.content)(content);
+            Some((0..list.len() as u64).collect())
+        })
     }
 
     /// Reads the whole list.
