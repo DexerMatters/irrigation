@@ -849,6 +849,9 @@ impl Runtime {
             validated_at: record.validated_at,
             state: format!("{:?}", record.state),
             waiters: record.waiters.len(),
+            scope: record.scope,
+            site: record.site,
+            scope_path: state.scopes.path(record.scope),
             dependencies,
         }
     }
@@ -1098,6 +1101,12 @@ pub struct Explanation {
     pub state: String,
     /// Tasks currently suspended on this node.
     pub waiters: usize,
+    /// Identity scope of the node.
+    pub scope: reactive_core::ids::ScopeId,
+    /// Expression site within the scope.
+    pub site: reactive_core::ids::SiteId,
+    /// Human-readable scope ancestry, outermost first.
+    pub scope_path: Vec<String>,
     /// Recorded observations, in dependency order.
     pub dependencies: Vec<DependencyExplanation>,
 }

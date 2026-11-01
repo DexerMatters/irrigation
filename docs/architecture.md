@@ -202,7 +202,9 @@ diagnostics, tooling, and future backends.
 
 Site identity reuse is counted (`site_creations`/`site_reuses`) in runtime
 statistics and explanations, and `wait_cycles` reports node cycles in the wait
-graph alongside `wait_edges`.
+graph alongside `wait_edges`. An `Explanation` also carries the node's scope,
+site, and human-readable scope ancestry (interned discriminant or keyed member),
+so a host can compare identity paths when reuse changes.
 
 Every node records `executed_at` and `validated_at` separately, plus its
 scheduling state and waiter count. `explain_node` exposes them with the

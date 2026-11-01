@@ -311,6 +311,7 @@ type KeyedScopes = FxHashMap<(u64, u64), Vec<(Arc<dyn AnyKey>, ScopeId)>>;
 pub struct ScopeTable {
     by_discriminant: FxHashMap<(u64, u64), ScopeId>,
     by_key: KeyedScopes,
+    parents: FxHashMap<ScopeId, (ScopeId, String)>,
     next: u64,
 }
 
@@ -337,6 +338,10 @@ impl ScopeTable {
         let scope = self.allocate();
         self.by_discriminant
             .insert((parent.raw(), discriminant), scope);
+        self.parents.insert(
+            scope,
+            (parent, format!("discriminant {discriminant}")),
+        );
         scope
     }
 
@@ -351,6 +356,10 @@ impl ScopeTable {
             }
         }
         let scope = self.allocate();
+        self.parents.insert(
+            scope,
+            (parent, format!("key {}", key.key_display())),
+        );
         self.by_key.entry(lookup).or_default().push((key, scope));
         scope
     }
@@ -363,7 +372,24 @@ impl ScopeTable {
             bucket.retain(|(_, scope)| live.contains(scope));
             !bucket.is_empty()
         });
+        self.parents.retain(|scope, _| live.contains(scope));
         before - self.len()
+    }
+
+    /// Returns the ancestry of one scope, outermost first.
+    #[must_use]
+    pub fn path(&self, scope: ScopeId) -> Vec<String> {
+        let mut path = Vec::new();
+        let mut current = scope;
+        for _ in 0..64 {
+            let Some((parent, label)) = self.parents.get(&current) else {
+                break;
+            };
+            path.push(format!("{current:?} under {parent:?}: {label}"));
+            current = *parent;
+        }
+        path.reverse();
+        path
     }
 
     /// Number of allocated scopes.

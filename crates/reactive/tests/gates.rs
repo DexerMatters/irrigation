@@ -5545,3 +5545,36 @@ fn region_routing_stamps_are_invalidated_by_handovers() {
     let fresh = runtime.routing_stamp(view).expect("stamp");
     assert!(runtime.validate_routing(&fresh));
 }
+
+// ---------------------------------------------------------------------------
+// Scope identity in explanations (C4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn explanations_expose_scope_identity() {
+    let runtime = Runtime::new();
+    runtime.install(churn::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<ChurnKey>().set_value(1))
+        .expect("seed");
+    let _ = runtime.read_outputs::<churn::Root>().expect("read");
+    let dump = runtime.dump();
+    let root = dump
+        .iter()
+        .find(|node| node.kind == "InvocationBody" && node.label == "root body")
+        .expect("root body");
+    let invocation = dump
+        .iter()
+        .find(|node| node.kind == "InvocationBody" && node.label == "invocation")
+        .expect("invocation");
+    let root_explanation = runtime.explain_node(root.id);
+    assert!(root_explanation.scope_path.is_empty());
+    let invocation_explanation = runtime.explain_node(invocation.id);
+    assert!(!invocation_explanation.scope_path.is_empty());
+    assert!(
+        invocation_explanation.scope_path[0].contains("discriminant"),
+        "the ancestry names the internship discriminant: {:?}",
+        invocation_explanation.scope_path
+    );
+    assert_ne!(invocation_explanation.scope, root_explanation.scope);
+}
