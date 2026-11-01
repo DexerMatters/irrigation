@@ -4332,3 +4332,89 @@ fn the_plan_vocabulary_is_public() {
     assert_eq!(site.id, reactive::SiteId(7));
     assert_eq!(format!("{:?}", site.shape), "Read");
 }
+
+// ---------------------------------------------------------------------------
+// Routing generations (C2 slice)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct RouteFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct RouteSlot(u64);
+
+#[reactive]
+mod routing_generation_gate {
+    use super::{RouteFlag, RouteSlot};
+
+    #[component]
+    pub fn root(flag: &RouteFlag) -> u64 {
+        let slot = RouteSlot;
+        if flag.on() {
+            slot.define_field0(42);
+        } else {
+            slot.define_field0(42);
+        }
+        slot.field0()
+    }
+}
+
+#[test]
+fn a_provider_handover_advances_the_routing_generation() {
+    let runtime = Runtime::new();
+    runtime.install(routing_generation_gate::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    let view = <RouteSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let unit = reactive::UnitKey::field(view, reactive::FieldId(0), reactive::UnitKind::Value);
+    let before_routing = runtime.routing_generation(&unit);
+    let before_provider = runtime.provider_of(&unit);
+    assert!(before_provider.is_some());
+    let before_value = runtime
+        .dump()
+        .into_iter()
+        .find(|node| {
+            node.kind == "Unit"
+                && node.unit.as_deref().is_some_and(|unit| {
+                    unit.contains(&format!("{view:?}")) && unit.contains("Value")
+                })
+        })
+        .expect("value unit")
+        .changed_at;
+
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(false))
+        .expect("edit");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    assert_eq!(
+        runtime
+            .read_outputs::<routing_generation_gate::Root>()
+            .expect("read"),
+        42
+    );
+    let after_value = runtime
+        .dump()
+        .into_iter()
+        .find(|node| {
+            node.kind == "Unit"
+                && node.unit.as_deref().is_some_and(|unit| {
+                    unit.contains(&format!("{view:?}")) && unit.contains("Value")
+                })
+        })
+        .expect("value unit")
+        .changed_at;
+    assert_eq!(after_value, before_value, "the value stayed equal");
+    assert!(
+        runtime.routing_generation(&unit) > before_routing,
+        "the handover must advance the routing generation"
+    );
+    assert_ne!(runtime.provider_of(&unit), before_provider);
+}

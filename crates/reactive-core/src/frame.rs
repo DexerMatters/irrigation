@@ -24,6 +24,8 @@ pub struct Dep {
     pub node: NodeId,
     /// The node's `changed_at` when it was observed.
     pub version: u64,
+    /// The node's routing generation when it was observed.
+    pub routing: u64,
 }
 
 /// Cancellation shared by one demand and everything it spawned.

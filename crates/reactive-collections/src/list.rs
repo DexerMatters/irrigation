@@ -260,6 +260,7 @@ where
                 reactive_core::frame::record_dep(reactive_core::frame::Dep {
                     node,
                     version: runtime.changed_at(node),
+                    routing: 0,
                 });
             }
             return results;

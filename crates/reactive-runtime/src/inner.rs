@@ -307,7 +307,9 @@ impl Inner {
                     }
                 } else if record.verified_at == revision {
                     match &record.value {
-                        Some(value) => Outcome::Return(value.clone(), record.changed_at),
+                        Some(value) => {
+                            Outcome::Return(value.clone(), record.changed_at, record.routing_at)
+                        }
                         None => Outcome::Fail(ComputeError::internal(format!(
                             "unit {} is undefined",
                             record
@@ -320,7 +322,11 @@ impl Inner {
                     Outcome::Wait
                 } else if record.suspect_at <= record.verified_at && record.value.is_some() {
                     record.verified_at = revision;
-                    Outcome::Return(record.value.clone().expect("checked"), record.changed_at)
+                    Outcome::Return(
+                        record.value.clone().expect("checked"),
+                        record.changed_at,
+                        record.routing_at,
+                    )
                 } else {
                     Outcome::Fail(ComputeError::internal(format!(
                         "read of undefined unit {:?}",
@@ -329,8 +335,12 @@ impl Inner {
                 }
             };
             match outcome {
-                Outcome::Return(value, version) => {
-                    frame::record_dep(Dep { node, version });
+                Outcome::Return(value, version, routing) => {
+                    frame::record_dep(Dep {
+                        node,
+                        version,
+                        routing,
+                    });
                     return Ok(value);
                 }
                 Outcome::Fail(error) => return Err(error),
@@ -399,7 +409,8 @@ impl Inner {
             match action {
                 Action::Return(value) => {
                     let version = self.changed_at(node);
-                    frame::record_dep(Dep { node, version });
+                    let routing = self.routing_at(node);
+                    frame::record_dep(Dep { node, version, routing });
                     return Ok(value);
                 }
                 Action::Fail(error) => return Err(error),
@@ -434,7 +445,8 @@ impl Inner {
                     .expect("validated node without a value")
             };
             let version = self.changed_at(node);
-            frame::record_dep(Dep { node, version });
+            let routing = self.routing_at(node);
+            frame::record_dep(Dep { node, version, routing });
             return Ok(value);
         }
 
@@ -489,7 +501,8 @@ impl Inner {
                 let committed =
                     self.commit(node, value, deps, definitions, None, eq, revision, me, generation, &cancel)?;
                 let version = self.changed_at(node);
-                frame::record_dep(Dep { node, version });
+                let routing = self.routing_at(node);
+                frame::record_dep(Dep { node, version, routing });
                 Ok(committed)
             }
             Ok(Err(error)) | Err(error) => {
@@ -529,12 +542,13 @@ impl Inner {
             let mut changes = Vec::new();
             for dep in &old_trace {
                 let record = state.node(dep.node);
-                if record.changed_at != dep.version {
+                if record.changed_at != dep.version || record.routing_at != dep.routing {
                     if let Some(unit) = &record.unit {
                         changes.push(crate::general::Change {
                             unit: unit.clone(),
                             previous: dep.version,
                             current: record.changed_at,
+                            routing_changed: record.changed_at == dep.version,
                         });
                     }
                 }
@@ -594,7 +608,8 @@ impl Inner {
                     &cancel,
                 )?;
                 let version = self.changed_at(node);
-                frame::record_dep(Dep { node, version });
+                let routing = self.routing_at(node);
+                frame::record_dep(Dep { node, version, routing });
                 Ok(committed)
             }
             Ok(Err(error)) | Err(error) => {
@@ -604,6 +619,42 @@ impl Inner {
                 self.fail(node, error, revision)
             }
         }
+    }
+
+    /// Returns a node's routing generation.
+    #[must_use]
+    pub fn routing_at(&self, node: NodeId) -> Version {
+        self.lock().node(node).routing_at
+    }
+
+    /// Returns the provider node that currently owns `unit`, if any.
+    #[must_use]
+    pub fn provider_of(&self, unit: &UnitKey) -> Option<NodeId> {
+        let state = self.lock();
+        state
+            .regions
+            .get(&unit.view)
+            .and_then(|region| region.owners.get(&owner_key(unit)))
+            .map(|provider| provider.node)
+    }
+
+    /// Returns a unit's routing generation.
+    #[must_use]
+    pub fn routing_generation(&self, unit: &UnitKey) -> Version {
+        let state = self.lock();
+        state
+            .units
+            .get(unit)
+            .copied()
+            .or_else(|| {
+                state
+                    .regions
+                    .get(&unit.view)
+                    .and_then(|region| region.units.get(unit))
+                    .map(|slot| slot.node)
+            })
+            .map(|node| state.node(node).routing_at)
+            .unwrap_or(0)
     }
 
     /// Returns the revision at which a node's value last changed.
@@ -619,12 +670,13 @@ impl Inner {
     fn validate_trace(&self, trace: &[Dep], revision: Revision) -> bool {
         let mut state = self.lock();
         for dep in trace {
-            let (verified, clean, changed) = {
+            let (verified, clean, changed, routing) = {
                 let record = state.node(dep.node);
                 (
                     record.verified_at == revision,
                     record.suspect_at <= record.verified_at && record.value.is_some(),
                     record.changed_at,
+                    record.routing_at,
                 )
             };
             if !verified {
@@ -633,7 +685,7 @@ impl Inner {
                 }
                 state.node_mut(dep.node).verified_at = revision;
             }
-            if changed != dep.version {
+            if changed != dep.version || routing != dep.routing {
                 return false;
             }
         }
@@ -997,6 +1049,7 @@ impl Inner {
                 }
             }
             let owner = owner_key(&draft.unit);
+            let previous_owner = region.owners.get(&owner).map(|existing| existing.node);
             if let Some(existing) = region.owners.get(&owner) {
                 if existing.node != provider {
                     // Resolve at the end of the revision: if the earlier owner
@@ -1038,6 +1091,9 @@ impl Inner {
                     record.changed_at = revision;
                     changed_nodes.push(value_node);
                 }
+                if previous_owner != Some(provider) {
+                    record.routing_at = revision;
+                }
                 record.verified_at = revision;
                 record.suspect_at = 0;
                 record.state = NodeState::Ready;
@@ -1068,6 +1124,7 @@ impl Inner {
                     let record = state.node_mut(member_node);
                     record.value = Some(value_of(true));
                     record.changed_at = revision;
+                    record.routing_at = revision;
                     record.verified_at = revision;
                     record.state = NodeState::Ready;
                     changed_nodes.push(member_node);
@@ -1156,6 +1213,7 @@ impl Inner {
                     let record = state.node_mut(node);
                     record.value = value;
                     record.changed_at = revision;
+                    record.routing_at = revision;
                     record.verified_at = revision;
                     record.suspect_at = 0;
                     record.state = NodeState::Ready;
@@ -1192,6 +1250,7 @@ impl Inner {
                     let node = slot.node;
                     let record = state.node_mut(node);
                     record.suspect_at = revision;
+                    record.routing_at = revision;
                     // A directly read retracted unit must not be served from
                     // the old certified value; membership guards family
                     // handles, this guards direct unit reads.
@@ -1641,7 +1700,7 @@ pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
 }
 
 enum Outcome {
-    Return(Value, Version),
+    Return(Value, Version, Version),
     Fail(ComputeError),
     Retry,
     Wait,
@@ -1761,6 +1820,7 @@ impl RuntimeOps for Inner {
         frame::record_dep(Dep {
             node,
             version: record.changed_at,
+            routing: record.routing_at,
         });
         Ok(())
     }
@@ -2008,6 +2068,37 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trace_validation_rejects_a_routing_change_with_an_equal_value() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let node = {
+            let mut state = inner.lock();
+            let node = state.alloc(NodeRecord::empty("unit", NodeKind::Unit));
+            let record = state.node_mut(node);
+            record.value = Some(value_of(42u32));
+            record.changed_at = 1;
+            record.verified_at = 1;
+            record.routing_at = 1;
+            record.state = NodeState::Ready;
+            node
+        };
+        let trace = vec![Dep {
+            node,
+            version: 1,
+            routing: 1,
+        }];
+        assert!(inner.validate_trace(&trace, 1));
+        inner.lock().node_mut(node).routing_at = 2;
+        assert!(
+            !inner.validate_trace(&trace, 1),
+            "an equal value with a new provider must invalidate the observation"
+        );
+    }
 
     #[test]
     fn commit_rejects_a_stale_generation() {

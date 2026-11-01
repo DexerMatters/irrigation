@@ -75,6 +75,8 @@ pub struct NodeRecord {
     pub changed_at: Version,
     /// Revision for which the value has been validated.
     pub verified_at: Revision,
+    /// Routing generation: bumped when a unit's provider changes.
+    pub routing_at: Revision,
     /// Revision at which the node last executed its closure.
     pub executed_at: Revision,
     /// Revision at which the node's trace was last validated or replayed.
@@ -114,6 +116,7 @@ impl NodeRecord {
             value: None,
             changed_at: 0,
             verified_at: 0,
+            routing_at: 0,
             executed_at: 0,
             validated_at: 0,
             suspect_at: 0,

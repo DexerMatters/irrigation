@@ -53,6 +53,8 @@ pub struct Change {
     pub previous: u64,
     /// The current version.
     pub current: u64,
+    /// Whether the unit's provider changed while its value stayed equal.
+    pub routing_changed: bool,
 }
 
 /// The changes delivered to one `update` call.

@@ -86,6 +86,17 @@ Hashes never establish equality. They bucket component invocations, whose
 arguments are then compared with `PartialEq`; a collision only costs a
 comparison.
 
+## Routing generations
+
+A logical unit carries a routing generation alongside its value version.
+Defining a unit from a different provider (including a handover that keeps the
+value equal) advances the routing generation; retracting the owner does too.
+Consumers record the routing generation in their trace and validation rejects an
+observation whose routing changed even when the value did not. The runtime
+exposes `provider_of` and `routing_generation`, and `Change` marks routing-only
+updates for general components. The full owner dispatcher and route recipes are
+still future work.
+
 ## Identity
 
 - `ViewId` and `ComponentId` are the full 64-bit FNV hash of the fully

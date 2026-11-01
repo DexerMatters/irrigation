@@ -649,6 +649,24 @@ impl Runtime {
         }
     }
 
+    /// Returns the provider node that currently owns a logical unit.
+    #[must_use]
+    pub fn provider_of(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+    ) -> Option<reactive_core::ids::NodeId> {
+        self.inner.provider_of(unit)
+    }
+
+    /// Returns a unit's routing generation.
+    ///
+    /// It advances when the unit's provider changes, including a handover that
+    /// leaves the value equal; consumers record it alongside the value version.
+    #[must_use]
+    pub fn routing_generation(&self, unit: &reactive_core::descriptor::UnitKey) -> Version {
+        self.inner.routing_generation(unit)
+    }
+
     /// Number of installed units in a View region.
     #[must_use]
     pub fn region_unit_count(&self, view: ViewId) -> usize {
@@ -682,6 +700,9 @@ impl Runtime {
                     current: dependency.changed_at,
                     changed: dependency.changed_at != dep.version,
                     suspect: dependency.suspect_at > dependency.verified_at,
+                    recorded_routing: dep.routing,
+                    current_routing: dependency.routing_at,
+                    routing_changed: dependency.routing_at != dep.routing,
                 }
             })
             .collect();
@@ -924,6 +945,12 @@ pub struct DependencyExplanation {
     pub changed: bool,
     /// Whether the observed node is itself awaiting validation.
     pub suspect: bool,
+    /// Routing generation recorded when the observation was made.
+    pub recorded_routing: Version,
+    /// Current routing generation of the observed node.
+    pub current_routing: Version,
+    /// Whether the observation's routing changed while its value stayed equal.
+    pub routing_changed: bool,
 }
 
 /// One node in a diagnostic dump.
