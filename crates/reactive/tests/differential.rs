@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use reactive::{reactive, view, Runtime};
+use reactive::{reactive, tree_view, view, Runtime};
 
 #[view(source)]
 pub struct RandomTable {
@@ -514,4 +514,139 @@ fn a_graph_edge_between_existing_nodes_is_visible() {
         runtime.read_outputs::<diff_graph::Root>().expect("read"),
         vec![2, 4, edge, 2, edge, 4, 4, edge, 2]
     );
+}
+
+#[tree_view(root = DiffTree, view = DiffTreeV)]
+pub mod diff_tree {
+    /// Root of the randomized tree.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum DiffTree {
+        /// A forest.
+        Root { items: Vec<DiffItem> },
+    }
+
+    /// One tree item.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum DiffItem {
+        /// A leaf with a value.
+        Leaf { value: u64 },
+        /// A group of items.
+        Group { items: Vec<DiffItem> },
+    }
+}
+
+#[reactive]
+mod diff_tree_sum {
+    use super::diff_tree;
+
+    #[component]
+    pub fn item_sum(item: diff_tree::DiffItemRef) -> u64 {
+        let kind = item.kind();
+        if kind == Some(diff_tree::DiffItemKind::Leaf) {
+            item.value().unwrap_or(0)
+        } else {
+            item.items()
+                .into_iter()
+                .map(|child| item_sum(child))
+                .sum::<u64>()
+        }
+    }
+
+    #[component]
+    pub fn root(tree: &diff_tree::DiffTreeV) -> u64 {
+        match tree.root() {
+            Some(root) => root
+                .items()
+                .into_iter()
+                .map(|item| item_sum(item))
+                .sum::<u64>(),
+            None => 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ModelItem {
+    Leaf(u64),
+    Group(Vec<ModelItem>),
+}
+
+impl ModelItem {
+    fn sum(&self) -> u64 {
+        match self {
+            Self::Leaf(value) => *value,
+            Self::Group(items) => items.iter().map(Self::sum).sum(),
+        }
+    }
+
+    fn build(&self) -> diff_tree::DiffItem {
+        match self {
+            Self::Leaf(value) => diff_tree::DiffItem::Leaf { value: *value },
+            Self::Group(items) => diff_tree::DiffItem::Group {
+                items: items.iter().map(Self::build).collect(),
+            },
+        }
+    }
+}
+
+fn random_item(rng: &mut reactive_test::Lcg, depth: u32) -> ModelItem {
+    if depth == 0 || rng.one_in(2) {
+        ModelItem::Leaf(rng.below(100) as u64)
+    } else {
+        let count = rng.below(4);
+        ModelItem::Group((0..count).map(|_| random_item(rng, depth - 1)).collect())
+    }
+}
+
+fn random_document(rng: &mut reactive_test::Lcg) -> (Vec<ModelItem>, diff_tree::DiffTree) {
+    let items: Vec<ModelItem> = (0..rng.below(4)).map(|_| random_item(rng, 3)).collect();
+    let document = diff_tree::DiffTree::Root {
+        items: items.iter().map(ModelItem::build).collect(),
+    };
+    (items, document)
+}
+
+#[test]
+fn randomized_tree_edits_match_the_from_scratch_oracle() {
+    let runtime = Runtime::new();
+    runtime.install(diff_tree_sum::Root).expect("install");
+    let mut rng = reactive_test::Lcg::new(0x7_ee5);
+    let (mut items, document) = random_document(&mut rng);
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<diff_tree::DiffTreeV>();
+            tree.set_root(&document);
+        })
+        .expect("seed");
+    let expected: u64 = items.iter().map(ModelItem::sum).sum();
+    assert_eq!(
+        runtime.read_outputs::<diff_tree_sum::Root>().expect("read"),
+        expected
+    );
+    for step in 0..96 {
+        let (next_items, document) = random_document(&mut rng);
+        if rng.one_in(2) {
+            runtime
+                .edit(|edit| {
+                    let mut tree = edit.view::<diff_tree::DiffTreeV>();
+                    tree.set_root(&document);
+                })
+                .expect("set root");
+        } else {
+            runtime
+                .edit(|edit| {
+                    let mut tree = edit.view::<diff_tree::DiffTreeV>();
+                    let root = tree.root();
+                    tree.replace_root(root, &document);
+                })
+                .expect("replace root");
+        }
+        items = next_items;
+        let expected: u64 = items.iter().map(ModelItem::sum).sum();
+        assert_eq!(
+            runtime.read_outputs::<diff_tree_sum::Root>().expect("read"),
+            expected,
+            "step {step}"
+        );
+    }
 }

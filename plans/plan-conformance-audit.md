@@ -596,7 +596,10 @@ caught and now covers an empty-source structure-initialization bug
 test (`randomized_graph_edits_match_the_from_scratch_oracle`) drives node, edge,
 and payload edits and compares the full node/edge/adjacency summary; it exposed
 a lowering bug where `let mut` writes were silently dropped, now rejected at
-compile time. Schedule-perturbation
+compile time. A randomized tree test
+(`randomized_tree_edits_match_the_from_scratch_oracle`) alternates whole-root
+imports and identity-preserving root replacements against a recursive
+from-scratch sum. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before
