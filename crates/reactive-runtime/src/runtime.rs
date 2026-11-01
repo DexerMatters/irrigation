@@ -729,6 +729,32 @@ impl Runtime {
         self.inner.provider_of(unit)
     }
 
+    /// Captures a revisioned routing certificate for one View region.
+    #[must_use]
+    pub fn routing_stamp(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Option<RoutingStamp> {
+        let state = self.inner.lock();
+        state.regions.get(&view).map(|region| RoutingStamp {
+            view,
+            version: region.routing_version,
+        })
+    }
+
+    /// Validates that a routing certificate still describes the region.
+    ///
+    /// A handover, addition, or removal of a provider invalidates it; a
+    /// value-only edit does not.
+    #[must_use]
+    pub fn validate_routing(&self, stamp: &RoutingStamp) -> bool {
+        let state = self.inner.lock();
+        state
+            .regions
+            .get(&stamp.view)
+            .is_some_and(|region| region.routing_version == stamp.version)
+    }
+
     /// Returns a unit's routing generation.
     ///
     /// It advances when the unit's provider changes, including a handover that
@@ -1036,6 +1062,15 @@ pub struct RuntimeStats {
     pub site_reuses: u64,
     /// Invocation records evicted by the cache cap.
     pub invocations_evicted: u64,
+}
+
+/// A revisioned routing certificate for one View region.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoutingStamp {
+    /// The certified View.
+    pub view: reactive_core::ids::ViewId,
+    /// The region's routing version at capture time.
+    pub version: u64,
 }
 
 /// Why one node changed.

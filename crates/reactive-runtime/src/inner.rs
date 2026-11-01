@@ -211,6 +211,7 @@ impl Inner {
                 content_node,
                 units: reactive_core::key::KeyTable::new(),
                 owners: reactive_core::key::KeyTable::new(),
+                routing_version: 0,
             },
         );
     }
@@ -1192,6 +1193,9 @@ impl Inner {
             {
                 dirty_fields.push(draft.unit.field);
             }
+            if previous_owner != Some(provider) {
+                region.routing_version = region.routing_version.wrapping_add(1);
+            }
             region.owners.insert(
                 Arc::new(owner),
                 ProviderRef {
@@ -1242,6 +1246,9 @@ impl Inner {
             if existing.node != provider {
                 return Ok(());
             }
+        }
+        if region.owners.get(&owner).is_some() {
+            region.routing_version = region.routing_version.wrapping_add(1);
         }
         region.owners.remove(&owner);
         if unit.entity.is_none() && unit.kind == UnitKind::Structure {

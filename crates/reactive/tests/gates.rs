@@ -5497,3 +5497,41 @@ fn graph_incoming_adjacency_is_indexed_per_node() {
         vec![(first + 1, 3)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Region routing certificates (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn region_routing_stamps_are_invalidated_by_handovers() {
+    let runtime = Runtime::new();
+    runtime
+        .install(routing_generation_gate::Root)
+        .expect("install");
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    let view = <RouteSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let stamp = runtime.routing_stamp(view).expect("stamp");
+    assert!(runtime.validate_routing(&stamp));
+
+    // A no-op edit leaves the certificate valid.
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("no-op");
+    assert!(runtime.validate_routing(&stamp));
+
+    // A provider handover invalidates the old certificate.
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(false))
+        .expect("handover");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    assert!(!runtime.validate_routing(&stamp));
+    let fresh = runtime.routing_stamp(view).expect("stamp");
+    assert!(runtime.validate_routing(&fresh));
+}

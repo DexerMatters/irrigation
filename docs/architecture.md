@@ -96,8 +96,12 @@ observation whose routing changed even when the value did not. The runtime
 exposes `provider_of` and `routing_generation`, and `observe_routing` registers
 a host subscription that fires on provider changes (including equal-valued
 handovers) but not on value-only edits. and `Change` marks routing-only
-updates for general components. The full owner dispatcher and route recipes are
-still future work.
+updates for general components. Each View region also carries a routing version bumped on any provider
+addition, handover, or removal; `Runtime::routing_stamp` captures a
+`RoutingStamp` for the region and `validate_routing` rejects it after routing
+changes (a value-only edit leaves it valid). This is a revisioned routing
+certificate and recipe-validation primitive; the full owner dispatcher,
+selector recipes, and snapshot-tied retirement are still future work.
 
 ## Identity
 

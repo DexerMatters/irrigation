@@ -260,6 +260,8 @@ pub struct Region {
     pub units: KeyTable<UnitSlot>,
     /// Owner of each unit, for unique-definition enforcement.
     pub owners: KeyTable<ProviderRef>,
+    /// Bumped whenever any unit's provider changes.
+    pub routing_version: u64,
 }
 
 impl std::fmt::Debug for Region {

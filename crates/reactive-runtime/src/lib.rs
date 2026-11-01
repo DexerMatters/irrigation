@@ -43,8 +43,8 @@ pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_conten
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};
 pub use param::Param;
 pub use runtime::{
-    DependencyExplanation, Explain, Explanation, NodeInfo, Runtime, RuntimeStats, Subscription,
-    TaskCounts,
+    DependencyExplanation, Explain, Explanation, NodeInfo, RoutingStamp, Runtime, RuntimeStats,
+    Subscription, TaskCounts,
 };
 pub use snapshot::{
     ChangeSummary, DerivedView, EditableView, Snapshot, SourceView, ViewSchema,
