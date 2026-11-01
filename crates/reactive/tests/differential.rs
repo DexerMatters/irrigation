@@ -650,3 +650,87 @@ fn randomized_tree_edits_match_the_from_scratch_oracle() {
         );
     }
 }
+
+#[view(source)]
+pub struct KeyedSource {
+    values: List<u64>,
+}
+
+#[view(derived)]
+pub struct KeyedDoubled(List<u64>);
+
+#[reactive]
+mod keyed_doubled {
+    use super::{KeyedDoubled, KeyedSource};
+
+    #[component]
+    pub fn root(items: &KeyedSource) -> Vec<(u64, u64)> {
+        reactive::ensure_view(<KeyedDoubled as reactive::ViewSchema>::DESCRIPTOR);
+        let target = KeyedDoubled.field0();
+        items
+            .values()
+            .to_list(&target, |id, value| Some((id, *value * 2)));
+        target
+            .ids()
+            .iter()
+            .map(|id| (*id, target.get_key(*id).unwrap_or(0)))
+            .collect()
+    }
+}
+
+#[test]
+fn randomized_keyed_list_edits_match_the_from_scratch_oracle() {
+    let runtime = Runtime::new();
+    runtime.install(keyed_doubled::Root).expect("install");
+    let mut model: Vec<(u64, u64)> = Vec::new();
+    let mut next_id = 1u64;
+    let mut rng = reactive_test::Lcg::new(0x4e_e7);
+    for step in 0..150 {
+        match rng.below(3) {
+            0 | 2 => {
+                let value = rng.range(0, 50);
+                model.push((next_id, value));
+                next_id += 1;
+                runtime
+                    .edit(|edit| {
+                        let mut items = edit.view::<KeyedSource>();
+                        let mut values = items.values();
+                        values.push(value);
+                    })
+                    .expect("push");
+            }
+            _ if !model.is_empty() => {
+                let index = rng.below(model.len());
+                if rng.one_in(2) {
+                    model.remove(index);
+                    runtime
+                        .edit(|edit| {
+                            let mut items = edit.view::<KeyedSource>();
+                            let mut values = items.values();
+                            values.remove(index);
+                        })
+                        .expect("remove");
+                } else {
+                    let value = rng.range(0, 50);
+                    model[index].1 = value;
+                    runtime
+                        .edit(|edit| {
+                            let mut items = edit.view::<KeyedSource>();
+                            let mut values = items.values();
+                            values.set(index, value);
+                        })
+                        .expect("set");
+                }
+            }
+            _ => {}
+        }
+        let expected: Vec<(u64, u64)> = model
+            .iter()
+            .map(|(id, value)| (*id, *value * 2))
+            .collect();
+        let actual = runtime
+            .read_outputs::<keyed_doubled::Root>()
+            .expect("read");
+        assert_eq!(actual, expected, "step {step}");
+    }
+}

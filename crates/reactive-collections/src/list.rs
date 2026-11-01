@@ -200,6 +200,33 @@ where
             .collect()
     }
 
+    /// Defines a derived keyed list from this source list's members.
+    ///
+    /// Member identities are the source identities, so downstream per-member
+    /// work survives reorder and unrelated edits.
+    pub fn to_list<V, F>(&self, target: &DerivedListRef<V>, f: F)
+    where
+        V: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(u64, &T) -> Option<(u64, V)>,
+    {
+        let mut items: Vec<(u64, V)> = Vec::new();
+        for id in self.ids().iter() {
+            let value: T = read_unit_value(
+                UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(*id)),
+                |content| {
+                    (self.content)(content)
+                        .iter()
+                        .find(|(existing, _)| existing == id)
+                        .map(|(_, value)| value.clone())
+                },
+            );
+            if let Some((key, mapped)) = f(*id, &value) {
+                items.push((key, mapped));
+            }
+        }
+        target.define_keyed(items, "list_to_list");
+    }
+
     /// Defines a derived map from this source list's elements.
     ///
     /// One map entry per element identity; a removed element retracts its entry.
