@@ -4821,3 +4821,111 @@ fn signed_weight_join_applies_the_bilinear_rule() {
         vec![(1, 35)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Typed general component: inputs, params, returns (C3)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct TypedSource {
+    left: u64,
+    right: u64,
+}
+
+#[derive(Clone)]
+struct TypedInputs {
+    left: u64,
+    right: u64,
+}
+
+impl reactive::GeneralInputs for TypedInputs {
+    fn read(cx: &mut reactive::GeneralCx) -> reactive::Result<Self> {
+        let view = <TypedSource as reactive::ViewSchema>::DESCRIPTOR.id;
+        Ok(Self {
+            left: cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(0),
+                reactive::UnitKind::Value,
+            ))?,
+            right: cx.read_typed(reactive::UnitKey::field(
+                view,
+                reactive::FieldId(1),
+                reactive::UnitKind::Value,
+            ))?,
+        })
+    }
+}
+
+struct TypedProduct;
+
+impl reactive::TypedGeneralComponent for TypedProduct {
+    type Inputs = TypedInputs;
+    type Params = u64;
+    type State = (u64, u64);
+    type Returns = (u64, u64, u64);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0004);
+    const NAME: &'static str = "gates::TypedProduct";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] =
+        &[<TypedSource as reactive::ViewSchema>::DESCRIPTOR];
+
+    fn params(&self) -> u64 {
+        10
+    }
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+        inputs: &TypedInputs,
+        params: &u64,
+    ) -> reactive::Result<((u64, u64), (u64, u64, u64))> {
+        let state = (inputs.left, inputs.right);
+        Ok((state, (state.0, state.1, state.0 * state.1 * params)))
+    }
+
+    fn update(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+        _state: &(u64, u64),
+        inputs: &TypedInputs,
+        _changes: &reactive::ChangeBatch,
+        params: &u64,
+    ) -> reactive::Result<((u64, u64), (u64, u64, u64))> {
+        let state = (inputs.left, inputs.right);
+        Ok((state, (state.0, state.1, state.0 * state.1 * params)))
+    }
+}
+
+#[test]
+fn typed_general_components_publish_typed_returns() {
+    let runtime = Runtime::new();
+    runtime
+        .install_typed_general(TypedProduct)
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut source = edit.view::<TypedSource>();
+            source.set_left(2);
+            source.set_right(3);
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::TypedAdapter<TypedProduct>>()
+            .expect("read"),
+        (2, 3, 60)
+    );
+    runtime
+        .edit(|edit| edit.view::<TypedSource>().set_right(4))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::TypedAdapter<TypedProduct>>()
+            .expect("read"),
+        (2, 4, 80)
+    );
+}

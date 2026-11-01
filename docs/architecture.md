@@ -265,7 +265,10 @@ field edit on a leaf keeps that leaf's id.
 `GeneralComponent` retains state and consumes a `ChangeBatch` of changed units.
 An update must retain the dependencies it did not re-read: `GeneralCx::observe`
 records an observation without using the value, and the join uses it for the
-key-set structure units and untouched joined keys. With signed `i64` sides and
+key-set structure units and untouched joined keys. `TypedGeneralComponent`
+layers typed `Inputs` (re-read before each run), fixed `Params`, and typed
+`Returns` over the erased interface; `TypedAdapter` bridges it to
+`GeneralComponent` and `Runtime::install_typed_general` installs it. With signed `i64` sides and
 multiplication the equi-join is a bilinear bag join; negative weights retract.
 `Reset` reinitializes (always sound); `Incremental` calls `update`. State,
 output, trace, and definitions commit atomically. `GeneralCx` supports

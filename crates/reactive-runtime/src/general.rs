@@ -318,6 +318,128 @@ pub trait GeneralComponent: Send + Sync + 'static {
     ) -> Result<(Self::State, Self::Output)>;
 }
 
+/// Typed inputs read before every `initialize`/`update`.
+pub trait GeneralInputs: Clone + Send + Sync + 'static {
+    /// Reads every declared input for the current revision.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a declared unit is missing or mistyped.
+    fn read(cx: &mut GeneralCx) -> Result<Self>;
+}
+
+/// A typed component interface layered over [`GeneralComponent`].
+///
+/// The adapter reads `Inputs` before each run, fixes `Params` at install time,
+/// and publishes a typed `Returns` value. Use with
+/// `Runtime::install_typed_general` and demand with
+/// `read_outputs_general::<TypedAdapter<T>>()`.
+pub trait TypedGeneralComponent: Send + Sync + 'static {
+    /// Typed, re-read inputs.
+    type Inputs: GeneralInputs;
+    /// Parameters fixed at install time.
+    type Params: Clone + Send + Sync + 'static;
+    /// Retained algorithm state.
+    type State: Clone + Send + Sync + 'static;
+    /// Published return value.
+    type Returns: Clone + PartialEq + Send + Sync + 'static;
+
+    /// Stable component identity.
+    const ID: reactive_core::ComponentId;
+    /// Fully qualified name for diagnostics.
+    const NAME: &'static str;
+    /// Views this component reads, registered at install time.
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// The parameters fixed when the component is installed.
+    fn params(&self) -> Self::Params;
+
+    /// How requested-dependency invalidation is handled.
+    fn dependency_updates(&self) -> DependencyUpdates {
+        DependencyUpdates::Reset
+    }
+
+    /// Runs on first demand with freshly read inputs.
+    ///
+    /// # Errors
+    ///
+    /// Any failure aborts the attempt; nothing is published.
+    fn initialize(
+        &self,
+        cx: &mut GeneralCx,
+        inputs: &Self::Inputs,
+        params: &Self::Params,
+    ) -> Result<(Self::State, Self::Returns)>;
+
+    /// Runs when an observed dependency changed under
+    /// [`DependencyUpdates::Incremental`].
+    ///
+    /// # Errors
+    ///
+    /// Any failure aborts the attempt; the previous state stays valid.
+    fn update(
+        &self,
+        cx: &mut GeneralCx,
+        state: &Self::State,
+        inputs: &Self::Inputs,
+        changes: &ChangeBatch,
+        params: &Self::Params,
+    ) -> Result<(Self::State, Self::Returns)>;
+}
+
+/// Adapts a [`TypedGeneralComponent`] to the erased [`GeneralComponent`] API.
+pub struct TypedAdapter<T: TypedGeneralComponent> {
+    component: T,
+    params: T::Params,
+}
+
+impl<T: TypedGeneralComponent> TypedAdapter<T> {
+    /// Wraps a typed component, capturing its parameters.
+    #[must_use]
+    pub fn new(component: T) -> Self {
+        let params = component.params();
+        Self { component, params }
+    }
+}
+
+impl<T: TypedGeneralComponent> std::fmt::Debug for TypedAdapter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TypedAdapter")
+    }
+}
+
+impl<T: TypedGeneralComponent> GeneralComponent for TypedAdapter<T> {
+    type State = (T::State, T::Inputs);
+    type Output = T::Returns;
+
+    const ID: reactive_core::ComponentId = T::ID;
+    const NAME: &'static str = T::NAME;
+    const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = T::VIEWS;
+
+    fn dependency_updates(&self) -> DependencyUpdates {
+        self.component.dependency_updates()
+    }
+
+    fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
+        let inputs = T::Inputs::read(cx)?;
+        let (state, returns) = self.component.initialize(cx, &inputs, &self.params)?;
+        Ok(((state, inputs), returns))
+    }
+
+    fn update(
+        &self,
+        cx: &mut GeneralCx,
+        state: &Self::State,
+        changes: &ChangeBatch,
+    ) -> Result<(Self::State, Self::Output)> {
+        let inputs = T::Inputs::read(cx)?;
+        let (next, returns) = self
+            .component
+            .update(cx, &state.0, &inputs, changes, &self.params)?;
+        Ok(((next, inputs), returns))
+    }
+}
+
 /// Type-erased form stored by the runtime.
 pub(crate) trait ErasedGeneral: Send + Sync + 'static {
     fn name(&self) -> &'static str;

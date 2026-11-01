@@ -108,6 +108,18 @@ impl Runtime {
         Ok(())
     }
 
+    /// Installs a typed custom algorithm as the runtime's root.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a root is already installed.
+    pub fn install_typed_general<T: crate::general::TypedGeneralComponent>(
+        &self,
+        component: T,
+    ) -> Result<()> {
+        self.install_general(crate::general::TypedAdapter::new(component))
+    }
+
     /// Installs a custom incremental algorithm as the runtime's root.
     ///
     /// # Errors
