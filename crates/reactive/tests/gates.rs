@@ -6204,3 +6204,47 @@ fn tracked_context_arguments_do_not_rekey_on_value_changes() {
         "a value change with the same context key must reuse the invocation"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Typed tree references as cross-View keys (N22)
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct RefMap(Map<flatten_tree::FlattenDocRef, u64>);
+
+#[reactive]
+mod ref_map {
+    use super::{RefMap, flatten_tree};
+
+    #[component]
+    pub fn root(tree: &flatten_tree::FlattenTree) -> Option<u64> {
+        reactive::ensure_view(<RefMap as reactive::ViewSchema>::DESCRIPTOR);
+        match tree.root() {
+            Some(document) => {
+                RefMap.define_field0(document.clone(), 7u64);
+                RefMap.field0().get(&document)
+            }
+            None => None,
+        }
+    }
+}
+
+#[test]
+fn typed_tree_references_are_cross_view_keys() {
+    let runtime = Runtime::new();
+    runtime.install(ref_map::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<flatten_tree::FlattenTree>();
+            tree.set_root(&flatten_tree::FlattenDoc::Forest {
+                items: vec![flatten_tree::FlattenItem::Leaf { value: 1 }],
+            });
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime.read_outputs::<ref_map::Root>().expect("read"),
+        Some(7)
+    );
+    let entries = runtime.snapshot().view::<RefMap>().field0();
+    assert_eq!(entries.len(), 1);
+}

@@ -162,9 +162,25 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
 
         ref_defs.push(quote! {
             /// Typed handle to one node of this enum type.
+            ///
+            /// A reference, not an owned child: it can be used as a key in other
+            /// Views and never participates in this tree's ownership.
             #[derive(Clone, PartialEq, Eq, Hash, Debug)]
             pub struct #ref_ident {
                 inner: reactive::TreeRef,
+            }
+
+            impl PartialOrd for #ref_ident {
+                fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                    Some(self.cmp(other))
+                }
+            }
+
+            impl Ord for #ref_ident {
+                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                    (self.inner.view(), self.inner.id())
+                        .cmp(&(other.inner.view(), other.inner.id()))
+                }
             }
 
             impl #ref_ident {

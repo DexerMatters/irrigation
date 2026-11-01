@@ -530,11 +530,11 @@ retirement, output transaction atomicity).
 - **N21 Join evidence.** The join gate changes one side per transaction; §13.3
   counterexample 5 explicitly requires a two-input change test. The operator is
   also a per-key value join, not the §5.5 bag join with signed weights.
-- **N22 Trees.** Partial: `import_root`/`reconcile_root` return a
+- **N22 Trees.** Resolved: `import_root`/`reconcile_root` return a
   `TreeImportReport` with created/reused/replaced nodes and an ambiguity count
-  (the positional reconciliation rule is total, so ambiguity is zero), and
-  `tree_imports_report_cost_and_reuse` covers it. The typed cross-reference
-  wrapper for non-owned references remains open.
+  (`tree_imports_report_cost_and_reuse`); generated node refs are typed,
+  orderable handles distinct from owned children and can be used as keys in
+  other Views (`typed_tree_references_are_cross_view_keys`).
 - **N23 Context keys.** Partial: `Context<K, V>` separates the invocation
   identity (the `Hash`/`Eq` key) from the value, which lives in a logical unit
   and is read through a tracked observation; a value change re-executes the
