@@ -987,6 +987,7 @@ impl Inner {
         Err(error)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn install_definitions(
         &self,
         state: &mut State,
