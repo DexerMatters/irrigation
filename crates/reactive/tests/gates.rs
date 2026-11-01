@@ -6109,3 +6109,48 @@ fn planning_a_route_advances_the_routing_generation() {
         "the recipe names the planned component"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tree import reports (N22 partial)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tree_imports_report_cost_and_reuse() {
+    let runtime = Runtime::new();
+    runtime.install(flatten_gate::Root).expect("install");
+    let mut import = None;
+    let mut reconcile = None;
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<flatten_tree::FlattenTree>();
+            let first = flatten_tree::FlattenDoc::Forest {
+                items: vec![
+                    flatten_tree::FlattenItem::Leaf { value: 1 },
+                    flatten_tree::FlattenItem::Group {
+                        items: vec![flatten_tree::FlattenItem::Leaf { value: 2 }],
+                    },
+                ],
+            };
+            let (root, report) = tree.import_root(&first);
+            import = Some(report);
+            let second = flatten_tree::FlattenDoc::Forest {
+                items: vec![
+                    flatten_tree::FlattenItem::Leaf { value: 9 },
+                    flatten_tree::FlattenItem::Group {
+                        items: vec![flatten_tree::FlattenItem::Leaf { value: 2 }],
+                    },
+                ],
+            };
+            let (_, report) = tree.reconcile_root(root, &second);
+            reconcile = Some(report);
+        })
+        .expect("import");
+    let import = import.expect("import report");
+    assert!(import.created >= 4, "{import:?}");
+    assert_eq!(import.reused, 0);
+    assert_eq!(import.ambiguous, 0);
+    let reconcile = reconcile.expect("reconcile report");
+    assert!(reconcile.reused >= 1, "{reconcile:?}");
+    assert_eq!(reconcile.ambiguous, 0);
+    let _ = runtime.read_outputs::<flatten_gate::Root>().expect("read");
+}

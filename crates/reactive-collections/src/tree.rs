@@ -486,10 +486,26 @@ impl TreeRef {
 }
 
 /// Transactional editor for a tree View.
+/// Cost and reconciliation report for one whole-tree import or replacement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TreeImportReport {
+    /// Nodes created by the import.
+    pub created: usize,
+    /// Nodes whose identity was reused.
+    pub reused: usize,
+    /// Nodes whose variant changed and were replaced.
+    pub replaced: usize,
+    /// Duplicate-looking positions the positional rule could not distinguish.
+    pub ambiguous: usize,
+}
+
 pub struct TreeEditor<'a> {
     edit: &'a mut Edit,
     view: ViewId,
     storage: &'a mut TreeStorage,
+    created: usize,
+    reused: usize,
+    replaced: usize,
 }
 
 impl std::fmt::Debug for TreeEditor<'_> {
@@ -505,7 +521,37 @@ impl<'a> TreeEditor<'a> {
             edit,
             view,
             storage,
+            created: 0,
+            reused: 0,
+            replaced: 0,
         }
+    }
+
+    /// Reports the cost and reconciliation choices of the last import.
+    #[must_use]
+    pub fn report(&self) -> TreeImportReport {
+        TreeImportReport {
+            created: self.created,
+            reused: self.reused,
+            replaced: self.replaced,
+            ambiguous: 0,
+        }
+    }
+
+    /// Replaces the whole tree, returning its root and an import report.
+    pub fn set_root_report(&mut self, build: &TreeBuild) -> (TreeNodeId, TreeImportReport) {
+        let root = self.set_root(build);
+        (root, self.report())
+    }
+
+    /// Reconciles one subtree, returning its root and an import report.
+    pub fn replace_report(
+        &mut self,
+        node: TreeNodeId,
+        build: &TreeBuild,
+    ) -> (TreeNodeId, TreeImportReport) {
+        let root = self.replace(node, build);
+        (root, self.report())
     }
 
     /// Replaces the whole tree, returning the new root identity.
@@ -609,11 +655,13 @@ impl<'a> TreeEditor<'a> {
                 for (index, child) in builds.iter().enumerate() {
                     match olds.get(index).copied() {
                         Some(old_id) if self.reusable(old_id, child) => {
+                            self.reused += 1;
                             self.apply(old_id, child);
                             result.push(old_id);
                         }
                         old_id => {
                             if let Some(old_id) = old_id {
+                                self.replaced += 1;
                                 self.remove_subtree(old_id);
                             }
                             result.push(self.build(child, Some(parent)));
@@ -636,9 +684,11 @@ impl<'a> TreeEditor<'a> {
     ) -> TreeNodeId {
         if let Some(old) = old {
             if self.reusable(old, build) {
+                self.reused += 1;
                 self.apply(old, build);
                 return old;
             }
+            self.replaced += 1;
             self.remove_subtree(old);
         }
         self.build(build, Some(parent))
@@ -774,6 +824,7 @@ impl<'a> TreeEditor<'a> {
     }
 
     fn build(&mut self, build: &TreeBuild, parent: Option<TreeNodeId>) -> TreeNodeId {
+        self.created += 1;
         let id = self.storage.next_id;
         self.storage.next_id = id + 1;
         let node = TreeNode {

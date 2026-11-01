@@ -32,6 +32,7 @@ pub use map::{Map, MapEditor, MapRef};
 pub use reduce::{Reduced, ReducedEditor, ReducedRef, Reduction};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};
 pub use tree::{
-    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,
-    TreeNodeId, TreeValue, slots as tree_slots, tree_content_vtable, tree_eq, tree_fields,
+    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeImportReport, TreeRef,
+    TreeStorage, TreeNode, TreeNodeId, TreeValue, slots as tree_slots, tree_content_vtable,
+    tree_eq, tree_fields,
 };

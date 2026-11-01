@@ -17,7 +17,8 @@ pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRe
 pub use reactive_collections::{EquiJoin, JoinSpec};
 pub use reactive_collections::{Reduced, ReducedEditor, ReducedRef, Reduction};
 pub use reactive_collections::{
-    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeRef, TreeStorage, TreeNode,
+    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeImportReport, TreeRef,
+    TreeStorage, TreeNode,
     TreeNodeId, TreeValue, tree_content_vtable, tree_eq, tree_fields, tree_slots,
 };
 pub use reactive_core::error::{ComputeError, Result};

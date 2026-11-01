@@ -530,9 +530,11 @@ retirement, output transaction atomicity).
 - **N21 Join evidence.** The join gate changes one side per transaction; §13.3
   counterexample 5 explicitly requires a two-input change test. The operator is
   also a per-key value join, not the §5.5 bag join with signed weights.
-- **N22 Trees.** No cross-reference wrapper (the plan distinguishes typed
-  references from owned children), and `set_root` whole-tree import reports
-  neither cost nor ambiguity (§5.7's importer rule).
+- **N22 Trees.** Partial: `import_root`/`reconcile_root` return a
+  `TreeImportReport` with created/reused/replaced nodes and an ambiguity count
+  (the positional reconciliation rule is total, so ambiguity is zero), and
+  `tree_imports_report_cost_and_reuse` covers it. The typed cross-reference
+  wrapper for non-owned references remains open.
 - **N23 Context keys.** Component arguments are whole `Hash + Eq` values;
   passing a large context to a recursive call rekeys every descendant when an
   unrelated binding changes — exactly the §13.3 counterexample the plan says to

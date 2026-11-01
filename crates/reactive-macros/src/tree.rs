@@ -591,6 +591,49 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 ))
             }
 
+            /// Imports a whole tree, returning its root and the import report.
+            pub fn import_root(
+                &mut self,
+                document: &#root_ident,
+            ) -> (#root_ref, reactive::TreeImportReport) {
+                let (id, report) = {
+                    let storage = self.storage.as_mut().expect("editor storage");
+                    let mut tree =
+                        reactive::TreeEditor::new(&mut *self.edit, #view_const, storage);
+                    tree.set_root_report(&#root_build(document))
+                };
+                let storage = self.storage.as_ref().expect("editor storage");
+                (
+                    #root_ref::from_tree(reactive::TreeRef::snapshot(
+                        ::std::sync::Arc::new(storage.clone()),
+                        id,
+                    )),
+                    report,
+                )
+            }
+
+            /// Reconciles one subtree, returning its root and the report.
+            pub fn reconcile_root(
+                &mut self,
+                node: #root_ref,
+                document: &#root_ident,
+            ) -> (#root_ref, reactive::TreeImportReport) {
+                let (id, report) = {
+                    let storage = self.storage.as_mut().expect("editor storage");
+                    let mut tree =
+                        reactive::TreeEditor::new(&mut *self.edit, #view_const, storage);
+                    tree.replace_report(node.raw(), &#root_build(document))
+                };
+                let storage = self.storage.as_ref().expect("editor storage");
+                (
+                    #root_ref::from_tree(reactive::TreeRef::snapshot(
+                        ::std::sync::Arc::new(storage.clone()),
+                        id,
+                    )),
+                    report,
+                )
+            }
+
             /// Replaces one node's payload and children, preserving its identity.
             pub fn replace_root(&mut self, node: #root_ref, document: &#root_ident) -> #root_ref {
                 let id = {
