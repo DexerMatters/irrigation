@@ -387,6 +387,7 @@ where
     ///
     /// Edges whose endpoints are not defined are dropped, so a removed node
     /// cannot leave a dangling edge behind.
+    #[track_caller]
     pub fn define_graph(
         &self,
         nodes: &[(u64, N)],

@@ -260,6 +260,7 @@ where
     ///
     /// The definition commits atomically with the computation's value and
     /// trace, and a duplicate definition from another computation is an error.
+    #[track_caller]
     pub fn define(&self, key: K, value: V, label: &'static str) {
         reactive_runtime::helpers::define_unit(self.value_key(&key), value, label);
     }

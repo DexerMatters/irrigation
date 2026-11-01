@@ -2646,12 +2646,15 @@ fn two_called_components_cannot_define_one_unit() {
     let first = runtime.call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 });
     assert_eq!(first.expect("first call"), 1);
     let second = runtime.call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 });
+    let error = second.expect_err("expected a duplicate definition");
+    assert!(matches!(
+        error,
+        reactive::ComputeError::DuplicateDefinition { .. }
+    ));
+    let message = format!("{error:?}");
     assert!(
-        matches!(
-            second,
-            Err(reactive::ComputeError::DuplicateDefinition { .. })
-        ),
-        "expected a duplicate definition, got {second:?}"
+        message.matches(".rs:").count() >= 2,
+        "both definition sites must be reported: {message}"
     );
 }
 

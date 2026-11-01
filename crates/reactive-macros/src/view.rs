@@ -513,6 +513,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 let index = field.index;
                 match &field.shape {
                     FieldShape::Scalar(ty) => quote! {
+                        #[track_caller]
                         #vis fn #define_name(&self, value: #ty) {
                             reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             reactive::define_unit(
@@ -527,6 +528,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         }
                     },
                     FieldShape::List(elem) => quote! {
+                        #[track_caller]
                         #vis fn #define_name<I>(&self, items: I)
                         where I: IntoIterator<Item = #elem> {
                             reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
@@ -534,6 +536,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         }
                     },
                     FieldShape::Set(elem) => quote! {
+                        #[track_caller]
                         #vis fn #define_name<I>(&self, members: I)
                         where I: IntoIterator<Item = #elem> {
                             reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
@@ -541,12 +544,14 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         }
                     },
                     FieldShape::Map(key, value) => quote! {
+                        #[track_caller]
                         #vis fn #define_name(&self, key: #key, value: #value) {
                             reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
                             self.#ident().define(key, value, #name_str);
                         }
                     },
                     FieldShape::Reduced(reduction) => quote! {
+                        #[track_caller]
                         #vis fn #define_name<I>(&self, items: I)
                         where I: IntoIterator<Item = <#reduction as reactive::Reduction>::Item> {
                             reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
@@ -554,7 +559,8 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         }
                     },
                 FieldShape::Graph(node_ty, edge_ty) => quote! {
-                    #vis fn #define_name(
+                    #[track_caller]
+                        #vis fn #define_name(
                         &self,
                         nodes: &[(u64, #node_ty)],
                         edges: &[(u64, u64, u64, #edge_ty)],
@@ -766,6 +772,7 @@ fn single_field_forwarding(
                 self.#accessor().keys()
             }
             /// Defines one entry.
+            #[track_caller]
             pub fn define(&self, key: #key, value: #value) {
                 reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
                 self.#accessor().define(key, value, #name_str);
@@ -935,6 +942,7 @@ fn single_field_forwarding(
                         self.#accessor()
                     }
                     /// Defines the value.
+                    #[track_caller]
                     pub fn define(&self, value: #ty) {
                         reactive::define_unit(
                             reactive::UnitKey::field(

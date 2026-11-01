@@ -47,6 +47,8 @@ pub struct DefinitionDraft {
     pub eq: fn(&Value, &Value) -> bool,
     /// Human-readable defining site.
     pub label: &'static str,
+    /// Source location of the definition call, when available.
+    pub location: Option<&'static std::panic::Location<'static>>,
 }
 
 impl std::fmt::Debug for DefinitionDraft {
@@ -962,15 +964,17 @@ impl Inner {
         }
         let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
         if restaged.len() != drafts.len() {
-            let mut seen = HashSet::new();
+            let mut seen: std::collections::HashMap<UnitKey, Option<&'static std::panic::Location<'static>>> =
+                std::collections::HashMap::new();
             for draft in &drafts {
-                if !seen.insert(draft.unit.clone()) {
+                if let Some(first_location) = seen.get(&draft.unit) {
                     return Err(ComputeError::DuplicateDefinition {
                         unit: format!("{:?}", draft.unit),
-                        first: draft.label.to_string(),
-                        second: draft.label.to_string(),
+                        first: describe_provider(draft.label, *first_location),
+                        second: describe_provider(draft.label, draft.location),
                     });
                 }
+                seen.insert(draft.unit.clone(), draft.location);
             }
         }
 
@@ -1115,6 +1119,7 @@ impl Inner {
                         unit: draft.unit.clone(),
                         first: existing.node,
                         second: provider,
+                        second_location: draft.location,
                     });
                 }
             }
@@ -1206,6 +1211,7 @@ impl Inner {
                 ProviderRef {
                     node: provider,
                     label: draft.label,
+                    location: draft.location,
                 },
             );
             installed.push(DefinitionRecord {
@@ -1482,8 +1488,13 @@ impl Inner {
                 continue;
             }
             let unit = format!("{:?}", conflict.unit);
-            let first = state.node(conflict.first).label.to_string();
-            let second = state.node(conflict.second).label.to_string();
+            let first_location = state
+                .regions
+                .get(&conflict.unit.view)
+                .and_then(|region| region.owners.get(&owner_key(&conflict.unit)))
+                .and_then(|provider| provider.location);
+            let first = describe_provider(state.node(conflict.first).label, first_location);
+            let second = describe_provider(state.node(conflict.second).label, conflict.second_location);
             let view = conflict.unit.view;
             if let Some(mut region) = state.regions.remove(&view) {
                 let mut changed = Vec::new();
@@ -1760,6 +1771,22 @@ fn membership_key(unit: &UnitKey) -> UnitKey {
 #[must_use]
 pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
     hash_one(args)
+}
+
+/// Formats a provider description with its source location.
+fn describe_provider(
+    label: &str,
+    location: Option<&'static std::panic::Location<'static>>,
+) -> String {
+    match location {
+        Some(location) => format!(
+            "{label} at {}:{}:{}",
+            location.file(),
+            location.line(),
+            location.column()
+        ),
+        None => label.to_string(),
+    }
 }
 
 /// Returns the node cycles in a wait graph.

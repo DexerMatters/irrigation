@@ -85,6 +85,7 @@ where
 /// # Panics
 ///
 /// Panics with an engine payload outside a computation.
+#[track_caller]
 pub fn define_unit<T>(unit: UnitKey, value: T, label: &'static str)
 where
     T: PartialEq + Send + Sync + 'static,
@@ -94,6 +95,7 @@ where
         value: value_of(value),
         eq: values_equal::<T>,
         label,
+        location: Some(std::panic::Location::caller()),
     });
 }
 

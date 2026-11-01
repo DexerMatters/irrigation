@@ -191,6 +191,12 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Definition diagnostics
+
+Definition staging captures the caller location through `#[track_caller]` on the
+generated view/handle define methods. A duplicate-definition error names both
+providers with their `file:line:column` sites instead of only view labels.
+
 ## Lowering vocabulary
 
 `reactive::plan` publishes the site/projection/generator vocabulary used to

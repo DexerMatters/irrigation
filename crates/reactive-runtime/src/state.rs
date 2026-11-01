@@ -228,6 +228,8 @@ pub struct PendingConflict {
     pub first: NodeId,
     /// The provider that claimed it later.
     pub second: NodeId,
+    /// Source location of the later claim.
+    pub second_location: Option<&'static std::panic::Location<'static>>,
 }
 
 /// A unit installed in a derived View region.
@@ -246,6 +248,8 @@ pub struct ProviderRef {
     pub node: NodeId,
     /// Human-readable defining site.
     pub label: &'static str,
+    /// Source location of the definition call, when available.
+    pub location: Option<&'static std::panic::Location<'static>>,
 }
 
 /// A derived View's materialized region.

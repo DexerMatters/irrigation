@@ -167,6 +167,7 @@ impl<R: Reduction> ReducedRef<R> {
     }
 
     /// Defines the whole sequence from the currently executing computation.
+    #[track_caller]
     pub fn define_all<I>(&self, items: I, label: &'static str)
     where
         I: IntoIterator<Item = R::Item>,

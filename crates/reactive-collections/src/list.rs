@@ -794,6 +794,7 @@ where
     }
 
     /// Defines the whole list from the currently executing computation.
+    #[track_caller]
     pub fn define_all<I>(&self, items: I, label: &'static str)
     where
         I: IntoIterator<Item = T>,
@@ -1028,6 +1029,7 @@ where
     }
 
     /// Defines a keyed list: stable identities plus one value per entity.
+    #[track_caller]
     pub fn define_keyed<I>(&self, items: I, label: &'static str)
     where
         I: IntoIterator<Item = (u64, T)>,

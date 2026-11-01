@@ -232,6 +232,7 @@ impl GeneralCx {
     }
 
     /// Stages one output definition, committed with the new state.
+    #[track_caller]
     pub fn define<T: PartialEq + Send + Sync + 'static>(
         &mut self,
         unit: UnitKey,
@@ -243,6 +244,7 @@ impl GeneralCx {
             value: value_of(value),
             eq: values_equal::<T>,
             label,
+            location: Some(std::panic::Location::caller()),
         });
     }
 }

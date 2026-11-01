@@ -513,6 +513,7 @@ where
     }
 
     /// Defines the whole set from the currently executing computation.
+    #[track_caller]
     pub fn define_all<I>(&self, members: I, label: &'static str)
     where
         I: IntoIterator<Item = T>,
@@ -522,6 +523,7 @@ where
     }
 
     /// Defines a keyed set: one membership unit per member plus the structure.
+    #[track_caller]
     pub fn define_keyed<I>(&self, members: I, label: &'static str)
     where
         I: IntoIterator<Item = T>,

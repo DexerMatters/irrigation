@@ -511,9 +511,10 @@ retirement, output transaction atomicity).
   number of nodes marked suspect (`invalidations`) and the nanoseconds spent
   marking cones (`invalidation_ns`); `invalidation_cost_is_counted` covers both,
   including the no-op case.
-- **N17 Diagnostics.** `DuplicateDefinition { unit, first, second }` carries
-  labels (`&'static str`), not the two source locations §2.2 asks for; cycle
-  errors carry node/task ids, not invocation paths.
+- **N17 Diagnostics.** Partial: `DuplicateDefinition` now names both providers
+  with captured source locations (`file:line:column`) because definitions are
+  staged through `#[track_caller]` view/handle methods; the cycle errors still
+  carry node/task ids rather than full invocation paths.
 - **N18 Incoming adjacency.** Resolved: source editors stage a per-node
   `IncomingAdjacency` unit alongside outgoing adjacency, `GraphRef::incoming`
   reads it (or computes it from the topology for keyed derived graphs), and
