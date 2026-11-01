@@ -79,22 +79,12 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
 
     let derived = matches!(kind, ViewKindArg::Derived);
     for field in &fields {
-        match &field.shape {
-            FieldShape::Tree(_) => {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "tree fields are declared with `#[tree_view]`; \
-                     a `#[view]` struct cannot own an enum-group tree",
-                ));
-            }
-            FieldShape::Graph(_, _) if derived => {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "derived views cannot declare `Graph` fields; \
-                     populate a graph with edits or a `GeneralComponent`",
-                ));
-            }
-            _ => {}
+        if let FieldShape::Tree(_) = &field.shape {
+            return Err(syn::Error::new_spanned(
+                &field.ty,
+                "tree fields are declared with `#[tree_view]`; \
+                 a `#[view]` struct cannot own an enum-group tree",
+            ));
         }
     }
 
@@ -467,7 +457,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.content.#ident.edges().map(|(id, _)| id).collect()
                         }
                     }
-                }
+                },
                 FieldShape::Tree(_) => quote! {},
             }
         })
@@ -563,18 +553,16 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.#ident().define_all(items, #name_str);
                         }
                     },
-                FieldShape::Graph(_, _) => {
-                    let nodes = format_ident!("{}_nodes", ident);
-                    let edges = format_ident!("{}_edges", ident);
-                    quote! {
-                        #vis fn #nodes(&self) -> Vec<u64> {
-                            self.content.#ident.nodes().map(|(id, _)| id).collect()
-                        }
-                        #vis fn #edges(&self) -> Vec<u64> {
-                            self.content.#ident.edges().map(|(id, _)| id).collect()
-                        }
+                FieldShape::Graph(node_ty, edge_ty) => quote! {
+                    #vis fn #define_name(
+                        &self,
+                        nodes: &[(u64, #node_ty)],
+                        edges: &[(u64, u64, u64, #edge_ty)],
+                    ) {
+                        reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
+                        self.#ident().define_graph(nodes, edges, #name_str);
                     }
-                }
+                },
                 FieldShape::Tree(_) => quote! {},
                 }
             })
@@ -1002,25 +990,71 @@ fn single_field_forwarding(
                 handle
             }
         },
-        FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote!(),
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quote::quote;
-
-    #[test]
-    fn a_derived_graph_field_is_a_clear_diagnostic() {
-        let error = expand_inner(quote!(derived), quote!(struct Bad(Graph<u32, u64>);))
-            .expect_err("derived graphs must be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("derived views cannot declare `Graph`"),
-            "unexpected diagnostic: {error}"
-        );
+        FieldShape::Graph(node_ty, edge_ty) => quote! {
+            /// Node identities in order.
+            #[must_use]
+            pub fn nodes(&self) -> Vec<u64> {
+                self.#accessor().nodes()
+            }
+            /// Edge identities in order.
+            #[must_use]
+            pub fn edges(&self) -> Vec<u64> {
+                self.#accessor().edges()
+            }
+            /// Number of nodes.
+            #[must_use]
+            pub fn node_count(&self) -> usize {
+                self.#accessor().node_count()
+            }
+            /// Number of edges.
+            #[must_use]
+            pub fn edge_count(&self) -> usize {
+                self.#accessor().edge_count()
+            }
+            /// Reports node presence.
+            #[must_use]
+            pub fn contains_node(&self, node: u64) -> bool {
+                self.#accessor().contains_node(node)
+            }
+            /// Reads one node payload.
+            #[must_use]
+            pub fn node(&self, node: u64) -> Option<#node_ty> {
+                self.#accessor().node(node)
+            }
+            /// Reads one edge with its endpoints.
+            #[must_use]
+            pub fn edge(&self, edge: u64) -> Option<reactive::EdgePayload<#edge_ty>> {
+                self.#accessor().edge(edge)
+            }
+            /// Reads the outgoing adjacency of one node.
+            #[must_use]
+            pub fn outgoing(&self, node: u64) -> Vec<(u64, u64)> {
+                self.#accessor().outgoing(node)
+            }
+            /// Reads the neighbours of one node.
+            #[must_use]
+            pub fn neighbors(&self, node: u64) -> Vec<u64> {
+                self.#accessor().neighbors(node)
+            }
+            /// Defines a whole graph: node payloads, edge payloads, topology.
+            pub fn define_graph(
+                &self,
+                nodes: &[(u64, #node_ty)],
+                edges: &[(u64, u64, u64, #edge_ty)],
+            ) {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
+                self.#accessor().define_graph(nodes, edges, #name_str);
+            }
+            /// Defines a whole graph.
+            pub fn from(
+                nodes: &[(u64, #node_ty)],
+                edges: &[(u64, u64, u64, #edge_ty)],
+            ) -> Self {
+                let handle = Self;
+                handle.define_graph(nodes, edges);
+                handle
+            }
+        },
+        FieldShape::Tree(_) => quote!(),
     }
 }

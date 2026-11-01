@@ -183,6 +183,44 @@ impl<N: Clone, E: Clone> GraphStore<N, E> {
         )
     }
 
+    /// Inserts or replaces an edge with an explicit identity.
+    #[must_use]
+    pub fn insert_edge(&self, id: EdgeId, from: GraphNodeId, to: GraphNodeId, value: E) -> Self {
+        let mut graph = self.clone();
+        if graph.edges.get(&id).is_some() {
+            graph = graph.remove_edge(id);
+        }
+        let edge = Edge::new(from, to, value);
+        let (edges, _) = graph.edges.insert(id, edge);
+        let (out_for, _) = graph.outgoing.insert(
+            from,
+            graph
+                .outgoing
+                .get(&from)
+                .cloned()
+                .unwrap_or_default()
+                .insert(id, ())
+                .0,
+        );
+        let (in_for, _) = graph.incoming.insert(
+            to,
+            graph
+                .incoming
+                .get(&to)
+                .cloned()
+                .unwrap_or_default()
+                .insert(id, ())
+                .0,
+        );
+        Self {
+            nodes: graph.nodes,
+            edges,
+            outgoing: out_for,
+            incoming: in_for,
+            next_edge: graph.next_edge.max(id + 1),
+        }
+    }
+
     /// Removes an edge.
     #[must_use]
     pub fn remove_edge(&self, id: EdgeId) -> Self {

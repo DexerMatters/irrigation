@@ -16,7 +16,7 @@ use reactive_core::key::any_key;
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
-use reactive_runtime::helpers::read_unit_value;
+use reactive_runtime::helpers::{define_unit, read_unit_value};
 use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::graph::{GraphStore, GraphNodeId};
@@ -94,13 +94,36 @@ where
     fn define(
         storage: &Self::Storage,
         key: &dyn reactive_core::key::AnyKey,
-        _value: Value,
+        value: Value,
     ) -> Self::Storage {
-        let _ = key;
+        if let Some(node) = key.as_any().downcast_ref::<NodeKey>() {
+            if let Some(payload) = value.downcast_ref::<N>() {
+                return storage.set_node(node.0, payload.clone());
+            }
+        }
+        if let Some(edge) = key.as_any().downcast_ref::<EdgeKey>() {
+            if let Some(payload) = value.downcast_ref::<Option<EdgePayload<E>>>() {
+                return match payload {
+                    Some(payload) => storage.insert_edge(
+                        edge.0,
+                        payload.from,
+                        payload.to,
+                        payload.value.clone(),
+                    ),
+                    None => storage.remove_edge(edge.0),
+                };
+            }
+        }
         storage.clone()
     }
 
-    fn retract(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+    fn retract(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+        if let Some(node) = key.as_any().downcast_ref::<NodeKey>() {
+            return storage.remove_node(node.0);
+        }
+        if let Some(edge) = key.as_any().downcast_ref::<EdgeKey>() {
+            return storage.remove_edge(edge.0);
+        }
         storage.clone()
     }
 
@@ -201,6 +224,21 @@ where
         UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(EdgeKey(edge)))
     }
 
+    fn edge_membership_key(&self, edge: u64) -> UnitKey {
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Membership,
+            any_key(EdgeKey(edge)),
+        )
+    }
+
+    fn contains_edge(&self, edge: u64) -> bool {
+        read_unit_value(self.edge_membership_key(edge), |content| {
+            Some((self.content)(content).edge(edge).is_some())
+        })
+    }
+
     fn adjacency_key(&self, node: u64) -> UnitKey {
         UnitKey::entity(
             self.view,
@@ -265,6 +303,9 @@ where
     /// Reads one edge with its endpoints.
     #[must_use]
     pub fn edge(&self, edge: u64) -> Option<EdgePayload<E>> {
+        if !self.contains_edge(edge) {
+            return None;
+        }
         let value: Option<EdgePayload<E>> =
             read_unit_value(self.edge_key(edge), |content| {
                 Some((self.content)(content).edge(edge).map(|edge| EdgePayload {
@@ -283,12 +324,70 @@ where
     }
 
     /// Reads the outgoing adjacency of one node as `(edge, target)` pairs.
+    ///
+    /// Derived graphs compute it from the topology unit, so an edge edit
+    /// invalidates only topology readers. Source graphs keep their per-node
+    /// adjacency units.
     #[must_use]
     pub fn outgoing(&self, node: u64) -> Vec<(u64, u64)> {
+        if reactive_runtime::helpers::field_is_keyed(self.view, self.field) {
+            return self
+                .topology()
+                .edges
+                .iter()
+                .filter(|(_, (from, _))| *from == node)
+                .map(|(edge, (_, to))| (*edge, *to))
+                .collect();
+        }
         let value: Vec<(u64, u64)> = read_unit_value(self.adjacency_key(node), |content| {
             Some(adjacency_of(&(self.content)(content), node))
         });
         value
+    }
+
+    /// Defines a whole derived graph: node payloads, edge payloads, topology.
+    ///
+    /// Edges whose endpoints are not defined are dropped, so a removed node
+    /// cannot leave a dangling edge behind.
+    pub fn define_graph(
+        &self,
+        nodes: &[(u64, N)],
+        edges: &[(u64, u64, u64, E)],
+        label: &'static str,
+    ) {
+        let node_ids: reactive_store::persistent::PSet<u64> =
+            nodes.iter().map(|(id, _)| *id).collect();
+        let mut topology_edges: PMap<u64, (u64, u64)> = PMap::new();
+        for (edge, from, to, _) in edges {
+            if node_ids.contains(from) && node_ids.contains(to) {
+                topology_edges = topology_edges.insert(*edge, (*from, *to)).0;
+            }
+        }
+        for (id, payload) in nodes {
+            define_unit(self.node_key(*id), payload.clone(), label);
+        }
+        for (edge, from, to, payload) in edges {
+            if !node_ids.contains(from) || !node_ids.contains(to) {
+                continue;
+            }
+            define_unit(
+                self.edge_key(*edge),
+                Some(EdgePayload {
+                    from: *from,
+                    to: *to,
+                    value: payload.clone(),
+                }),
+                label,
+            );
+        }
+        define_unit(
+            self.topology_unit(),
+            GraphTopology {
+                nodes: node_ids,
+                edges: topology_edges,
+            },
+            label,
+        );
     }
 
     /// Reads the neighbours of one node, preserving edge order.

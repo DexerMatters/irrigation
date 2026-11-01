@@ -3876,3 +3876,119 @@ fn list_to_map_retracts_missing_keys() {
         (vec![(1, 11)], Some(11), None)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Derived graphs (Phase 3)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct GraphMode {
+    mode: u64,
+}
+
+#[view(derived)]
+pub struct DerivedGraph(Graph<u64, u64>);
+
+#[allow(clippy::type_complexity)]
+#[reactive]
+mod derived_graph {
+    use super::{DerivedGraph, GraphMode};
+
+    #[component]
+    pub fn root(
+        mode: &GraphMode,
+    ) -> (
+        Vec<u64>,
+        Vec<u64>,
+        Option<u64>,
+        Option<reactive::EdgePayload<u64>>,
+        Vec<(u64, u64)>,
+    ) {
+        if mode.mode() == 1 {
+            DerivedGraph.define_graph(
+                &[(1u64, 11u64), (2, 20)],
+                &[(10u64, 1, 2, 100u64)],
+            );
+        } else if mode.mode() == 2 {
+            DerivedGraph.define_graph(&[(1u64, 10u64)], &[]);
+        } else {
+            DerivedGraph.define_graph(
+                &[(1u64, 10u64), (2, 20)],
+                &[(10u64, 1, 2, 100u64)],
+            );
+        }
+        (
+            DerivedGraph.nodes(),
+            DerivedGraph.edges(),
+            DerivedGraph.node(1),
+            DerivedGraph.edge(10),
+            DerivedGraph.outgoing(1),
+        )
+    }
+}
+
+#[test]
+fn derived_graph_topology_and_payloads_are_separate() {
+    let runtime = Runtime::new();
+    runtime.install(derived_graph::Root).expect("install");
+    assert_eq!(
+        runtime.read_outputs::<derived_graph::Root>().expect("read"),
+        (
+            vec![1, 2],
+            vec![10],
+            Some(10),
+            Some(reactive::EdgePayload {
+                from: 1,
+                to: 2,
+                value: 100,
+            }),
+            vec![(10, 2)],
+        )
+    );
+    let topology_version = |runtime: &Runtime| {
+        let view = format!("{:?}", <DerivedGraph as reactive::ViewSchema>::DESCRIPTOR.id);
+        runtime
+            .dump()
+            .into_iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| unit.contains(&view) && unit.contains("Structure"))
+            })
+            .expect("topology unit")
+            .changed_at
+    };
+    let before = topology_version(&runtime);
+
+    // A payload edit leaves the topology unit untouched.
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<derived_graph::Root>().expect("read"),
+        (
+            vec![1, 2],
+            vec![10],
+            Some(11),
+            Some(reactive::EdgePayload {
+                from: 1,
+                to: 2,
+                value: 100,
+            }),
+            vec![(10, 2)],
+        )
+    );
+    assert_eq!(topology_version(&runtime), before);
+
+    // Removing a node retracts it and its incident edge.
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(2))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<derived_graph::Root>().expect("read"),
+        (vec![1], Vec::new(), Some(10), None, Vec::new())
+    );
+    assert!(topology_version(&runtime) > before);
+}

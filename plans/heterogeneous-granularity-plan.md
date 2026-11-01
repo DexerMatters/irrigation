@@ -529,8 +529,12 @@ Gates: `keyed_list_reorder_reuses_member_work`,
 operators `Map::to_list` and `List::to_map` publish keyed definitions from one
 family into another, preserving per-key identity
 (`map_to_list_preserves_key_identity`, `list_to_map_retracts_missing_keys`).
-Derived graphs, join-as-View, `Graph::node_map`/`Tree::flatten_map`, and per-key
-`GeneralComponent` outputs remain.
+Derived graphs are supported: `define_graph` stages node payloads, edge payloads
+and a topology draft; node removal retracts incident edges; derived adjacency is
+computed from the topology unit; source graphs keep per-node adjacency units
+(`derived_graph_topology_and_payloads_are_separate`). Join-as-View,
+`Graph::node_map`/`Tree::flatten_map`, and per-key `GeneralComponent` outputs
+remain.
 
 1. **Join as a View.** Publish joined keys through the keyed map protocol
    (Phase 2), keeping the whole `BTreeMap` output for existing callers.
