@@ -138,6 +138,10 @@ fn report(runtime: &Runtime) -> (Vec<String>, Vec<String>) {
         .map(|symbol| symbol.name)
         .collect();
     let diagnostics = snapshot.view::<Diagnostics>().field0();
+    println!(
+        "  tree nodes:  {}",
+        snapshot.view::<ast::Syntax>().node_count()
+    );
     println!("  symbols:     {symbols:?}");
     println!("  diagnostics: {diagnostics:?}");
     (symbols, diagnostics)
