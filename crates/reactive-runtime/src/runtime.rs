@@ -418,6 +418,8 @@ impl Runtime {
             view: V::view_id(),
             callback: crate::state::Observer::Plain(Arc::new(callback)),
             last_version: version,
+            units: Vec::new(),
+            last_versions: Vec::new(),
             active: Arc::clone(&active),
         });
         Ok(Subscription {
@@ -425,6 +427,89 @@ impl Runtime {
             id,
             active,
         })
+    }
+
+    /// Observes a set of logical units and fires only when one of them moves.
+    ///
+    /// An empty set observes the whole View content. The callback receives the
+    /// current snapshot; use the View's typed accessors to read the watched
+    /// entries.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the View is not registered.
+    pub fn observe_units<V: ViewSchema>(
+        &self,
+        units: Vec<reactive_core::descriptor::UnitKey>,
+        callback: impl Fn(&Snapshot) + Send + Sync + 'static,
+    ) -> Result<Subscription> {
+        if self.inner.view_descriptor(V::view_id()).is_none() {
+            return Err(ComputeError::internal(format!(
+                "cannot observe unregistered view `{}`",
+                V::DESCRIPTOR.name
+            )));
+        }
+        let mut state = self.inner.lock();
+        let versions: Vec<reactive_core::ids::Version> = units
+            .iter()
+            .map(|unit| crate::state::unit_version(&state, unit))
+            .collect();
+        let id = state.next_subscription;
+        state.next_subscription += 1;
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        state.subscriptions.push(SubscriptionRecord {
+            id,
+            view: V::view_id(),
+            callback: crate::state::Observer::Plain(Arc::new(callback)),
+            last_version: 0,
+            units,
+            last_versions: versions,
+            active: Arc::clone(&active),
+        });
+        Ok(Subscription {
+            inner: Arc::clone(&self.inner),
+            id,
+            active,
+        })
+    }
+
+    /// Observes one map entry of a View: its membership and value units.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the View is not registered.
+    pub fn observe_entry<V: ViewSchema, K>(
+        &self,
+        field: reactive_core::ids::FieldId,
+        key: K,
+        callback: impl Fn(&Snapshot) + Send + Sync + 'static,
+    ) -> Result<Subscription>
+    where
+        K: std::any::Any
+            + std::hash::Hash
+            + Eq
+            + Send
+            + Sync
+            + std::fmt::Debug
+            + 'static,
+    {
+        let key = reactive_core::key::any_key(key);
+        let view = V::view_id();
+        let units = vec![
+            reactive_core::descriptor::UnitKey::entity(
+                view,
+                field,
+                reactive_core::descriptor::UnitKind::Membership,
+                std::sync::Arc::clone(&key),
+            ),
+            reactive_core::descriptor::UnitKey::entity(
+                view,
+                field,
+                reactive_core::descriptor::UnitKind::Value,
+                key,
+            ),
+        ];
+        self.observe_units::<V>(units, callback)
     }
 
     /// Registers a callback that also receives the changed View versions.
@@ -455,6 +540,8 @@ impl Runtime {
             view: V::view_id(),
             callback: crate::state::Observer::WithChanges(Arc::new(callback)),
             last_version: version,
+            units: Vec::new(),
+            last_versions: Vec::new(),
             active: Arc::clone(&active),
         });
         Ok(Subscription {
@@ -682,14 +769,35 @@ impl Runtime {
             let version = snapshot.version_of(view);
             let (should_fire, previous) = {
                 let mut state = self.inner.lock();
-                match state.subscriptions.iter_mut().find(|sub| sub.id == id) {
-                    Some(subscription) if version != subscription.last_version => {
-                        let previous = subscription.last_version;
-                        subscription.last_version = version;
+                let Some(index) = state
+                    .subscriptions
+                    .iter()
+                    .position(|subscription| subscription.id == id)
+                else {
+                    continue;
+                };
+                if state.subscriptions[index].units.is_empty() {
+                    if version != state.subscriptions[index].last_version {
+                        let previous = state.subscriptions[index].last_version;
+                        state.subscriptions[index].last_version = version;
                         (true, previous)
+                    } else {
+                        (false, state.subscriptions[index].last_version)
                     }
-                    Some(subscription) => (false, subscription.last_version),
-                    None => (false, 0),
+                } else {
+                    let units = state.subscriptions[index].units.clone();
+                    let versions: Vec<reactive_core::ids::Version> = units
+                        .iter()
+                        .map(|unit| crate::state::unit_version(&state, unit))
+                        .collect();
+                    if versions != state.subscriptions[index].last_versions {
+                        let previous = state.subscriptions[index].last_version;
+                        state.subscriptions[index].last_version = version;
+                        state.subscriptions[index].last_versions = versions;
+                        (true, previous)
+                    } else {
+                        (false, state.subscriptions[index].last_version)
+                    }
                 }
             };
             if should_fire {

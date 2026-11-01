@@ -405,8 +405,29 @@ pub struct SubscriptionRecord {
     pub callback: Observer,
     /// Content version last delivered.
     pub last_version: Version,
+    /// Watched units; empty means the whole View content.
+    pub units: Vec<UnitKey>,
+    /// Per-unit versions last delivered, aligned with `units`.
+    pub last_versions: Vec<Version>,
     /// Whether the subscription is still active.
     pub active: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Version of one unit's node, or zero when it has never been created.
+pub fn unit_version(state: &State, unit: &UnitKey) -> Version {
+    state
+        .units
+        .get(unit)
+        .copied()
+        .or_else(|| {
+            state
+                .regions
+                .get(&unit.view)
+                .and_then(|region| region.units.get(unit))
+                .map(|slot| slot.node)
+        })
+        .map(|node| state.node(node).changed_at)
+        .unwrap_or(0)
 }
 
 impl std::fmt::Debug for SubscriptionRecord {

@@ -4182,3 +4182,58 @@ fn graph_node_map_updates_one_node() {
         (vec![(1, 10)], Some(10), None)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Per-entry observers (F9)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_per_key_observer_ignores_other_keys() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let runtime = Runtime::new();
+    runtime.register_view(<ConsumerTable as reactive::ViewSchema>::DESCRIPTOR);
+    let seen = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::clone(&seen);
+    let subscription = runtime
+        .observe_entry::<ConsumerTable, u32>(
+            reactive::FieldId(0),
+            1u32,
+            move |_snapshot| {
+                sink.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .expect("observe entry");
+
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+            entries.insert(2, 20);
+        })
+        .expect("edit");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+    // Key 2 changes; the key-1 observer stays quiet.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(2, 21);
+        })
+        .expect("edit");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+    // Key 1 changes; the observer fires.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    assert_eq!(seen.load(Ordering::SeqCst), 2);
+    drop(subscription);
+}

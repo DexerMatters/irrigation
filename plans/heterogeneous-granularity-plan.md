@@ -559,6 +559,13 @@ Gates: `join_view_updates_only_changed_keys`,
 
 ### Phase 4 — Observation, retention, evidence
 
+**Status: in progress.** Per-entry observers are implemented:
+`Runtime::observe_units` watches a set of logical units and
+`Runtime::observe_entry` watches one map entry's membership and value units;
+the callback fires only when a watched unit's version moves
+(`a_per_key_observer_ignores_other_keys`). Scope pruning, arena slot reuse,
+the invocation policy, and the benchmark matrix remain.
+
 1. Per-entry observers (F9).
 2. `collect` prunes scopes, reuses arena slots with generation checks, and
    enforces a bounded invocation policy (F10); `memory_report` gains scopes,

@@ -174,6 +174,13 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Observation scopes
+
+`observe` subscribes to a whole View content version. `observe_units` watches an
+explicit set of logical units, and `observe_entry` watches one map entry's
+membership and value units; these fire only when a watched unit's `changed_at`
+moves, so an edit to another key does not wake the callback.
+
 ## Demand surfaces
 
 `read_outputs` demands the body and every output projection. `read_projection`
