@@ -4694,3 +4694,130 @@ fn collect_reuses_arena_slots_and_detects_stale_ids() {
         .expect("a live body");
     assert!(runtime.is_live(live));
 }
+
+// ---------------------------------------------------------------------------
+// Signed-weight bag join (C5)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct LeftWeights {
+    entries: Map<u32, i64>,
+}
+
+#[view(source)]
+pub struct RightWeights {
+    entries: Map<u32, i64>,
+}
+
+#[view(derived)]
+pub struct JoinedWeights(Map<u32, i64>);
+
+struct WeightJoin;
+
+impl reactive::JoinSpec for WeightJoin {
+    type Key = u32;
+    type Left = i64;
+    type Right = i64;
+    type Joined = i64;
+
+    fn left() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <LeftWeights as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn right() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <RightWeights as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn combine(left: &i64, right: &i64) -> i64 {
+        left * right
+    }
+
+    fn target() -> Option<(reactive::ViewId, reactive::FieldId)> {
+        Some((
+            <JoinedWeights as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        ))
+    }
+}
+
+#[test]
+fn signed_weight_join_applies_the_bilinear_rule() {
+    let runtime = Runtime::new();
+    runtime.register_view(<LeftWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<RightWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<JoinedWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<WeightJoin>::new())
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            {
+                let mut left = edit.view::<LeftWeights>();
+                let mut entries = left.entries();
+                entries.insert(1, 2);
+                entries.insert(2, -3);
+            }
+            let mut right = edit.view::<RightWeights>();
+            let mut entries = right.entries();
+            entries.insert(1, 3);
+            entries.insert(2, 4);
+        })
+        .expect("seed");
+    let joined = runtime
+        .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
+        .expect("read");
+    assert_eq!(joined.get(&1), Some(&6));
+    assert_eq!(joined.get(&2), Some(&(-12)));
+    assert_eq!(
+        runtime.snapshot().view::<JoinedWeights>().field0(),
+        vec![(1, 6), (2, -12)]
+    );
+
+    // Both heterogeneous inputs move in one transaction: the cross term is
+    // counted once, giving 5 * 7 rather than a double-counted delta.
+    runtime
+        .edit(|edit| {
+            {
+                let mut left = edit.view::<LeftWeights>();
+                let mut entries = left.entries();
+                entries.insert(1, 5);
+            }
+            let mut right = edit.view::<RightWeights>();
+            let mut entries = right.entries();
+            entries.insert(1, 7);
+        })
+        .expect("edit");
+    let joined = runtime
+        .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
+        .expect("read");
+    assert_eq!(joined.get(&1), Some(&35));
+    assert_eq!(
+        runtime.snapshot().view::<JoinedWeights>().field0(),
+        vec![(1, 35), (2, -12)]
+    );
+
+    // Retracting a weight removes its joined entry.
+    runtime
+        .edit(|edit| {
+            let mut left = edit.view::<LeftWeights>();
+            let mut entries = left.entries();
+            entries.remove(&2);
+        })
+        .expect("retract");
+    let joined = runtime
+        .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
+        .expect("read");
+    assert!(!joined.contains_key(&2));
+    eprintln!("target: {:?}", runtime.snapshot().view::<JoinedWeights>().field0());
+    assert!(!joined.contains_key(&2));
+    assert_eq!(
+        runtime.snapshot().view::<JoinedWeights>().field0(),
+        vec![(1, 35)]
+    );
+}

@@ -177,6 +177,18 @@ impl GeneralCx {
         self.runtime.read_unit(node)
     }
 
+    /// Records an observation of one unit without reading its value.
+    ///
+    /// Custom components use this to retain dependencies their update path did
+    /// not re-read, so later edits still invalidate them.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the unit is missing or not certified for this revision.
+    pub fn observe(&mut self, unit: UnitKey) -> Result<()> {
+        self.read(unit).map(|_| ())
+    }
+
     /// Reads one unit with an expected concrete type.
     ///
     /// # Errors

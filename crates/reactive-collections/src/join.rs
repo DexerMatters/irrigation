@@ -12,8 +12,14 @@
 //! Re-reading both sides for a changed key applies all three terms once, without
 //! double counting and without touching untouched keys. Deletion is handled by
 //! recomputing the key and dropping its entry when either side is absent.
+//!
+//! Updates retain every dependency they did not re-read: the key-set structure
+//! units and the membership/value units of untouched joined keys are observed
+//! after the delta, so a later edit to any joined key or to the key set
+//! invalidates the join. With `i64` sides and multiplication this is a bilinear
+//! bag join over signed weights (negative weights retract).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -207,6 +213,33 @@ fn joined_for<S: JoinSpec>(
     })
 }
 
+/// Re-observes every retained dependency that the update path did not re-read,
+/// so a later edit to any joined key or to the key set invalidates the join.
+fn retain_dependencies<S: JoinSpec>(
+    cx: &mut GeneralCx,
+    joined: &BTreeMap<S::Key, S::Joined>,
+    refreshed: &HashSet<S::Key>,
+    structural_read: bool,
+) -> reactive_core::Result<()> {
+    let (left_view, left_field) = S::left();
+    let (right_view, right_field) = S::right();
+    if !structural_read {
+        cx.observe(structure_unit(left_view, left_field))?;
+        cx.observe(structure_unit(right_view, right_field))?;
+    }
+    for key in joined.keys() {
+        if refreshed.contains(key) {
+            continue;
+        }
+        let typed = any_key(key.clone());
+        cx.observe(membership(left_view, left_field, &typed))?;
+        cx.observe(value(left_view, left_field, &typed))?;
+        cx.observe(membership(right_view, right_field, &typed))?;
+        cx.observe(value(right_view, right_field, &typed))?;
+    }
+    Ok(())
+}
+
 fn refresh_key<S: JoinSpec>(
     cx: &mut GeneralCx,
     state: &mut JoinState<S>,
@@ -263,6 +296,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
         changes: &ChangeBatch,
     ) -> reactive_core::Result<(Self::State, Self::Output)> {
         let mut state = state.clone();
+        let mut refreshed: HashSet<S::Key> = HashSet::new();
         // A structural change moves the key set itself, so the per-key path
         // cannot see newly joinable keys. Re-read the key sets and refresh only
         // keys whose sides actually moved.
@@ -285,8 +319,8 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
                     state.joined.remove(&key);
                     continue;
                 }
-                let sides = joined_for::<S>(cx, &key)?;
-                match sides {
+                // The read below is the only read for this key in this run.
+                match joined_for::<S>(cx, &key)? {
                     Some((left, right))
                         if state.left.get(&key) == Some(&left)
                             && state.right.get(&key) == Some(&right) => {}
@@ -294,6 +328,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
                         let joined = S::combine(&left, &right);
                         state.left.insert(key.clone(), left);
                         state.right.insert(key.clone(), right);
+                        refreshed.insert(key.clone());
                         state.joined.insert(key, joined);
                     }
                     None => {
@@ -306,6 +341,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
             for (key, _) in left_keys.iter() {
                 if right_keys.contains_key(key) && !state.joined.contains_key(key) {
                     refresh_key::<S>(cx, &mut state, key)?;
+                    refreshed.insert(key.clone());
                 }
             }
             publish::<S>(cx, &state.joined);
@@ -313,6 +349,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
         }
         let (left_view, left_field) = S::left();
         let (right_view, right_field) = S::right();
+        let mut seen: HashSet<S::Key> = HashSet::new();
         for change in changes.changes() {
             let unit = &change.unit;
             let is_join_unit = (unit.view == left_view && unit.field == left_field)
@@ -326,8 +363,13 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
             let Some(key) = key.as_any().downcast_ref::<S::Key>() else {
                 continue;
             };
+            if !seen.insert(key.clone()) {
+                continue;
+            }
             refresh_key::<S>(cx, &mut state, key)?;
+            refreshed.insert(key.clone());
         }
+        retain_dependencies::<S>(cx, &state.joined, &refreshed, false)?;
         publish::<S>(cx, &state.joined);
         Ok((state.clone(), state.joined))
     }
