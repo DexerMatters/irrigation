@@ -795,11 +795,7 @@ impl Runtime {
 
     /// Installs the provider-selection policy for live definition conflicts.
     pub fn set_route_selector(&self, selector: Arc<dyn RouteSelector>) {
-        *self
-            .inner
-            .route_selector
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = Some(selector);
+        *self.inner.route_selector.lock() = Some(selector);
     }
 
     /// Captures a revisioned routing certificate for one View region.

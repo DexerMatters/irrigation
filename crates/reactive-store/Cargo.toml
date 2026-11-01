@@ -11,4 +11,5 @@ description.workspace = true
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
 reactive-core.workspace = true

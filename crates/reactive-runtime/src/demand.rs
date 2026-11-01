@@ -186,10 +186,7 @@ impl Inner {
     }
 
     fn clear_active_task(&self, id: TaskId) {
-        let mut active = self
-            .active_task
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut active = self.active_task.lock();
         if *active == Some(id) {
             *active = None;
         }

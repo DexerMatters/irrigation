@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn randomized_reachability_matches_bfs() {
-        let mut rng = reactive_test::Lcg::new(0x0f_19);
+        let mut rng = reactive_test::TestRng::new(0x0f_19);
         for case in 0..200 {
             let edge_count = rng.below(24);
             let edges: Vec<(u32, u32)> = (0..edge_count)

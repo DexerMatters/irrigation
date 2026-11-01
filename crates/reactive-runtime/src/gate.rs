@@ -10,7 +10,7 @@
 //! whichever worker picks it up. Permits here are counters, so acquisition and
 //! release do not have to happen on the same thread.
 
-use std::sync::{Condvar, Mutex, MutexGuard};
+use parking_lot::{Condvar, Mutex, MutexGuard};
 
 /// Gate bookkeeping.
 #[derive(Debug, Default)]
@@ -35,9 +35,7 @@ impl Gate {
     }
 
     fn lock(&self) -> MutexGuard<'_, GateState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+        self.state.lock()
     }
 
     /// Acquires a read permit, waiting while an edit is in progress.
@@ -47,10 +45,7 @@ impl Gate {
     pub fn enter_read(&self) {
         let mut state = self.lock();
         while state.writer || state.writers_waiting > 0 {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(|poison| poison.into_inner());
+            self.changed.wait(&mut state);
         }
         state.readers += 1;
     }
@@ -76,10 +71,7 @@ impl Gate {
         let mut state = self.lock();
         state.writers_waiting += 1;
         while state.writer || state.readers > 0 {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(|poison| poison.into_inner());
+            self.changed.wait(&mut state);
         }
         state.writers_waiting -= 1;
         state.writer = true;

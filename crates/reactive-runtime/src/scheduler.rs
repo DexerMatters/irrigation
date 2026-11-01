@@ -8,7 +8,8 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -31,14 +32,14 @@ struct PoolInner {
 
 impl PoolInner {
     fn push(&self, job: Job) {
-        let mut queue = self.queue.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut queue = self.queue.lock();
         queue.push_back(job);
         drop(queue);
         self.wake.notify_one();
     }
 
     fn pop(&self) -> Option<Job> {
-        let mut queue = self.queue.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut queue = self.queue.lock();
         loop {
             if let Some(job) = queue.pop_front() {
                 return Some(job);
@@ -46,10 +47,7 @@ impl PoolInner {
             if self.shutdown.load(Ordering::Acquire) {
                 return None;
             }
-            queue = self
-                .wake
-                .wait(queue)
-                .unwrap_or_else(|poison| poison.into_inner());
+            self.wake.wait(&mut queue);
         }
     }
 }
@@ -119,11 +117,7 @@ impl Pool {
     /// queued demand is not stranded behind blocked workers.
     pub fn try_run_one(&self) -> bool {
         let job = {
-            let mut queue = self
-                .inner
-                .queue
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
+            let mut queue = self.inner.queue.lock();
             queue.pop_front()
         };
         match job {
@@ -160,7 +154,7 @@ impl Drop for Pool {
     fn drop(&mut self) {
         self.inner.shutdown.store(true, Ordering::Release);
         self.inner.wake.notify_all();
-        let mut handles = self.handles.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut handles = self.handles.lock();
         for handle in handles.drain(..) {
             let _ = handle.join();
         }

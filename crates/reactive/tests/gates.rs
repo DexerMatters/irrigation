@@ -41,7 +41,7 @@ fn randomized_transactions_match_from_scratch_evaluation() {
     runtime.install(model_analysis::Analyze).expect("install");
     let mut model: Vec<u64> = Vec::new();
     let mut strict = false;
-    let mut rng = reactive_test::Lcg::new(0x5eed);
+    let mut rng = reactive_test::TestRng::new(0x5eed);
 
     for _ in 0..2000 {
         let choice = rng.below(6);

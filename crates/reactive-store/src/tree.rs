@@ -5,6 +5,8 @@
 //! disturb its descendants. Traversal is iterative so arbitrarily deep trees do
 //! not overflow the host stack.
 
+use thiserror::Error;
+
 use reactive_core::change::Delta;
 
 use crate::persistent::PMap;
@@ -33,11 +35,13 @@ pub struct ChildSlot {
 }
 
 /// Error returned by structural tree operations.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum TreeError {
     /// The referenced node does not exist.
+    #[error("tree node {0} does not exist")]
     MissingNode(TreeNodeId),
     /// A node cannot be moved into its own subtree.
+    #[error("cannot move tree node {node} under its own descendant {parent}")]
     Cycle {
         /// Node being moved.
         node: TreeNodeId,
@@ -45,22 +49,9 @@ pub enum TreeError {
         parent: TreeNodeId,
     },
     /// The root cannot be removed while other nodes exist.
+    #[error("cannot remove the root of a non-empty tree")]
     CannotRemoveRoot,
 }
-
-impl std::fmt::Display for TreeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingNode(id) => write!(f, "tree node {id} does not exist"),
-            Self::Cycle { node, parent } => {
-                write!(f, "cannot move tree node {node} under its own descendant {parent}")
-            }
-            Self::CannotRemoveRoot => f.write_str("cannot remove the root of a non-empty tree"),
-        }
-    }
-}
-
-impl std::error::Error for TreeError {}
 
 /// A persistent ownership tree.
 #[derive(Clone, Debug)]

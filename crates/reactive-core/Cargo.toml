@@ -9,3 +9,7 @@ description.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+rustc-hash.workspace = true
+thiserror.workspace = true

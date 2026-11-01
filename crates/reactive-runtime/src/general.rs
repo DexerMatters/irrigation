@@ -22,7 +22,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use std::collections::{HashMap, HashSet};
+use reactive_core::hash::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 
 use reactive_core::descriptor::{UnitKey, UnitKind};
@@ -102,8 +102,8 @@ pub struct GeneralCx {
     revision: Revision,
     node_scope: reactive_core::ids::ScopeId,
     scope: Option<u64>,
-    unit_scopes: HashMap<UnitKey, u64>,
-    retained: HashSet<u64>,
+    unit_scopes: FxHashMap<UnitKey, u64>,
+    retained: FxHashSet<u64>,
 }
 
 impl std::fmt::Debug for GeneralCx {
@@ -125,8 +125,8 @@ impl GeneralCx {
             revision,
             node_scope,
             scope: None,
-            unit_scopes: HashMap::new(),
-            retained: HashSet::new(),
+            unit_scopes: FxHashMap::default(),
+            retained: FxHashSet::default(),
         }
     }
 
@@ -149,7 +149,7 @@ impl GeneralCx {
     }
 
     /// Takes the scope attribution and retained set after a run.
-    pub(crate) fn take_scopes(&mut self) -> (HashMap<UnitKey, u64>, HashSet<u64>) {
+    pub(crate) fn take_scopes(&mut self) -> (FxHashMap<UnitKey, u64>, FxHashSet<u64>) {
         (
             std::mem::take(&mut self.unit_scopes),
             std::mem::take(&mut self.retained),
@@ -673,8 +673,8 @@ impl<C: LocalGeneralComponent> LocalSlot for Slot<C> {
 
 thread_local! {
     static LOCAL_SLOTS: std::cell::RefCell<
-        std::collections::HashMap<u64, Box<dyn LocalSlot>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+        FxHashMap<u64, Box<dyn LocalSlot>>,
+    > = std::cell::RefCell::new(FxHashMap::default());
 }
 
 static NEXT_LOCAL_SLOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

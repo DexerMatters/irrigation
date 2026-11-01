@@ -44,7 +44,7 @@ fn randomized_map_edits_match_the_from_scratch_oracle() {
     let runtime = Runtime::new();
     runtime.install(random_sum::Root).expect("install");
     let mut model = SumModel(BTreeMap::new());
-    let mut rng = reactive_test::Lcg::new(0x0dd_ba11);
+    let mut rng = reactive_test::TestRng::new(0x0dd_ba11);
 
     for step in 0..256 {
         let key = rng.below(16) as u32;
@@ -145,7 +145,7 @@ fn randomized_list_edits_match_the_from_scratch_oracle() {
         // Source list identities are allocated from one.
         next_id: 1,
     };
-    let mut rng = reactive_test::Lcg::new(0x11_57);
+    let mut rng = reactive_test::TestRng::new(0x11_57);
 
     for step in 0..256 {
         match rng.below(3) {
@@ -272,7 +272,7 @@ fn randomized_join_edits_match_the_from_scratch_oracle() {
         .expect("install");
     let mut left: BTreeMap<u32, i64> = BTreeMap::new();
     let mut right: BTreeMap<u32, i64> = BTreeMap::new();
-    let mut rng = reactive_test::Lcg::new(0x0b_a6);
+    let mut rng = reactive_test::TestRng::new(0x0b_a6);
 
     for step in 0..160 {
         let key = rng.below(12) as u32;
@@ -398,7 +398,7 @@ fn randomized_graph_edits_match_the_from_scratch_oracle() {
         edges: BTreeMap::new(),
         next_edge: 0,
     };
-    let mut rng = reactive_test::Lcg::new(0x6a_9f);
+    let mut rng = reactive_test::TestRng::new(0x6a_9f);
     for step in 0..200 {
         let node = rng.below(6) as u64;
         let payload = rng.below(100) as u64;
@@ -589,7 +589,7 @@ impl ModelItem {
     }
 }
 
-fn random_item(rng: &mut reactive_test::Lcg, depth: u32) -> ModelItem {
+fn random_item(rng: &mut reactive_test::TestRng, depth: u32) -> ModelItem {
     if depth == 0 || rng.one_in(2) {
         ModelItem::Leaf(rng.below(100) as u64)
     } else {
@@ -598,7 +598,7 @@ fn random_item(rng: &mut reactive_test::Lcg, depth: u32) -> ModelItem {
     }
 }
 
-fn random_document(rng: &mut reactive_test::Lcg) -> (Vec<ModelItem>, diff_tree::DiffTree) {
+fn random_document(rng: &mut reactive_test::TestRng) -> (Vec<ModelItem>, diff_tree::DiffTree) {
     let items: Vec<ModelItem> = (0..rng.below(4)).map(|_| random_item(rng, 3)).collect();
     let document = diff_tree::DiffTree::Root {
         items: items.iter().map(ModelItem::build).collect(),
@@ -610,7 +610,7 @@ fn random_document(rng: &mut reactive_test::Lcg) -> (Vec<ModelItem>, diff_tree::
 fn randomized_tree_edits_match_the_from_scratch_oracle() {
     let runtime = Runtime::new();
     runtime.install(diff_tree_sum::Root).expect("install");
-    let mut rng = reactive_test::Lcg::new(0x7_ee5);
+    let mut rng = reactive_test::TestRng::new(0x7_ee5);
     let (mut items, document) = random_document(&mut rng);
     runtime
         .edit(|edit| {
@@ -684,7 +684,7 @@ fn randomized_keyed_list_edits_match_the_from_scratch_oracle() {
     runtime.install(keyed_doubled::Root).expect("install");
     let mut model: Vec<(u64, u64)> = Vec::new();
     let mut next_id = 1u64;
-    let mut rng = reactive_test::Lcg::new(0x4e_e7);
+    let mut rng = reactive_test::TestRng::new(0x4e_e7);
     for step in 0..150 {
         match rng.below(3) {
             0 | 2 => {
@@ -771,7 +771,7 @@ fn randomized_set_edits_match_the_from_scratch_oracle() {
         })
         .expect("keys");
     let mut model: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-    let mut rng = reactive_test::Lcg::new(0x05e7);
+    let mut rng = reactive_test::TestRng::new(0x05e7);
     for step in 0..150 {
         let member = rng.below(8) as u32;
         if rng.one_in(2) {
@@ -829,7 +829,7 @@ fn randomized_filter_edits_match_the_from_scratch_oracle() {
     runtime.install(filtered_values::Root).expect("install");
     let mut model: Vec<(u64, u64)> = Vec::new();
     let mut next_id = 1u64;
-    let mut rng = reactive_test::Lcg::new(0x0f_17);
+    let mut rng = reactive_test::TestRng::new(0x0f_17);
     for step in 0..150 {
         match rng.below(3) {
             0 | 2 => {
@@ -901,7 +901,7 @@ fn randomized_flat_map_edits_match_the_from_scratch_oracle() {
     runtime.install(flattened_values::Root).expect("install");
     let mut model: Vec<(u64, u64)> = Vec::new();
     let mut next_id = 1u64;
-    let mut rng = reactive_test::Lcg::new(0xf1_a7);
+    let mut rng = reactive_test::TestRng::new(0xf1_a7);
     for step in 0..150 {
         match rng.below(3) {
             0 | 2 => {

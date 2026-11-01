@@ -445,3 +445,21 @@ fails under the blocking implementation, `a_suspended_demand_can_be_cancelled`
 checks that cancellation reaches a suspended task, and the randomized oracle
 plus the worker-count and contention gates check that results do not depend on
 how often an attempt restarted.
+
+## Dependencies
+
+The runtime keeps its own machinery only where the semantics are specific to
+incremental computation; general infrastructure comes from maintained crates:
+
+- `rustc-hash` supplies the Fx hasher and the `FxHashMap`/`FxHashSet` aliases
+  used for all internal indexes. Hashing never establishes semantic equality:
+  every keyed table resolves collisions by comparing the real key.
+- `parking_lot` supplies the runtime's mutexes and condvars (state, gate,
+  worker pool, active task, route selector). It removes poison-handling paths
+  from the hot lock sites.
+- `smallvec` backs the transient invalidation and forced-recompute stacks,
+  which are almost always small.
+- `thiserror` implements `Display`/`Error` for the structured engine errors
+  (`ComputeError`, `TreeError`); the variants and their messages are unchanged.
+- `rand` (only in the verification crate) supplies the seeded `StdRng` used by
+  the randomized differential tests.

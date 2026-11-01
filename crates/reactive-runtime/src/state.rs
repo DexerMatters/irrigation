@@ -11,7 +11,7 @@ use std::sync::Arc;
 use reactive_core::error::ComputeError;
 use reactive_core::frame::CancelToken;
 use reactive_core::frame::Dep;
-use reactive_core::hash::FxHashMap;
+use reactive_core::hash::{FxHashMap, FxHashSet};
 use reactive_core::ids::{
     ComponentId, NodeId, Revision, ScopeId, SiteId, Version, FieldId, ViewId,
 };
@@ -104,9 +104,9 @@ pub struct NodeRecord {
     /// Retained state of a custom component, committed with its output.
     pub general_state: Option<crate::general::ErasedState>,
     /// Units read under a dependency scope by a general component.
-    pub general_unit_scopes: std::collections::HashMap<UnitKey, u64>,
+    pub general_unit_scopes: FxHashMap<UnitKey, u64>,
     /// Dependency scopes retained by the last general-component run.
-    pub general_retained_scopes: std::collections::HashSet<u64>,
+    pub general_retained_scopes: FxHashSet<u64>,
     /// Tasks suspended on this node, to be queued when it completes.
     pub waiters: Vec<TaskId>,
     /// Future wakers waiting for this node to be certified.
@@ -140,8 +140,8 @@ impl NodeRecord {
             definitions: Vec::new(),
             general: None,
             general_state: None,
-            general_unit_scopes: std::collections::HashMap::new(),
-            general_retained_scopes: std::collections::HashSet::new(),
+            general_unit_scopes: FxHashMap::default(),
+            general_retained_scopes: FxHashSet::default(),
             waiters: Vec::new(),
             wakers: Vec::new(),
         }
@@ -389,7 +389,7 @@ impl ScopeTable {
     }
 
     /// Drops interned scopes that no live node references.
-    pub fn prune(&mut self, live: &std::collections::HashSet<ScopeId>) -> usize {
+    pub fn prune(&mut self, live: &FxHashSet<ScopeId>) -> usize {
         let before = self.len();
         self.by_discriminant.retain(|_, scope| live.contains(scope));
         self.by_key.retain(|_, bucket| {
@@ -754,8 +754,8 @@ impl State {
 /// This is the invalidation cost the plan calls `E_v`: it can visit the whole
 /// old reachable cone even when equality later stops execution.
 pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, revision: Revision) {
-    let mut stack: Vec<NodeId> = seeds.into_iter().collect();
-    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut stack: smallvec::SmallVec<[NodeId; 16]> = seeds.into_iter().collect();
+    let mut seen: reactive_core::hash::FxHashSet<NodeId> = reactive_core::hash::FxHashSet::default();
     let mut marked = 0u64;
     while let Some(node) = stack.pop() {
         if !seen.insert(node) {

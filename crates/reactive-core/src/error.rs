@@ -6,13 +6,15 @@
 
 use core::fmt;
 
+use thiserror::Error;
+
 use crate::ids::NodeId;
 
 /// Result alias used across the reactive crates.
 pub type Result<T> = core::result::Result<T, ComputeError>;
 
 /// A failure produced by the incremental engine rather than by user data.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum ComputeError {
     /// A demand cycle was discovered while validating or executing.
@@ -20,6 +22,7 @@ pub enum ComputeError {
     /// `path` names the invocations or nodes participating in the cycle, in
     /// demand order. Ordinary recursive components must descend structurally;
     /// a value cycle needs an explicit fixed-point region.
+    #[error("computation cycle detected{}", CyclePath(.path))]
     Cycle {
         /// Human-readable description of the cycle path.
         path: Vec<String>,
@@ -28,6 +31,7 @@ pub enum ComputeError {
     ///
     /// The plan makes a unique defining computation per unit a construction
     /// invariant; ambiguous definitions are diagnosed, never merged by timing.
+    #[error("unit `{unit}` is defined twice: by `{first}` and by `{second}`")]
     DuplicateDefinition {
         /// View and unit being defined.
         unit: String,
@@ -37,34 +41,43 @@ pub enum ComputeError {
         second: String,
     },
     /// The demand that owned this work was cancelled.
+    #[error("demand was cancelled")]
     Cancelled,
     /// The running task suspended because another task owns a node it needs.
     ///
     /// This is scheduling control flow, not a failure: the task is recorded as
     /// waiting and is queued again when that node completes. It never escapes
     /// a public demand.
+    #[error("demand suspended")]
     Suspended,
     /// User code panicked; the panic did not escape the execution scope.
+    #[error("component panicked: {message}")]
     Panicked {
         /// Panic message, if the payload was a string.
         message: String,
     },
     /// Recursion exceeded the configured execution depth.
+    #[error("execution depth limit {limit} exceeded")]
     DepthExceeded {
         /// Configured limit.
         limit: u32,
     },
     /// A tracked read was attempted outside a computation.
+    #[error(
+        "`{operation}` performed a tracked read outside a computation; reads must happen inside a component body, a `GeneralComponent`, or a snapshot"
+    )]
     OutsideComputation {
         /// The operation that required a computation frame.
         operation: &'static str,
     },
     /// A construct was rejected by the lowering macro or by an adapter.
+    #[error("unsupported construct: {operation}")]
     Unsupported {
         /// Description of the rejected construct.
         operation: String,
     },
     /// A definition was attempted without the capability for that region.
+    #[error("definition of `{unit}` denied: {reason}")]
     DefinitionDenied {
         /// View and unit being defined.
         unit: String,
@@ -72,20 +85,35 @@ pub enum ComputeError {
         reason: String,
     },
     /// A node referenced by a dependency trace no longer exists.
+    #[error("dependency refers to missing {node:?}")]
     MissingNode {
         /// The missing node.
         node: NodeId,
     },
     /// A stored value had an unexpected concrete type.
+    #[error("stored value was not a `{expected}`")]
     TypeMismatch {
         /// Expected type name.
         expected: &'static str,
     },
     /// Internal invariant violation. Never used for expected user mistakes.
+    #[error("internal error: {message}")]
     Internal {
         /// Description of the violated invariant.
         message: String,
     },
+}
+
+/// Renders the `: a -> b` suffix of a cycle path, or nothing for an empty path.
+struct CyclePath<'a>(&'a [String]);
+
+impl fmt::Display for CyclePath<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        write!(f, ": {}", self.0.join(" -> "))
+    }
 }
 
 impl ComputeError {
@@ -130,49 +158,7 @@ impl ComputeError {
     }
 }
 
-impl fmt::Display for ComputeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cycle { path } => {
-                write!(f, "computation cycle detected")?;
-                if !path.is_empty() {
-                    write!(f, ": {}", path.join(" -> "))?;
-                }
-                Ok(())
-            }
-            Self::DuplicateDefinition {
-                unit,
-                first,
-                second,
-            } => write!(
-                f,
-                "unit `{unit}` is defined twice: by `{first}` and by `{second}`"
-            ),
-            Self::Cancelled => f.write_str("demand was cancelled"),
-            Self::Suspended => f.write_str("demand suspended"),
-            Self::Panicked { message } => write!(f, "component panicked: {message}"),
-            Self::DepthExceeded { limit } => {
-                write!(f, "execution depth limit {limit} exceeded")
-            }
-            Self::OutsideComputation { operation } => write!(
-                f,
-                "`{operation}` performed a tracked read outside a computation; \
-                 reads must happen inside a component body, a `GeneralComponent`, or a snapshot"
-            ),
-            Self::Unsupported { operation } => write!(f, "unsupported construct: {operation}"),
-            Self::DefinitionDenied { unit, reason } => {
-                write!(f, "definition of `{unit}` denied: {reason}")
-            }
-            Self::MissingNode { node } => write!(f, "dependency refers to missing {node:?}"),
-            Self::TypeMismatch { expected } => {
-                write!(f, "stored value was not a `{expected}`")
-            }
-            Self::Internal { message } => write!(f, "internal error: {message}"),
-        }
-    }
-}
 
-impl std::error::Error for ComputeError {}
 
 #[cfg(test)]
 mod tests {

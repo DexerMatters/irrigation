@@ -10,50 +10,55 @@
 
 use reactive_runtime::{Runtime, RuntimeStats};
 
-/// A deterministic 64-bit linear congruential generator.
+/// A deterministic seeded generator backed by `rand::rngs::StdRng`.
 ///
 /// Reproducibility matters more than statistical quality here: a failing
 /// transaction sequence must be replayable from its seed.
 #[derive(Clone, Debug)]
-pub struct Lcg(u64);
+pub struct TestRng {
+    rng: rand::rngs::StdRng,
+}
 
-impl Lcg {
+impl TestRng {
     /// Creates a generator from a seed.
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Self(seed)
+        use rand::SeedableRng;
+        Self {
+            rng: rand::rngs::StdRng::seed_from_u64(seed),
+        }
     }
 
     /// Returns the next 64-bit value.
     pub fn next_u64(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0 >> 33
+        use rand::Rng;
+        self.rng.random()
     }
 
     /// Returns a value below `bound` (`0` when `bound` is zero).
     pub fn below(&mut self, bound: usize) -> usize {
+        use rand::Rng;
         if bound == 0 {
             0
         } else {
-            (self.next_u64() as usize) % bound
+            self.rng.random_range(0..bound)
         }
     }
 
     /// Returns a value in `low..high` (`low` when the range is empty).
     pub fn range(&mut self, low: u64, high: u64) -> u64 {
+        use rand::Rng;
         if high <= low {
             low
         } else {
-            low + self.next_u64() % (high - low)
+            self.rng.random_range(low..high)
         }
     }
 
     /// Returns `true` with probability `1 / n`.
     pub fn one_in(&mut self, n: u64) -> bool {
-        n > 0 && self.next_u64() % n == 0
+        use rand::Rng;
+        n > 0 && self.rng.random_range(0..n) == 0
     }
 }
 
@@ -110,8 +115,8 @@ mod tests {
 
     #[test]
     fn lcg_is_reproducible() {
-        let mut first = Lcg::new(7);
-        let mut second = Lcg::new(7);
+        let mut first = TestRng::new(7);
+        let mut second = TestRng::new(7);
         for _ in 0..16 {
             assert_eq!(first.next_u64(), second.next_u64());
         }
@@ -119,7 +124,7 @@ mod tests {
 
     #[test]
     fn bounded_draws_stay_in_range() {
-        let mut rng = Lcg::new(1);
+        let mut rng = TestRng::new(1);
         for _ in 0..100 {
             assert!(rng.below(10) < 10);
             let value = rng.range(5, 9);

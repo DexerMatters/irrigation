@@ -17,9 +17,12 @@
 //! ```
 
 use std::any::Any;
+use reactive_core::hash::FxHashSet;
+use smallvec::SmallVec;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
+use parking_lot::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use reactive_core::error::{ComputeError, Result};
@@ -160,9 +163,7 @@ impl Inner {
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+        self.state.lock()
     }
 
     /// Current revision.
@@ -534,8 +535,8 @@ impl Inner {
                     definitions,
                     true,
                     None,
-                    std::collections::HashMap::new(),
-                    std::collections::HashSet::new(),
+                    FxHashMap::default(),
+                    FxHashSet::default(),
                     eq,
                     revision,
                     me,
@@ -786,19 +787,15 @@ impl Inner {
         definitions: Vec<DefinitionDraft>,
         enforce_views: bool,
         retained_state: Option<crate::general::ErasedState>,
-        unit_scopes: std::collections::HashMap<UnitKey, u64>,
-        retained_scopes: std::collections::HashSet<u64>,
+        unit_scopes: FxHashMap<UnitKey, u64>,
+        retained_scopes: FxHashSet<u64>,
         eq: &dyn Fn(&Value, &Value) -> bool,
         revision: Revision,
         owner: TaskId,
         generation: u64,
         cancel: &CancelToken,
     ) -> Result<Value> {
-        let route_selector = self
-            .route_selector
-            .lock()
-            .ok()
-            .and_then(|selector| selector.clone());
+        let route_selector = self.route_selector.lock().clone();
         let mut state = self.lock();
         // A commit from a claim that is no longer ours must not publish. This is
         // the generation check the plan requires; it also makes the retirement
@@ -856,7 +853,7 @@ impl Inner {
         for dep in &old_trace {
             state.remove_dependent(dep.node, node);
         }
-        let new_dependencies: HashSet<NodeId> = deps.iter().map(|dep| dep.node).collect();
+        let new_dependencies: FxHashSet<NodeId> = deps.iter().map(|dep| dep.node).collect();
         for dep in &deps {
             state.add_dependent(dep.node, node);
         }
@@ -1042,7 +1039,8 @@ impl Inner {
                 }
             }
         }
-        let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
+        let restaged: FxHashSet<UnitKey> =
+            drafts.iter().map(|draft| draft.unit.clone()).collect();
         if restaged.len() != drafts.len() {
             let mut seen: std::collections::HashMap<UnitKey, Option<&'static std::panic::Location<'static>>> =
                 std::collections::HashMap::new();
@@ -1503,11 +1501,7 @@ impl Inner {
                     if helped {
                         continue;
                     }
-                    let (next, _timeout) = self
-                        .wake
-                        .wait_timeout(state, self.config.wait_slice)
-                        .unwrap_or_else(|poison| poison.into_inner());
-                    state = next;
+                    self.wake.wait_for(&mut state, self.config.wait_slice);
                 }
                 _ => break,
             }
@@ -1570,11 +1564,7 @@ impl Inner {
     }
 
     pub(crate) fn resolve_conflicts(&self, revision: Revision) -> Result<()> {
-        let selector = self
-            .route_selector
-            .lock()
-            .ok()
-            .and_then(|selector| selector.clone());
+        let selector = self.route_selector.lock().clone();
         let mut state = self.lock();
         let conflicts = std::mem::take(&mut state.pending_conflicts);
         if conflicts.is_empty() {
@@ -1878,10 +1868,7 @@ impl Inner {
     /// Returns `true` when a root component (ordinary or general) is installed.
     /// Marks the most recently started demand as cancelled, if there is one.
     pub fn cancel_active(&self) {
-        let task = *self
-            .active_task
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let task = *self.active_task.lock();
         let Some(task) = task else {
             return;
         };
@@ -1909,10 +1896,7 @@ impl Inner {
 
     /// Records the demand that a later [`Inner::cancel_active`] targets.
     pub(crate) fn set_active_task(&self, task: Option<TaskId>) {
-        let mut active = self
-            .active_task
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut active = self.active_task.lock();
         *active = task;
     }
 }
@@ -1992,8 +1976,8 @@ fn cycle_path(state: &State, me: TaskId, node: NodeId) -> Vec<String> {
 /// Clearing the value rather than only marking suspect makes the replay paths
 /// (including the revision-zero fast path) re-execute the whole cone.
 fn force_recompute(state: &mut State, nodes: &[NodeId], revision: Revision) {
-    let mut stack: Vec<NodeId> = nodes.to_vec();
-    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut stack: SmallVec<[NodeId; 8]> = nodes.iter().copied().collect();
+    let mut seen: FxHashSet<NodeId> = FxHashSet::default();
     while let Some(node) = stack.pop() {
         if !seen.insert(node) {
             continue;
@@ -2553,7 +2537,7 @@ impl Inner {
             record.dependents.clear();
             record.freed = true;
         }
-        let live_scopes: std::collections::HashSet<ScopeId> = reachable
+        let live_scopes: FxHashSet<ScopeId> = reachable
             .iter()
             .map(|node| state.node(*node).scope)
             .collect();
@@ -2795,8 +2779,8 @@ mod tests {
             Vec::new(),
             false,
             None,
-            std::collections::HashMap::new(),
-            std::collections::HashSet::new(),
+            FxHashMap::default(),
+            FxHashSet::default(),
             &eq,
             0,
             1,
@@ -2841,8 +2825,8 @@ mod tests {
             Vec::new(),
             false,
             None,
-            std::collections::HashMap::new(),
-            std::collections::HashSet::new(),
+            FxHashMap::default(),
+            FxHashSet::default(),
             &eq,
             0,
             1,
