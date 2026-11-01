@@ -273,9 +273,11 @@ layers typed `Inputs` (re-read before each run), fixed `Params`, and typed
 `AsyncGeneralComponent` futures are driven to completion: a pending future
 parks the demanding thread until its waker (possibly another thread) unparks
 it, then polls again. `cx.request(unit).await`/`request_typed` return a receipt
-future: a certified or cleanly replayable unit completes immediately, and a
-unit being computed by another task registers the future's waker, which the
-runtime wakes when the node completes. The commit stays atomic; the worker is held while the
+future: a certified or cleanly replayable unit completes immediately. When the
+unit is being computed by another task, a pooled demand is marked waiting and
+its attempt unwinds (`Suspended`), yielding the worker; the node's completion
+queues the task and the demand restarts. An inline demand registers the
+future's waker and parks instead. The commit stays atomic; the worker is held while the
 future is pending, so true worker suspension is still future work. With signed `i64` sides and
 multiplication the equi-join is a bilinear bag join; negative weights retract.
 `Reset` reinitializes (always sound); `Incremental` calls `update`. State,

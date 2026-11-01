@@ -1866,6 +1866,21 @@ impl RuntimeOps for Inner {
         Inner::changed_at(self, node)
     }
 
+    fn suspend_request(&self, node: NodeId) -> bool {
+        let me = task::current_or_detached();
+        let mut state = self.lock();
+        let pooled = state.tasks.get(&me).map(|slot| slot.mode) == Some(TaskMode::Pooled);
+        if pooled {
+            state.wait_graph.insert(me, node);
+            if let Some(slot) = state.tasks.get_mut(&me) {
+                slot.status = TaskStatus::Waiting(node);
+                slot.held = task::active_snapshot();
+            }
+            state.node_mut(node).waiters.push(me);
+        }
+        pooled
+    }
+
     fn try_read_unit(
         &self,
         node: NodeId,
@@ -2228,6 +2243,39 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pooled_request_suspends_the_whole_task() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let (node, task) = {
+            let mut state = inner.lock();
+            let node = state.alloc(NodeRecord::empty("unit", NodeKind::Unit));
+            state.node_mut(node).state = NodeState::Running {
+                owner: 7,
+                generation: 1,
+            };
+            let task = state.alloc_task(None, TaskMode::Pooled, false, CancelToken::default());
+            (node, task)
+        };
+        let _enter = task::enter(task);
+        assert!(inner.suspend_request(node));
+        {
+            let state = inner.lock();
+            assert!(matches!(
+                state.tasks[&task].status,
+                TaskStatus::Waiting(waited) if waited == node
+            ));
+            assert!(state.node(node).waiters.contains(&task));
+            assert_eq!(state.wait_graph.get(&task), Some(&node));
+        }
+        let mut waiters = Inner::wake_waiters(&mut inner.lock(), node);
+        assert!(waiters.tasks.contains(&task));
+        waiters.wake();
+    }
 
     #[test]
     fn a_pending_request_registers_and_wakes_its_waker() {

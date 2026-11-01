@@ -277,8 +277,14 @@ impl std::future::Future for Request<'_> {
         match runtime.try_read_unit(node, context.waker()) {
             Ok(std::task::Poll::Ready(value)) => std::task::Poll::Ready(Ok(value)),
             Ok(std::task::Poll::Pending) => {
-                this.unit = Some(unit);
-                std::task::Poll::Pending
+                if runtime.suspend_request(node) {
+                    // A pooled demand yields the worker; the node's completion
+                    // queues the task and the demand restarts from its root.
+                    std::task::Poll::Ready(Err(ComputeError::Suspended))
+                } else {
+                    this.unit = Some(unit);
+                    std::task::Poll::Pending
+                }
             }
             Err(error) => std::task::Poll::Ready(Err(error)),
         }

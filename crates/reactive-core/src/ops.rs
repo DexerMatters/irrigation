@@ -99,6 +99,12 @@ pub trait RuntimeOps: Send + Sync + 'static {
         waker: &std::task::Waker,
     ) -> Result<std::task::Poll<Value>>;
 
+    /// Suspends the current demand on `node` when it is a pooled task.
+    ///
+    /// Returns `false` for an inline demand, which must park instead. A pooled
+    /// task is marked waiting and queued when the node completes.
+    fn suspend_request(&self, node: NodeId) -> bool;
+
     /// Registers a View namespace if it is not registered yet.
     fn register_view(&self, descriptor: &'static crate::descriptor::ViewDescriptor);
 
