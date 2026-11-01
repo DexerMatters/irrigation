@@ -79,6 +79,7 @@ pub trait FixedPointProblem {
 pub struct FixedPoint<K: Ord, V> {
     values: BTreeMap<K, V>,
     iterations: usize,
+    contributions: usize,
 }
 
 impl<K: Ord, V> FixedPoint<K, V> {
@@ -92,6 +93,15 @@ impl<K: Ord, V> FixedPoint<K, V> {
     #[must_use]
     pub fn iterations(&self) -> usize {
         self.iterations
+    }
+
+    /// Number of transfer contributions processed.
+    ///
+    /// A solve always restarts from the declared seeds (the conservative reset
+    /// policy); this count is the reset's cost.
+    #[must_use]
+    pub fn contributions(&self) -> usize {
+        self.contributions
     }
 
     /// Keys whose value is above bottom, in order.
@@ -168,7 +178,11 @@ pub fn solve_with_budget<P: FixedPointProblem>(
         }
     }
 
-    Ok(FixedPoint { values, iterations })
+    Ok(FixedPoint {
+        values,
+        iterations,
+        contributions: work,
+    })
 }
 
 #[cfg(test)]
@@ -223,6 +237,7 @@ mod tests {
         let reached: BTreeSet<u32> = fixed.non_bottom().into_iter().collect();
         assert_eq!(reached, reachable_from_scratch(&problem.edges, &problem.seeds));
         assert_eq!(reached, [0, 1, 2, 3].into_iter().collect());
+        assert!(fixed.contributions() >= fixed.iterations());
     }
 
     #[test]

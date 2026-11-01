@@ -206,6 +206,12 @@ explicit set of logical units, and `observe_entry` watches one map entry's
 membership and value units; these fire only when a watched unit's `changed_at`
 moves, so an edit to another key does not wake the callback.
 
+## Fixed points
+
+The solver reports worklist `iterations` and the number of transfer
+`contributions`; every solve restarts from the declared seeds, so the
+contribution count is the reset's cost.
+
 ## Retention
 
 `collect` reclaims unreachable nodes, absence-predicate unit cells, invocation

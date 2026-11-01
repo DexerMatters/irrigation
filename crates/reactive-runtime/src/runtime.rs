@@ -667,6 +667,21 @@ impl Runtime {
         self.inner.routing_generation(unit)
     }
 
+    /// Returns the current wait graph edges as `(task, awaited node)`.
+    ///
+    /// A task appears here while one of its attempts is suspended on another
+    /// task's node; a cycle among these edges is the blocker inspector's cycle
+    /// evidence.
+    #[must_use]
+    pub fn wait_edges(&self) -> Vec<(u64, reactive_core::ids::NodeId)> {
+        let state = self.inner.lock();
+        state
+            .wait_graph
+            .iter()
+            .map(|(task, node)| (*task, *node))
+            .collect()
+    }
+
     /// Number of installed units in a View region.
     #[must_use]
     pub fn region_unit_count(&self, view: ViewId) -> usize {

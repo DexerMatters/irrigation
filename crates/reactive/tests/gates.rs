@@ -4557,3 +4557,52 @@ fn retired_dependency_scopes_filter_notifications() {
         vec![(1, 11)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Argument churn stays within the retention policy (Phase 4)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct ChurnKey {
+    value: u64,
+}
+
+#[reactive]
+mod churn {
+    use super::ChurnKey;
+
+    #[component]
+    pub fn scoped(value: u64) -> u64 {
+        value
+    }
+
+    #[component]
+    pub fn root(key: &ChurnKey) -> u64 {
+        let value = key.value();
+        scoped(value)
+    }
+}
+
+#[test]
+fn argument_churn_stays_within_the_retention_policy() {
+    let runtime = Runtime::new();
+    runtime.install(churn::Root).expect("install");
+    for value in 0..64u64 {
+        runtime
+            .edit(|edit| edit.view::<ChurnKey>().set_value(value))
+            .expect("edit");
+        assert_eq!(
+            runtime.read_outputs::<churn::Root>().expect("read"),
+            value
+        );
+    }
+    let stats = runtime.collect();
+    assert!(stats.invocations_reclaimed > 0, "{stats:?}");
+    let report = runtime.memory_report();
+    assert!(
+        report.invocations <= 1,
+        "only the live invocation should remain: {}",
+        report.invocations
+    );
+    assert!(runtime.wait_edges().is_empty());
+}
