@@ -126,8 +126,8 @@ derived graphs are supported families, and `Map::to_list`/`List::to_map`
 preserve per-key identity across families. Join-as-View and the graph
 cross-family operator are implemented, and the tree macro generates
 `flatten_map` over every declared node type. The benchmark matrix in
-`workloads.rs` reports map→list, list→map, join-view, and graph-node-map rows
-(tree flatten is exercised by `tree_flatten_map_publishes_one_entry_per_node`).
+`workloads.rs` reports map→list, list→map, join-view, graph-node-map, and tree-flatten rows
+(tree flatten is also exercised by `tree_flatten_map_publishes_one_entry_per_node`).
 
 Still open from C1: N6 (declared primitives). The body still computes the whole
 output tuple, so per-projection demand saves the sibling projection node but not

@@ -1,11 +1,14 @@
 # Heterogeneous View granularity: audit and plan
 
-Status: audit complete; phase 0 of this plan is complete. F1 and F2 are fixed
-with gates, as are F3–F5: derived collection structure units are maintained
-from committed content, derived `Reduced`/`Graph` fields are rejected at
-compile time, observer refresh no longer fails edits, retirement skips live
-claims, and definition installs are two-phase. The structural F6–F13 items
-remain open. Commit `fea9055` (transaction normalization) came out of the first
+Status: complete. Phase 0 fixed F0–F5 (transaction normalization, derived
+structure units, derived `Reduced`/`Graph` macro support, observer refresh,
+retirement of live claims, and two-phase definition installs). Phases 1–4 are
+implemented: derived maps maintain structure units; keyed derived lists/sets,
+per-identity operators, derived `Reduced`, derived graphs, cross-family
+operators (including `Tree::flatten_map`), join-as-View, per-key
+`GeneralComponent` outputs, per-entry observers with unit-version
+notification, scope/arena/invocation retention, and the cross-family benchmark
+matrix. Every item lists its gate. Commit `fea9055` (transaction normalization) came out of the first
 audit and is merged.
 
 Relation to the other documents:
@@ -531,7 +534,7 @@ Gates: `keyed_list_reorder_reuses_member_work`,
 
 ### Phase 3 — Heterogeneous composition
 
-**Status: in progress.** Derived `Reduced` fields define their whole sequence
+**Status: complete.** Derived `Reduced` fields define their whole sequence
 (`a_derived_reduction_defines_and_redefines_its_sequence`). Cross-family
 operators `Map::to_list` and `List::to_map` publish keyed definitions from one
 family into another, preserving per-key identity
@@ -544,7 +547,10 @@ per-key target map through `JoinSpec::target` while keeping its whole-map output
 (`join_view_updates_only_changed_keys`), and `Graph::node_map` defines one map
 entry per node (`graph_node_map_updates_one_node`). Per-key `GeneralComponent`
 output uses the same `GeneralCx::define` path the join exercises.
-`Tree::flatten_map` remains.
+`Tree::flatten_map` is generated for every declared node type: a `ViewNode`
+enum plus `flatten_map(&target, f)` on each typed ref, defining one map entry
+per node in the subtree
+(`tree_flatten_map_publishes_one_entry_per_node`).
 
 1. **Join as a View.** Done: `JoinSpec::target` names an optional map View that
    receives one entry per joined key; the whole `BTreeMap` output is unchanged.
@@ -553,13 +559,14 @@ output uses the same `GeneralCx::define` path the join exercises.
    maintenance, and edge retraction on node removal. Derived `Reduced` defines
    its sequence unit. Derived trees remain rejected (documented).
 3. **Cross-family operators with identity:** `Map::to_list(key_fn)`,
-   `List::to_map(key_fn)`, `Graph::node_map()` are done; `Tree::flatten_map()`, each
-   defining a keyed View so downstream per-key work survives an upstream
-   value edit. These are the first APIs that make I6 checkable across families.
-4. **GeneralComponent outputs.** Done in part: `GeneralCx::output` returns a
-   typed `OutputTxn` (`define`/`field`/`entry`/`membership`) that stages
-   per-unit definitions; `GeneralCx` also supports dependency scopes with
-   retired-scope notification filtering. Gate:
+   `List::to_map(key_fn)`, `Graph::node_map()`, and `Tree::flatten_map()` are
+   all done, each defining a keyed View so downstream per-key work survives an
+   upstream value edit. These are the first APIs that make I6 checkable across
+   families.
+4. **GeneralComponent outputs.** Done: `GeneralCx::output` returns a typed
+   `OutputTxn` (`define`/`field`/`entry`/`membership`) that stages per-unit
+   definitions; `GeneralCx` also supports dependency scopes with retired-scope
+   notification filtering. Gate:
    `retired_dependency_scopes_filter_notifications`.
 
 Gates: `join_view_updates_only_changed_keys`,
@@ -568,7 +575,7 @@ Gates: `join_view_updates_only_changed_keys`,
 
 ### Phase 4 — Observation, retention, evidence
 
-**Status: in progress.** Per-entry observers are implemented:
+**Status: complete.** Per-entry observers are implemented:
 `Runtime::observe_units` watches a set of logical units and
 `Runtime::observe_entry` watches one map entry's membership and value units;
 the callback fires only when a watched unit's version moves
@@ -579,16 +586,21 @@ scopes that no live node references, `ReclaimStats` reports them, and
 `memory_report` gains `scopes` and `tasks`
 (`collect_reclaims_unreachable_scopes`). Argument churn is bounded by
 reachability: old invocation records are reclaimed
-(`argument_churn_stays_within_the_retention_policy`). Arena slot reuse
-(generational `NodeId`s) remains.
+(`argument_churn_stays_within_the_retention_policy`). Arena slots are reused
+with generation-checked `NodeId`s, consumers observe routing generations, and
+the invocation cache has an optional LRU cap
+(`collect_reuses_arena_slots_and_detects_stale_ids`,
+`invocation_cap_bounds_the_cache`). Reclamation can run automatically on a
+revision interval (`RuntimeConfig::auto_collect_every`,
+`automatic_collection_reclaims_on_demand_entry`).
 
 1. Per-entry observers (F9).
 2. `collect` prunes scopes, reuses arena slots with generation checks, and
    enforces a bounded invocation policy (F10); `memory_report` gains scopes,
    tasks, structure units, and invocation count.
-3. Benchmark matrix for cross-family workloads: `workloads.rs` now reports
-   map→list, list→map, join-view, and graph-node-map rows with executions and
-   wall time at 100 and 1000 entities (tree flatten still missing).
+3. Benchmark matrix for cross-family workloads: `workloads.rs` reports
+   map→list, list→map, join-view, graph-node-map, and tree-flatten rows with
+   executions and wall time at 100 and 1000 entities.
 4. Docs: the granularity contract in `docs/architecture.md`, the evidence index
    updated with every new gate.
 

@@ -372,6 +372,73 @@ fn cross_family_rows() {
             after.revisions - before.revisions,
             elapsed.as_micros()
         );
+
+        // Tree -> flatten map, one entry per node.
+        let runtime = Runtime::new();
+        runtime
+            .install(flatten_workload::Root)
+            .expect("install tree flatten");
+        runtime
+            .edit(|edit| {
+                let mut tree = edit.view::<syntax::Syntax>();
+                tree.set_root(&document(size));
+            })
+            .expect("seed tree");
+        let _ = runtime
+            .read_outputs::<flatten_workload::Root>()
+            .expect("warm tree");
+        let before = runtime.stats();
+        let started = Instant::now();
+        runtime
+            .edit(|edit| {
+                let mut tree = edit.view::<syntax::Syntax>();
+                let root = tree.root();
+                let items = root.items();
+                let leaf = items[size / 2].clone();
+                tree.replace_expr(leaf, &syntax::Expr::Name(String::from("-1")));
+            })
+            .expect("edit tree");
+        let _ = runtime
+            .read_outputs::<flatten_workload::Root>()
+            .expect("read tree");
+        let elapsed = started.elapsed();
+        let after = runtime.stats();
+        println!(
+            "tree-flatten\t{size}\t{}\t{}\t{}",
+            after.executions - before.executions,
+            after.revisions - before.revisions,
+            elapsed.as_micros()
+        );
+    }
+}
+
+
+#[view(derived)]
+pub struct SyntaxFlatten(Map<u64, u32>);
+
+fn flatten_tag(node: &syntax::SyntaxNode) -> Option<u32> {
+    match node {
+        syntax::SyntaxNode::Document(_) => Some(0),
+        syntax::SyntaxNode::Expr(_) => Some(1),
+        syntax::SyntaxNode::Literal(_) => Some(2),
+    }
+}
+
+#[reactive]
+mod flatten_workload {
+    use super::{SyntaxFlatten, flatten_tag, syntax};
+
+    #[component]
+    pub fn root(syntax: &syntax::Syntax) -> u32 {
+        reactive::ensure_view(<SyntaxFlatten as reactive::ViewSchema>::DESCRIPTOR);
+        let target = SyntaxFlatten.field0();
+        match syntax.root() {
+            Some(document) => {
+                document.flatten_map(&target, flatten_tag);
+                0
+            }
+            None => 0,
+        }
     }
 }
 
@@ -448,7 +515,7 @@ fn main() {
                 let root = tree.root();
                 let items = root.items();
                 let leaf = items[size / 2].clone();
-                tree.replace_expr(leaf, &syntax::Expr::Literal(syntax::Literal::Int(-1)));
+                tree.replace_expr(leaf, &syntax::Expr::Name(String::from("-1")));
             })
             .expect("edit");
         let _ = runtime.read_outputs::<tree_workload::Total>().expect("read");
