@@ -734,3 +734,69 @@ fn randomized_keyed_list_edits_match_the_from_scratch_oracle() {
         assert_eq!(actual, expected, "step {step}");
     }
 }
+
+#[view(source)]
+pub struct DiffSet {
+    members: Set<u32>,
+}
+
+#[view(source)]
+pub struct DiffKeys {
+    keys: List<u32>,
+}
+
+#[reactive]
+mod diff_set_membership {
+    use super::{DiffKeys, DiffSet};
+
+    #[component]
+    pub fn root(set: &DiffSet, keys: &DiffKeys) -> Vec<bool> {
+        let members = set.members();
+        let keys = keys.keys().to_vec();
+        keys.iter().map(|key| members.contains(key)).collect()
+    }
+}
+
+#[test]
+fn randomized_set_edits_match_the_from_scratch_oracle() {
+    let runtime = Runtime::new();
+    runtime.install(diff_set_membership::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut keys = edit.view::<DiffKeys>();
+            let mut values = keys.keys();
+            for key in 0..8u32 {
+                values.push(key);
+            }
+        })
+        .expect("keys");
+    let mut model: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    let mut rng = reactive_test::Lcg::new(0x5e_7);
+    for step in 0..150 {
+        let member = rng.below(8) as u32;
+        if rng.one_in(2) {
+            model.insert(member);
+            runtime
+                .edit(|edit| {
+                    let mut set = edit.view::<DiffSet>();
+                    let mut members = set.members();
+                    members.insert(member);
+                })
+                .expect("insert");
+        } else {
+            model.remove(&member);
+            runtime
+                .edit(|edit| {
+                    let mut set = edit.view::<DiffSet>();
+                    let mut members = set.members();
+                    members.remove(&member);
+                })
+                .expect("remove");
+        }
+        let expected: Vec<bool> = (0..8u32).map(|key| model.contains(&key)).collect();
+        let actual = runtime
+            .read_outputs::<diff_set_membership::Root>()
+            .expect("read");
+        assert_eq!(actual, expected, "step {step}");
+    }
+}
