@@ -81,14 +81,18 @@ C0 is complete.
 | F1 | Derived collection structure units are projected from committed content and refreshed on membership changes, with cutoff on value-only edits | `derived_map_structure_follows_definition_changes`, `derived_map_value_edits_do_not_touch_structure` |
 | F2 | Derived `Reduced`/`Graph` fields are rejected with attribute-level diagnostics | `a_derived_reduced_field_is_a_clear_diagnostic`, `a_derived_graph_field_is_a_clear_diagnostic` (macro unit tests) |
 | N24 (new) | Statement-position `if`/`match`/block statements are nodes, so a switched-off branch retires definitions before the next statement reads their units | covered by the statement form of `derived_map_structure_follows_definition_changes` |
+| N11 | Tree replacement reconciles the new build against the existing subtree and reuses children whose variant is unchanged | `replacing_a_variant_reuses_unchanged_children` |
+| N12 | `Runtime::read_projection`/`call_projection` demand one projection node; siblings stay unevaluated | `reading_one_projection_does_not_evaluate_the_other`, `a_call_projection_is_independently_demandable` |
 
 N24 was found while gating F1: definitions staged in statement-position branches
 were retired only at the enclosing component's commit, after later statements
 had already read the stale units. The lowering now gives control-flow statements
 their own `eval` node.
 
-Still open from C1: N6 (declared primitives), N11 (tree replacement identity),
-N12 (per-projection demand). The join-over-derived-maps gate is deferred: the
+Still open from C1: N6 (declared primitives). The body still computes the whole
+output tuple, so per-projection demand saves the sibling projection node but not
+sibling body work; splitting tuple construction into lazy projections is part of
+the routing/lowering phase. The join-over-derived-maps gate is deferred: the
 runtime has one root, and `EquiJoin` cannot demand a provider component.
 
 ## 2. Section-by-section conformance

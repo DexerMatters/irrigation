@@ -219,6 +219,45 @@ impl Runtime {
         self.inner.cancel_active();
     }
 
+    /// Calls a component and demands only one of its output projections.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the index is out of range or the demand fails.
+    pub fn call_projection<S: ComponentSpec>(
+        &self,
+        args: S::Args,
+        index: usize,
+    ) -> Result<Value> {
+        let inner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        let cancel = CancelToken::default();
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
+            let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = task.arc();
+            #[allow(clippy::arc_with_non_send_sync)]
+            let frame = Arc::new(reactive_core::frame::Frame::scoped(
+                runtime,
+                reactive_core::ids::NodeId::NONE,
+                reactive_core::ids::ScopeId::ROOT,
+                0,
+                token.clone(),
+            ));
+            let _guard = reactive_core::frame::FrameGuard::push(frame);
+            let result = catch_engine(|| {
+                crate::component::call_component_projection::<S>(args.clone(), index)
+            });
+            match result {
+                Ok(output) => {
+                    let revision = task.current_revision();
+                    task.resolve_conflicts(revision)?;
+                    Ok(output)
+                }
+                Err(error) => Err(error),
+            }
+        })
+    }
+
     /// Demands the installed root and returns its typed output product.
     ///
     /// # Errors
@@ -274,6 +313,38 @@ impl Runtime {
                         })
                 })
             })
+        })
+    }
+
+    /// Demands one output projection of the installed root.
+    ///
+    /// The component body still runs, but only the requested projection node is
+    /// evaluated and versioned; the other projections stay unevaluated until
+    /// demanded.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no root is installed, the index is out of range, or the
+    /// demand fails.
+    pub fn read_projection<R: RootComponent>(&self, index: usize) -> Result<Value> {
+        self.read_projection_with_cancel::<R>(index, CancelToken::default())
+    }
+
+    /// Demands one output projection with a cancellation token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComputeError::Cancelled`] when the token was cancelled.
+    pub fn read_projection_with_cancel<R: RootComponent>(
+        &self,
+        index: usize,
+        cancel: CancelToken,
+    ) -> Result<Value> {
+        let inner = Arc::clone(&self.inner);
+        let task = Arc::clone(&self.inner);
+        let token = cancel.clone();
+        inner.demand(cancel, move || {
+            task.demand_root_projection(&token, index)
         })
     }
 

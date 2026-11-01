@@ -163,6 +163,22 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Demand surfaces
+
+`read_outputs` demands the body and every output projection. `read_projection`
+demands the body and one projection node; the siblings stay unevaluated and
+unversioned. `call_projection` is the same shape for component invocations. The
+body still returns the whole tuple, so projection demand selects which output
+nodes run, not which tuple members are computed.
+
+## Tree replacement
+
+`TreeEditor::replace` reconciles the new build positionally against the existing
+subtree. A child whose variant is unchanged keeps its identity and has its
+fields and children updated in place; a changed variant is rebuilt. Replacing a
+node with an identical document therefore preserves every descendant id, and a
+field edit on a leaf keeps that leaf's id.
+
 ## Component lowering
 
 - Every value-producing expression becomes `reactive::eval(site, || ...)`, keyed

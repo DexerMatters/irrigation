@@ -1338,6 +1338,85 @@ impl Inner {
     }
 
     /// Demands the installed root at the current revision.
+    /// Demands one root output projection without evaluating its siblings.
+    pub fn demand_root_projection(
+        &self,
+        cancel: &CancelToken,
+        index: usize,
+    ) -> Result<Value> {
+        let revision = self.current_revision();
+        let (root, general_root) = {
+            let state = self.lock();
+            (state.root.clone(), state.general_root)
+        };
+        if let Some(root) = root {
+            let Some(node) = root.outputs.get(index).copied() else {
+                return Err(ComputeError::internal("projection index out of range"));
+            };
+            let runtime: Arc<dyn RuntimeOps> = self.arc();
+            // Frames are thread-local execution state; see the note in `eval`.
+            #[allow(clippy::arc_with_non_send_sync)]
+            let scope_frame = Arc::new(Frame::scoped(
+                Arc::clone(&runtime),
+                NodeId::NONE,
+                ScopeId::ROOT,
+                0,
+                cancel.clone(),
+            ));
+            let _guard = FrameGuard::push(scope_frame);
+            let projection_eq = root.projection_eq;
+            let value = catch_engine(|| {
+                let body_value = crate::component::eval_value(
+                    &runtime,
+                    root.body,
+                    || (root.run)(),
+                    &root.body_eq,
+                );
+                crate::component::eval_value(
+                    &runtime,
+                    node,
+                    || {
+                        runtime.observe(root.body).unwrap_or_else(|error| {
+                            reactive_core::ops::panic_engine(error)
+                        });
+                        (root.project)(&body_value, index)
+                    },
+                    &|left, right| projection_eq(index, left, right),
+                )
+            })?;
+            self.resolve_conflicts(revision)?;
+            return Ok(value);
+        }
+        let Some(general_node) = general_root else {
+            return Err(ComputeError::internal(
+                "no root component installed; call `runtime.install` first",
+            ));
+        };
+        if index != 0 {
+            return Err(ComputeError::internal("projection index out of range"));
+        }
+        let runtime: Arc<dyn RuntimeOps> = self.arc();
+        #[allow(clippy::arc_with_non_send_sync)]
+        let scope_frame = Arc::new(Frame::scoped(
+            Arc::clone(&runtime),
+            NodeId::NONE,
+            ScopeId::ROOT,
+            0,
+            cancel.clone(),
+        ));
+        let _guard = FrameGuard::push(scope_frame);
+        let mut compute = || -> Result<Value> {
+            Err(ComputeError::internal(
+                "a general component does not use a compute closure",
+            ))
+        };
+        let eq = |_: &Value, _: &Value| false;
+        let value = self.eval(general_node, &mut compute, &eq)?;
+        self.resolve_conflicts(revision)?;
+        Ok(value)
+    }
+
+    /// Demands the installed root and evaluates every output projection.
     pub fn demand_root(&self, cancel: &CancelToken) -> Result<()> {
         let revision = self.current_revision();
         let root = {

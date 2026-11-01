@@ -2924,3 +2924,112 @@ fn derived_map_value_edits_do_not_touch_structure() {
     assert!(structure_version(&runtime) > before);
     assert!(runtime.revision() > revision);
 }
+
+// ---------------------------------------------------------------------------
+// Per-projection demand (N12)
+// ---------------------------------------------------------------------------
+
+#[reactive]
+mod projection_gate {
+    #[component]
+    pub fn two_projection_root() -> (u32, u32) {
+        (1, 2)
+    }
+}
+
+#[test]
+fn reading_one_projection_does_not_evaluate_the_other() {
+    let runtime = Runtime::new();
+    runtime
+        .install(projection_gate::TwoProjectionRoot)
+        .expect("install");
+    let outputs = |runtime: &Runtime| {
+        runtime
+            .dump()
+            .into_iter()
+            .filter(|node| node.kind == "InvocationOutput")
+            .collect::<Vec<_>>()
+    };
+
+    let first = runtime
+        .read_projection::<projection_gate::TwoProjectionRoot>(0)
+        .expect("projection 0");
+    assert_eq!(*first.downcast_ref::<u32>().expect("u32"), 1);
+    let nodes = outputs(&runtime);
+    assert_eq!(nodes.len(), 2);
+    assert!(nodes[0].value.is_some(), "the demanded projection ran");
+    assert!(
+        nodes[1].value.is_none(),
+        "the sibling projection must not be evaluated"
+    );
+
+    let second = runtime
+        .read_projection::<projection_gate::TwoProjectionRoot>(1)
+        .expect("projection 1");
+    assert_eq!(*second.downcast_ref::<u32>().expect("u32"), 2);
+    let nodes = outputs(&runtime);
+    assert!(nodes[1].value.is_some());
+    assert_eq!(
+        runtime
+            .read_outputs::<projection_gate::TwoProjectionRoot>()
+            .expect("outputs"),
+        (1, 2)
+    );
+
+    let error = runtime
+        .read_projection::<projection_gate::TwoProjectionRoot>(2)
+        .expect_err("out of range");
+    assert!(matches!(error, reactive::ComputeError::Internal { .. }));
+}
+
+#[reactive]
+mod call_projection_gate {
+    #[component]
+    pub fn pair(tag: u64) -> (u32, u32) {
+        let _ = tag;
+        (3, 4)
+    }
+}
+
+#[test]
+fn a_call_projection_is_independently_demandable() {
+    let runtime = Runtime::new();
+    let first = runtime
+        .call_projection::<call_projection_gate::__PairSpec>(
+            call_projection_gate::__PairArgs { tag: 0 },
+            0,
+        )
+        .expect("projection 0");
+    assert_eq!(*first.downcast_ref::<u32>().expect("u32"), 3);
+    let outputs: Vec<_> = runtime
+        .dump()
+        .into_iter()
+        .filter(|node| node.kind == "InvocationOutput")
+        .collect();
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs[0].value.is_some());
+    assert!(
+        outputs[1].value.is_none(),
+        "the sibling projection must not be evaluated"
+    );
+
+    let second = runtime
+        .call_projection::<call_projection_gate::__PairSpec>(
+            call_projection_gate::__PairArgs { tag: 0 },
+            1,
+        )
+        .expect("projection 1");
+    assert_eq!(*second.downcast_ref::<u32>().expect("u32"), 4);
+    let outputs: Vec<_> = runtime
+        .dump()
+        .into_iter()
+        .filter(|node| node.kind == "InvocationOutput")
+        .collect();
+    assert!(outputs[1].value.is_some());
+    assert_eq!(
+        runtime
+            .call::<call_projection_gate::__PairSpec>(call_projection_gate::__PairArgs { tag: 0 })
+            .expect("whole call"),
+        (3, 4)
+    );
+}

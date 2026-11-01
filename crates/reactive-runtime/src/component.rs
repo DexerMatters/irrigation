@@ -75,6 +75,64 @@ pub trait RootComponent: Send + Sync + 'static {
     fn reconstruct(parts: &[Value]) -> Self::Output;
 }
 
+/// Demands one projection of a component invocation.
+///
+/// The body still runs, but only the requested projection node is evaluated and
+/// versioned; the sibling projections stay unevaluated until demanded.
+///
+/// # Panics
+///
+/// Panics with an engine payload outside a computation or on engine failure.
+pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) -> Value {
+    let frame = current_or_engine_panic("component call");
+    let runtime = Arc::clone(frame.runtime());
+    let hash = arguments_hash(&args);
+    let args_eq = |left: &dyn Any, right: &dyn Any| {
+        match (
+            left.downcast_ref::<S::Args>(),
+            right.downcast_ref::<S::Args>(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    };
+    let (body, outputs) = runtime.invocation_node(
+        S::ID,
+        hash,
+        Arc::new(args.clone()),
+        frame.scope(),
+        S::ARITY,
+        &args_eq,
+    );
+    let Some(node) = outputs.get(index).copied() else {
+        panic_engine(reactive_core::ComputeError::internal(
+            "projection index out of range",
+        ));
+    };
+    let body_eq = |left: &Value, right: &Value| {
+        match (
+            left.downcast_ref::<S::Output>(),
+            right.downcast_ref::<S::Output>(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    };
+    let body_value = eval_value(&runtime, body, || {
+        reactive_core::value::value_of(S::run(&args))
+    }, &body_eq);
+    let projection_eq = |left: &Value, right: &Value| S::projection_eq(index, left, right);
+    eval_value(&runtime, node, || {
+        runtime.observe(body).unwrap_or_else(|error| panic_engine(error));
+        let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
+            panic_engine(reactive_core::ComputeError::internal(
+                "component body produced an unexpected type",
+            ))
+        });
+        S::project(output, index)
+    }, &projection_eq)
+}
+
 /// Demands one component invocation and returns its output product.
 ///
 /// # Panics
