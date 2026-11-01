@@ -37,7 +37,7 @@ Every memoized computation is a `NodeRecord`:
 | `suspect_at` | revision of the last invalidation |
 | `trace` | ordered observations: `(node, version)` |
 | `dependents` | reverse edges, used by invalidation |
-| `state` | `Vacant`, `Running { owner: TaskId }`, `Ready`, `Failed` |
+| `state` | `Vacant`, `Running { owner: TaskId, generation: u64 }`, `Ready`, `Failed` |
 | `waiters` | tasks suspended on this node |
 | `general` / `general_state` | custom component index and retained state |
 
@@ -86,6 +86,19 @@ Hashes never establish equality. They bucket component invocations, whose
 arguments are then compared with `PartialEq`; a collision only costs a
 comparison.
 
+## Identity
+
+- `ViewId` and `ComponentId` are the full 64-bit FNV hash of the fully
+  qualified name. Registering a View whose id already belongs to a different
+  name is rejected; the old 32-bit truncation could alias two namespaces.
+- `SiteId` is sequential per component. Every component body executes in its own
+  scope — a root-style component called as a plain function opens a child scope
+  keyed by its component id — so sites only need to be unique within one
+  component.
+- `ScopeId`s are allocated from a counter, never hashed. Map-member scopes
+  intern their key with `child_scope_keyed`, which compares keys by equality
+  inside a hash bucket; a collision costs one comparison, not aliasing.
+
 ## Concurrency
 
 - One mutable transaction at a time, one active derived revision: a `Gate`
@@ -101,11 +114,15 @@ comparison.
   recording the wait it walks the wait graph on task identities; a reachable
   cycle becomes `ComputeError::Cycle`. User code never runs under the metadata
   lock.
-- Cancellation is checked before claiming and before committing; a cancelled
-  attempt publishes nothing and leaves nodes vacant. Cancelling a suspended task
-  queues it so it can observe the cancellation.
+- Cancellation is checked before claiming, and again inside `commit` while the
+  metadata lock is held; a cancelled attempt publishes nothing and releases its
+  claim. Cancelling a suspended task queues it so it can observe the
+  cancellation. A commit also verifies the claim's owner and generation, so a
+  stale attempt can never publish.
 - Parallel collection operators use scoped threads over worker chunks and join
-  in order, so results are independent of completion order.
+  in order, so results are independent of completion order. A failing member
+  resumes its original engine payload, preserving `Cycle`, `Cancelled`, and
+  other structured errors.
 
 ## Views and units
 
@@ -122,14 +139,28 @@ are logical units:
 | tree | root, per-node tag, per-field leaf, per-child-slot, parent, membership |
 
 Source units are created by edits; derived units by definitions. A definition is
-owned by exactly one provider node; a second provider is a deterministic
-`DuplicateDefinition` error. Definitions commit with their provider's value and
-trace, so routing changes are atomic.
+owned by exactly one provider node; a second live provider is a deterministic
+`DuplicateDefinition` error, including on the `call` path. Installation is
+two-phase: every target region is validated before anything is retracted or
+installed, so a rejected commit leaves the regions untouched. Retracting a
+whole-field definition restores the field to its empty value and invalidates its
+readers; retracting an entity unit marks it suspect and clears its certification.
+Absence-predicate cells are kept only by live traces and are reclaimed with the
+consumer that queried them.
+
+## Observation
+
+`edit` returns the transaction's outcome. Refreshing observers is a separate
+step: if the root cannot be demanded afterwards (no root is installed, or its
+demand fails), the failure is recorded in `Runtime::notification_error` and the
+edit still succeeds. A source-only runtime captures its snapshot without
+demanding a root.
 
 ## Component lowering
 
 - Every value-producing expression becomes `reactive::eval(site, || ...)`, keyed
-  by `(scope, site)`.
+  by `(scope, site)`. Site ids are sequential per component; component bodies
+  are isolated by their scopes.
 - Every `let` binding records the node that produced its value; uses observe that
   node (`observe_clone`/`observe_ref`) so consumers depend on producers.
 - Closures are lowered inline. A closure may be called many times in one scope,

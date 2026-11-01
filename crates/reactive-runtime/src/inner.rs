@@ -162,7 +162,15 @@ impl Inner {
     /// Registers a View descriptor and materializes its region.
     pub fn register_view(&self, descriptor: &'static ViewDescriptor) {
         let mut state = self.lock();
-        if state.views.contains_key(&descriptor.id) {
+        if let Some(existing) = state.views.get(&descriptor.id) {
+            // Identity is the full 64-bit name hash; a collision between two
+            // different names is rejected instead of aliasing the namespaces.
+            assert!(
+                existing.name == descriptor.name,
+                "two View names share one ViewId: `{}` and `{}`",
+                existing.name,
+                descriptor.name
+            );
             return;
         }
         state.views.insert(descriptor.id, descriptor);
@@ -213,6 +221,16 @@ impl Inner {
     /// Allocates or returns the child scope.
     pub fn child_scope(&self, parent: ScopeId, discriminant: u64, _label: &'static str) -> ScopeId {
         self.lock().scopes.child(parent, discriminant)
+    }
+
+    /// Allocates or returns the child scope for a typed key.
+    pub fn child_scope_keyed(
+        &self,
+        parent: ScopeId,
+        key: Arc<dyn AnyKey>,
+        _label: &'static str,
+    ) -> ScopeId {
+        self.lock().scopes.child_keyed(parent, key)
     }
 
     /// Returns (creating on first use) the node for one expression site.
@@ -1507,6 +1525,15 @@ impl RuntimeOps for Inner {
 
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId {
         Inner::child_scope(self, parent, discriminant, label)
+    }
+
+    fn child_scope_keyed(
+        &self,
+        parent: ScopeId,
+        key: Arc<dyn AnyKey>,
+        label: &'static str,
+    ) -> ScopeId {
+        Inner::child_scope_keyed(self, parent, key, label)
     }
 
     fn check_cancelled(&self) -> Result<()> {

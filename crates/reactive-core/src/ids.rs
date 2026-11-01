@@ -58,21 +58,21 @@ impl fmt::Debug for SiteId {
 
 /// Registered identity of one component definition.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ComponentId(pub u32);
+pub struct ComponentId(pub u64);
 
 impl fmt::Debug for ComponentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ComponentId({:#010x})", self.0)
+        write!(f, "ComponentId({:#018x})", self.0)
     }
 }
 
 /// Registered identity of one View namespace.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ViewId(pub u32);
+pub struct ViewId(pub u64);
 
 impl fmt::Debug for ViewId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ViewId({:#010x})", self.0)
+        write!(f, "ViewId({:#018x})", self.0)
     }
 }
 
@@ -113,8 +113,9 @@ impl fmt::Debug for ScopeId {
 
 /// FNV-1a hash of a string, usable in `const` contexts.
 ///
-/// The macro uses this to derive stable [`SiteId`] and [`ComponentId`] values
-/// from fully qualified names.
+/// The macro derives [`ViewId`] and [`ComponentId`] values from fully qualified
+/// names with the full 64-bit hash; registration rejects two names that share an
+/// id. [`SiteId`]s are sequential per component, not hashed.
 #[must_use]
 pub const fn const_hash(s: &str) -> u64 {
     let bytes = s.as_bytes();
@@ -137,6 +138,16 @@ pub const fn hash_combine(a: u64, b: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_width_ids_do_not_alias_where_truncation_did() {
+        // These two names collided under the old `as u32` truncation
+        // (0x335f71be). Full-width ViewId/ComponentId values do not.
+        let first = const_hash("audit_hash_view::InkOwcyHFoDQS");
+        let second = const_hash("audit_hash_view::MOlqwVtqzJ");
+        assert_eq!(first as u32, second as u32);
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn const_hash_is_deterministic_and_distinguishes_names() {

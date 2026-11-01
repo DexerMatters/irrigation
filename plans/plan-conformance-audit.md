@@ -70,8 +70,9 @@ Implemented and gated (commit `fd0a4ce`…`d9f…`):
 | N10 | `collect` reclaims false membership cells that no live trace keeps | `absence_cells_are_reclaimed_with_their_consumers` |
 | F4 | Retirement skips nodes with a live claim or waiters | `retirement_leaves_a_running_node_alone` (unit) |
 | F5 | Definition installs validate all target regions before mutating | `a_failed_definition_install_is_atomic` |
+| N5 | Full-width `ViewId`/`ComponentId`, registration collision rejection, counter-allocated scopes, sequential sites with per-component body scopes, equality-checked map-member keys | `full_width_ids_do_not_alias_where_truncation_did`, `keyed_child_scopes_disambiguate_equal_hashes`, `map_member_scopes_compare_keys_not_only_hashes` |
 
-Remaining from C0: N5 (collision-free identities).
+C0 is complete.
 
 ## 2. Section-by-section conformance
 

@@ -194,11 +194,8 @@ where
             runtime.child_scope(frame.scope(), u64::from(frame.node().0), "map_values");
         keys.into_iter()
             .map(|key| {
-                let member_scope = runtime.child_scope(
-                    call_scope,
-                    reactive_core::hash::hash_one(&key),
-                    "map_member",
-                );
+                let member_scope =
+                    runtime.child_scope_keyed(call_scope, any_key(key.clone()), "map_member");
                 let key_for_read = key.clone();
                 let param_node = runtime.site_node(member_scope, SiteId(1));
                 let value: V = reactive_core::ops::eval_node(param_node, || {

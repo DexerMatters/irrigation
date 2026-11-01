@@ -2724,3 +2724,56 @@ fn absence_cells_are_reclaimed_with_their_consumers() {
         100
     );
 }
+
+// ---------------------------------------------------------------------------
+// Map-member scopes compare keys, not just hashes (N5)
+// ---------------------------------------------------------------------------
+
+/// Two different keys with one shared hash.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CollidingKey(pub u64);
+
+impl std::hash::Hash for CollidingKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&0u64, state);
+    }
+}
+
+#[view(source)]
+pub struct CollisionTable {
+    entries: Map<CollidingKey, u64>,
+}
+
+#[reactive]
+mod collision_map {
+    use super::CollisionTable;
+
+    #[component]
+    pub fn root(table: &CollisionTable) -> u64 {
+        let entries = table.entries();
+        entries
+            .map_values(|value| *value * 2)
+            .iter()
+            .map(|(_, value)| *value)
+            .sum()
+    }
+}
+
+#[test]
+fn map_member_scopes_compare_keys_not_only_hashes() {
+    let runtime = Runtime::new();
+    runtime.install(collision_map::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<CollisionTable>();
+            let mut entries = table.entries();
+            entries.insert(CollidingKey(1), 10);
+            entries.insert(CollidingKey(2), 20);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<collision_map::Root>().expect("read"),
+        60,
+        "two colliding-hash keys must keep separate member scopes"
+    );
+}

@@ -58,6 +58,15 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// Derives a stable child scope from a parent scope and a discriminant.
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId;
 
+    /// Derives a stable child scope from a typed key, comparing keys by
+    /// equality instead of trusting a hash.
+    fn child_scope_keyed(
+        &self,
+        parent: ScopeId,
+        key: Arc<dyn AnyKey>,
+        label: &'static str,
+    ) -> ScopeId;
+
     /// Fails with [`ComputeError::Cancelled`] if the owning demand was
     /// cancelled.
     fn check_cancelled(&self) -> Result<()>;

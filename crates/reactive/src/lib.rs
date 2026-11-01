@@ -27,7 +27,7 @@ pub use reactive_core::ids::{
     ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId, const_hash,
 };
 pub use reactive_core::key::{AnyKey, any_key};
-pub use reactive_core::ops::eval;
+pub use reactive_core::ops::{eval, scope};
 pub use reactive_core::value::{Value, value_of};
 pub use reactive_macros::{component, reactive, tree_view, view};
 pub use reactive_runtime::field::{

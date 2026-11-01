@@ -51,7 +51,6 @@ impl Lowered {
 
 /// Lowers one component body.
 pub struct Lowerer {
-    component: String,
     counter: u32,
     scopes: Vec<std::collections::HashMap<String, TokenStream>>,
     /// Inside a closure body no per-expression nodes are created: the closure
@@ -64,9 +63,8 @@ pub struct Lowerer {
 impl Lowerer {
     /// Builds a lowerer for one component function.
     #[must_use]
-    pub fn new(component: impl Into<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            component: component.into(),
             counter: 0,
             scopes: vec![std::collections::HashMap::new()],
             inline_depth: 0,
@@ -87,11 +85,10 @@ impl Lowerer {
     fn site(&mut self) -> TokenStream {
         let counter = self.counter;
         self.counter += 1;
-        let component = &self.component;
+        // Sequential per component; the high half is reserved for the macro so
+        // operator-defined site ids (1, 2, ...) can never collide with it.
         quote! {
-            reactive::SiteId(
-                (reactive::const_hash(concat!(module_path!(), "::", #component, ":", #counter)) as u32) | 1
-            )
+            reactive::SiteId(0x8000_0000u32 | (#counter as u32))
         }
     }
 

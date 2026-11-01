@@ -297,7 +297,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         }
 
         const #view_const: reactive::ViewId = reactive::ViewId(
-            reactive::const_hash(concat!(module_path!(), "::", #name_str)) as u32,
+            reactive::const_hash(concat!(module_path!(), "::", #name_str)),
         );
 
         static #descriptor_ident: reactive::ViewDescriptor = reactive::ViewDescriptor {

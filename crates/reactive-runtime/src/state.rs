@@ -15,7 +15,7 @@ use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{
     ComponentId, NodeId, Revision, ScopeId, SiteId, Version, ViewId,
 };
-use reactive_core::key::KeyTable;
+use reactive_core::key::{AnyKey, KeyTable};
 use reactive_core::value::Value;
 use reactive_core::descriptor::{UnitKey, ViewDescriptor};
 
@@ -270,35 +270,73 @@ impl std::fmt::Debug for Invocation {
     }
 }
 
+/// Buckets of typed keys interned into scopes, keyed by `(parent, hash)`.
+type KeyedScopes = FxHashMap<(u64, u64), Vec<(Arc<dyn AnyKey>, ScopeId)>>;
+
 /// Stable child-scope allocation.
-#[derive(Debug, Default)]
+///
+/// Scopes are allocated from a counter, so identity never depends on a hash.
+/// `child` interns an exact `(parent, discriminant)` pair; `child_keyed`
+/// interns a typed key and compares keys by equality, so hash collisions only
+/// cost a bucket scan.
+#[derive(Default)]
 pub struct ScopeTable {
-    map: FxHashMap<(u64, u64), ScopeId>,
+    by_discriminant: FxHashMap<(u64, u64), ScopeId>,
+    by_key: KeyedScopes,
     next: u64,
 }
 
+impl std::fmt::Debug for ScopeTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopeTable")
+            .field("scopes", &self.len())
+            .field("next", &self.next)
+            .finish()
+    }
+}
+
 impl ScopeTable {
+    fn allocate(&mut self) -> ScopeId {
+        self.next += 1;
+        ScopeId(self.next)
+    }
+
     /// Returns the child scope for `(parent, discriminant)`, allocating it once.
     pub fn child(&mut self, parent: ScopeId, discriminant: u64) -> ScopeId {
-        if let Some(scope) = self.map.get(&(parent.raw(), discriminant)) {
+        if let Some(scope) = self.by_discriminant.get(&(parent.raw(), discriminant)) {
             return *scope;
         }
-        self.next += 1;
-        let scope = ScopeId(reactive_core::ids::hash_combine(parent.raw(), self.next));
-        self.map.insert((parent.raw(), discriminant), scope);
+        let scope = self.allocate();
+        self.by_discriminant
+            .insert((parent.raw(), discriminant), scope);
+        scope
+    }
+
+    /// Returns the child scope for a typed key, comparing keys by equality.
+    pub fn child_keyed(&mut self, parent: ScopeId, key: Arc<dyn AnyKey>) -> ScopeId {
+        let lookup = (parent.raw(), key.key_hash());
+        if let Some(bucket) = self.by_key.get(&lookup) {
+            for (existing, scope) in bucket {
+                if existing.key_eq(key.as_ref()) {
+                    return *scope;
+                }
+            }
+        }
+        let scope = self.allocate();
+        self.by_key.entry(lookup).or_default().push((key, scope));
         scope
     }
 
     /// Number of allocated scopes.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.map.len()
+        self.by_discriminant.len() + self.by_key.values().map(Vec::len).sum::<usize>()
     }
 
     /// Returns `true` when no scope has been allocated.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+        self.len() == 0
     }
 }
 
@@ -533,5 +571,51 @@ pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, re
         for dependent in &record.dependents {
             stack.push(*dependent);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reactive_core::key::any_key;
+    use std::hash::{Hash, Hasher};
+
+    /// Two different keys that deliberately share one hash.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Colliding(u64);
+
+    impl Hash for Colliding {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            0u64.hash(state);
+        }
+    }
+
+    #[test]
+    fn keyed_child_scopes_disambiguate_equal_hashes() {
+        let mut table = ScopeTable::default();
+        let first = table.child_keyed(ScopeId::ROOT, any_key(Colliding(1)));
+        let second = table.child_keyed(ScopeId::ROOT, any_key(Colliding(2)));
+        assert_ne!(first, second, "equal hashes must not share a scope");
+        assert_eq!(
+            table.child_keyed(ScopeId::ROOT, any_key(Colliding(1))),
+            first
+        );
+        let other_parent = table.child(ScopeId::ROOT, 1);
+        assert_ne!(
+            table.child_keyed(other_parent, any_key(Colliding(1))),
+            first,
+            "the parent is part of the scope identity"
+        );
+    }
+
+    #[test]
+    fn scope_ids_are_allocated_not_hashed() {
+        let mut table = ScopeTable::default();
+        let first = table.child(ScopeId::ROOT, 7);
+        let second = table.child(ScopeId::ROOT, 8);
+        assert_ne!(first, second);
+        assert_ne!(first, ScopeId::ROOT);
+        assert_eq!(table.child(ScopeId::ROOT, 7), first);
+        assert_eq!(table.len(), 2);
     }
 }

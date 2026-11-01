@@ -94,7 +94,7 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
     };
 
     // Lower the body into tracked primitives.
-    let mut lowerer = Lowerer::new(name_str.clone());
+    let mut lowerer = Lowerer::new();
     let body = lowerer.block(&item.block);
     let body_block: syn::Block = syn::parse2(body)?;
 
@@ -193,7 +193,7 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
 
     let id_tokens = quote! {
         const ID: reactive::ComponentId = reactive::ComponentId(
-            reactive::const_hash(concat!(module_path!(), "::", #name_str)) as u32,
+            reactive::const_hash(concat!(module_path!(), "::", #name_str)),
         );
         const NAME: &'static str = concat!(module_path!(), "::", #name_str);
         const ARITY: usize = #arity;
@@ -225,7 +225,14 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
             #impl_fn
 
             #vis fn #name(#(#param_tokens),*) #return_type {
-                #impl_name(#(#param_names),*)
+                // A component body executes in its own child scope even when a
+                // caller invokes it as a plain function: sibling component
+                // bodies must not share expression-site identity.
+                reactive::scope(
+                    <#root_ident as reactive::RootComponent>::ID.0,
+                    #name_str,
+                    move || #impl_name(#(#param_names),*),
+                )
             }
 
             #vis struct #root_ident;
