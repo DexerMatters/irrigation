@@ -607,7 +607,9 @@ identity and values, and a randomized set test
 membership reads after random insertions and retractions. A randomized filter
 test (`randomized_filter_edits_match_the_from_scratch_oracle`) exercises the
 per-identity `filter` operator over a keyed derived list under random list
-edits. Schedule-perturbation
+edits, and a randomized flat-map test
+(`randomized_flat_map_edits_match_the_from_scratch_oracle`) checks the
+per-identity `flat_map` operator. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before
