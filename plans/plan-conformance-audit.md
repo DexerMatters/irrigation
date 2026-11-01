@@ -102,8 +102,12 @@ lists and sets keep whole-value semantics until Phase 2.
 Phase 2 of the granularity plan has started: keyed derived lists with stable
 identities, `define_keyed`/`get_key`, and per-member `map` reuse across reorders
 and value edits (`keyed_list_identity_survives_reorder_and_removal`,
-`derived_list_map_reuses_members_after_reorder_and_value_edit`). Keyed sets and
-the remaining per-member operators are open.
+`derived_list_map_reuses_members_after_reorder_and_value_edit`); keyed derived
+sets with per-member membership units
+(`keyed_set_membership_is_per_member`). The gate also found and fixed a
+retraction bug: retracting a membership unit cleared its own certification in
+the separate value-unit branch, so a direct membership read reported
+"undefined" instead of false. Remaining per-member operators are open.
 
 Still open from C1: N6 (declared primitives). The body still computes the whole
 output tuple, so per-projection demand saves the sibling projection node but not

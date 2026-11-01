@@ -9,12 +9,19 @@ use std::sync::Arc;
 
 use reactive_core::error::ComputeError;
 use reactive_core::frame::current_or_engine_panic;
-use reactive_core::ids::ViewId;
+use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::ops::panic_engine;
 use reactive_core::value::{Value, value_of};
 use reactive_core::descriptor::UnitKey;
 
 use crate::inner::DefinitionDraft;
+
+/// Whether a field currently uses the keyed derived protocol.
+#[must_use]
+pub fn field_is_keyed(view: ViewId, field: FieldId) -> bool {
+    reactive_core::frame::current()
+        .is_some_and(|frame| frame.runtime().field_is_keyed(view, field))
+}
 
 /// Reads one logical unit, creating it with `init` when first observed.
 ///

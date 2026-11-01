@@ -58,6 +58,9 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// Derives a stable child scope from a parent scope and a discriminant.
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId;
 
+    /// Whether a field currently uses the keyed derived protocol.
+    fn field_is_keyed(&self, view: crate::ids::ViewId, field: crate::ids::FieldId) -> bool;
+
     /// Derives a stable child scope from a typed key, comparing keys by
     /// equality instead of trusting a hash.
     fn child_scope_keyed(

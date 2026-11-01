@@ -223,6 +223,11 @@ impl Inner {
         self.lock().scopes.child(parent, discriminant)
     }
 
+    /// Whether a field currently uses the keyed derived protocol.
+    pub fn field_is_keyed(&self, view: ViewId, field: FieldId) -> bool {
+        self.lock().keyed_fields.contains(&(view, field))
+    }
+
     /// Allocates or returns the child scope for a typed key.
     pub fn child_scope_keyed(
         &self,
@@ -972,6 +977,21 @@ impl Inner {
         let mut content = Arc::clone(&region.content);
         let mut dirty_fields: Vec<FieldId> = Vec::new();
         for draft in drafts {
+            if draft.unit.entity.is_none() {
+                match draft.unit.kind {
+                    UnitKind::Structure => {
+                        state
+                            .keyed_fields
+                            .insert((draft.unit.view, draft.unit.field));
+                    }
+                    UnitKind::Value => {
+                        state
+                            .keyed_fields
+                            .remove(&(draft.unit.view, draft.unit.field));
+                    }
+                    _ => {}
+                }
+            }
             let owner = owner_key(&draft.unit);
             if let Some(existing) = region.owners.get(&owner) {
                 if existing.node != provider {
@@ -1107,12 +1127,16 @@ impl Inner {
     ) -> Result<()> {
         let descriptor = region.descriptor;
         let owner = owner_key(unit);
+
         if let Some(existing) = region.owners.get(&owner) {
             if existing.node != provider {
                 return Ok(());
             }
         }
         region.owners.remove(&owner);
+        if unit.entity.is_none() && unit.kind == UnitKind::Structure {
+            state.keyed_fields.remove(&(unit.view, unit.field));
+        }
         let mut content = Arc::clone(&region.content);
         content = (descriptor.content.retract)(&content, unit);
         if unit.entity.is_none() {
@@ -1156,16 +1180,21 @@ impl Inner {
             if let Some(slot) = region.units.get_mut(&membership) {
                 slot.present = false;
             }
-            if let Some(slot) = region.units.get(unit) {
-                let node = slot.node;
-                let record = state.node_mut(node);
-                record.suspect_at = revision;
-                // A directly read retracted unit must not be served from the
-                // old certified value; membership guards family handles, this
-                // guards direct unit reads.
-                record.verified_at = 0;
-                let dependents = record.dependents.clone();
-                changed_nodes.extend(dependents);
+            // A membership unit is its own membership record: its value was
+            // just set to false and certified above. Only a distinct value unit
+            // loses its certification.
+            if unit.kind != UnitKind::Membership {
+                if let Some(slot) = region.units.get(unit) {
+                    let node = slot.node;
+                    let record = state.node_mut(node);
+                    record.suspect_at = revision;
+                    // A directly read retracted unit must not be served from
+                    // the old certified value; membership guards family
+                    // handles, this guards direct unit reads.
+                    record.verified_at = 0;
+                    let dependents = record.dependents.clone();
+                    changed_nodes.extend(dependents);
+                }
             }
         }
         let content_changed = {
@@ -1674,6 +1703,10 @@ impl RuntimeOps for Inner {
 
     fn child_scope(&self, parent: ScopeId, discriminant: u64, label: &'static str) -> ScopeId {
         Inner::child_scope(self, parent, discriminant, label)
+    }
+
+    fn field_is_keyed(&self, view: ViewId, field: FieldId) -> bool {
+        Inner::field_is_keyed(self, view, field)
     }
 
     fn child_scope_keyed(

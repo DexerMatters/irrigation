@@ -437,11 +437,21 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                         }
                     }
                 }
-                FieldShape::Set(elem) => quote! {
-                    #vis fn #ident(&self) -> Vec<#elem> {
-                        self.content.#ident.iter().cloned().collect()
+                FieldShape::Set(elem) => {
+                    if derived {
+                        quote! {
+                            #vis fn #ident(&self) -> Vec<#elem> {
+                                self.content.#ident.to_vec()
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #vis fn #ident(&self) -> Vec<#elem> {
+                                self.content.#ident.iter().cloned().collect()
+                            }
+                        }
                     }
-                },
+                }
                 FieldShape::Reduced(reduction) => {
                     let aggregate = format_ident!("{}_aggregate", ident);
                     quote! {
@@ -881,6 +891,11 @@ fn single_field_forwarding(
             pub fn members(&self) -> reactive::PSet<#elem> {
                 self.#accessor().members()
             }
+            /// Whether a member is present.
+            #[must_use]
+            pub fn contains(&self, member: &#elem) -> bool {
+                self.#accessor().contains(member)
+            }
             /// Number of members.
             #[must_use]
             pub fn len(&self) -> usize {
@@ -907,6 +922,14 @@ fn single_field_forwarding(
                 let handle = Self;
                 handle.define_all(members);
                 handle
+            }
+            /// Defines a keyed set: one membership unit per member.
+            pub fn define_keyed<I>(&self, members: I)
+            where
+                I: IntoIterator<Item = #elem>,
+            {
+                reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
+                self.#accessor().define_keyed(members, #name_str);
             }
         },
         FieldShape::Scalar(ty) => {

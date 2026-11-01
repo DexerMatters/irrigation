@@ -497,8 +497,12 @@ value draft per entity plus the assembled storage; the runtime retracts absent
 entities and keeps surviving identities. `ids`, `get_key` and per-member `map`
 are available on derived lists. Gates:
 `keyed_list_identity_survives_reorder_and_removal`,
-`derived_list_map_reuses_members_after_reorder_and_value_edit`. Keyed sets,
-`filter`/`flat_map`, and the removal/rank gates still remain.
+`derived_list_map_reuses_members_after_reorder_and_value_edit`. Derived sets
+gain the same protocol: `define_keyed` stages one membership unit per member
+plus the structure draft, `contains` reads the per-member membership unit, and
+retraction certifies the false value instead of clearing it (gate
+`keyed_set_membership_is_per_member`). `filter`/`flat_map` and the rank gate
+still remain.
 
 1. **Protocol.** A provider stages a structure draft (ordered ids / member ids)
    plus one value draft per entity; the runtime diffs old and new structure,

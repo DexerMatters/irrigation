@@ -147,8 +147,12 @@ it; value-only edits do not. Derived lists have two storage modes: a whole-value
 identities, and a keyed definition (`define_keyed`) with explicit `u64`
 identities, one value unit per entity, and an assembled storage value. The
 keyed mode keeps member scopes keyed by identity, so a reorder or an unrelated
-value edit reuses per-member `map` results. Derived sets are still whole-value;
-their structure is the member set. Derived `Reduced` and `Graph` fields are
+value edit reuses per-member `map` results. Derived sets have the same two modes: whole-value, or keyed `define_keyed`
+definitions that stage one membership unit per member plus the structure draft.
+In the keyed mode `contains` reads the member's membership unit, so adding or
+removing one member does not invalidate another member's consumers. Retracting a
+membership unit certifies it as false; it must not clear the certification that
+the same node uses as its membership record. Derived `Reduced` and `Graph` fields are
 rejected at compile time: those families need a `GeneralComponent` or a source
 View.
 

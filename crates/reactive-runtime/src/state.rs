@@ -13,7 +13,7 @@ use reactive_core::frame::CancelToken;
 use reactive_core::frame::Dep;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{
-    ComponentId, NodeId, Revision, ScopeId, SiteId, Version, ViewId,
+    ComponentId, NodeId, Revision, ScopeId, SiteId, Version, FieldId, ViewId,
 };
 use reactive_core::key::{AnyKey, KeyTable};
 use reactive_core::value::Value;
@@ -476,6 +476,8 @@ pub struct State {
     pub general_root: Option<NodeId>,
     /// Conflicting definitions awaiting end-of-revision resolution.
     pub pending_conflicts: Vec<PendingConflict>,
+    /// Fields currently populated by the keyed derived protocol.
+    pub keyed_fields: std::collections::HashSet<(ViewId, FieldId)>,
     /// Diagnostics counters.
     pub stats: Stats,
     /// Last observer-refresh failure, recorded by `edit`.

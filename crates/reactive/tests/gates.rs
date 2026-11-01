@@ -3491,3 +3491,98 @@ fn derived_list_map_reuses_members_after_reorder_and_value_edit() {
         "only the edited member is recomputed"
     );
 }
+
+#[view(derived)]
+pub struct KeyedSet(Set<u64>);
+
+#[reactive]
+mod keyed_sets {
+    use super::{KeyedMode, KeyedSet};
+
+    #[component]
+    pub fn root(mode: &KeyedMode) -> (bool, bool, bool, Vec<u64>) {
+        if mode.mode() == 1 {
+            KeyedSet.define_keyed([1u64, 2, 3]);
+        } else if mode.mode() == 2 {
+            KeyedSet.define_keyed([2u64]);
+        } else {
+            KeyedSet.define_keyed([1u64, 2]);
+        }
+        let set = KeyedSet;
+        (
+            set.contains(&1u64),
+            set.contains(&2u64),
+            set.contains(&3u64),
+            set.to_vec(),
+        )
+    }
+}
+
+#[test]
+fn keyed_set_membership_is_per_member() {
+    let runtime = Runtime::new();
+    runtime.install(keyed_sets::Root).expect("install");
+    let read = |runtime: &Runtime| {
+        runtime
+            .read_outputs::<keyed_sets::Root>()
+            .expect("read")
+    };
+    assert_eq!(
+        read(&runtime),
+        (true, true, false, vec![1, 2])
+    );
+
+    // Adding a third member changes only that member's membership unit.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
+        .expect("edit");
+    let revision = runtime.revision();
+    assert_eq!(
+        read(&runtime),
+        (true, true, true, vec![1, 2, 3])
+    );
+    let units = runtime.dump();
+    let membership = |id: &str| {
+        units
+            .iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| {
+                            unit.contains("Membership") && unit.contains(id)
+                        })
+            })
+            .expect("membership unit")
+    };
+    assert!(membership("Some(\"1\")").changed_at < revision);
+    assert_eq!(membership("Some(\"3\")").changed_at, revision);
+
+    // Removing a member flips its unit and leaves the survivors untouched.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
+        .expect("edit");
+    let removal = runtime.revision();
+    assert_eq!(
+        read(&runtime),
+        (false, true, false, vec![2])
+    );
+    let units = runtime.dump();
+    let membership = |id: &str| {
+        units
+            .iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| {
+                            unit.contains("Membership") && unit.contains(id)
+                        })
+            })
+            .expect("membership unit")
+    };
+    assert_eq!(membership("Some(\"1\")").changed_at, removal);
+    assert!(membership("Some(\"2\")").changed_at < removal);
+}

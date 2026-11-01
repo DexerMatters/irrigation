@@ -260,7 +260,96 @@ where
     }
 }
 
-/// A derived set field defined as one whole value.
+/// Storage for a derived set: whole-value or keyed members.
+#[derive(Clone)]
+pub enum DerivedSetStorage<T> {
+    /// A whole-value definition.
+    Whole(PSet<T>),
+    /// A keyed definition; members have per-entity membership units.
+    Keyed(PSet<T>),
+}
+
+impl<T> std::fmt::Debug for DerivedSetStorage<T>
+where
+    T: Ord + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Whole(members) => f.debug_tuple("Whole").field(members).finish(),
+            Self::Keyed(members) => f.debug_tuple("Keyed").field(members).finish(),
+        }
+    }
+}
+
+impl<T: Ord> PartialEq for DerivedSetStorage<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Whole(left), Self::Whole(right))
+            | (Self::Keyed(left), Self::Keyed(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl<T: Ord> Eq for DerivedSetStorage<T> {}
+
+impl<T> DerivedSetStorage<T> {
+    /// The member set.
+    #[must_use]
+    pub fn members(&self) -> &PSet<T> {
+        match self {
+            Self::Whole(members) | Self::Keyed(members) => members,
+        }
+    }
+}
+
+impl<T: Ord> DerivedSetStorage<T> {
+    /// Number of members.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.members().len()
+    }
+
+    /// Returns `true` when the set has no members.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.members().is_empty()
+    }
+
+    /// Whether a member is present.
+    #[must_use]
+    pub fn contains(&self, member: &T) -> bool {
+        self.members().contains(member)
+    }
+
+    fn with_member(&self, member: T) -> Self
+    where
+        T: Clone,
+    {
+        let mut members = self.members().clone();
+        members = members.insert(member).0;
+        Self::Keyed(members)
+    }
+
+    fn without_member(&self, member: &T) -> Self
+    where
+        T: Clone,
+    {
+        let mut members = self.members().clone();
+        members = members.remove(member).0;
+        Self::Keyed(members)
+    }
+}
+
+impl<T: Ord + Clone> DerivedSetStorage<T> {
+    /// Members in order.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<T> {
+        self.members().iter().cloned().collect()
+    }
+}
+
+/// A derived set field: one whole value or keyed members.
 pub struct DerivedSet<T>(PhantomData<fn() -> T>);
 
 impl<T> std::fmt::Debug for DerivedSet<T> {
@@ -273,40 +362,57 @@ impl<T> ViewField for DerivedSet<T>
 where
     T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
 {
-    type Storage = PSet<T>;
+    type Storage = DerivedSetStorage<T>;
 
     const KIND: FieldKind = FieldKind::Set;
 
     fn empty() -> Self::Storage {
-        PSet::new()
+        DerivedSetStorage::Whole(PSet::new())
     }
 
     fn define(
         storage: &Self::Storage,
-        _key: &dyn reactive_core::key::AnyKey,
+        key: &dyn reactive_core::key::AnyKey,
         value: Value,
     ) -> Self::Storage {
-        value
-            .downcast_ref::<PSet<T>>()
-            .cloned()
-            .unwrap_or_else(|| storage.clone())
-    }
-
-    fn retract(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+        if let Some(member) = key.as_any().downcast_ref::<T>() {
+            if value.downcast_ref::<bool>() == Some(&true) {
+                return storage.with_member(member.clone());
+            }
+        }
+        if let Some(next) = value.downcast_ref::<DerivedSetStorage<T>>() {
+            return next.clone();
+        }
+        if let Some(members) = value.downcast_ref::<PSet<T>>() {
+            return DerivedSetStorage::Keyed(members.clone());
+        }
         storage.clone()
     }
 
-    fn contains(_storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> bool {
-        true
+    fn retract(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+        match key.as_any().downcast_ref::<T>() {
+            Some(member) => storage.without_member(member),
+            None => DerivedSetStorage::Whole(PSet::new()),
+        }
     }
 
-    fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
-        Some(value_of(storage.clone()))
+    fn contains(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> bool {
+        key.as_any()
+            .downcast_ref::<T>()
+            .is_none_or(|member| storage.contains(member))
+    }
+
+    fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
+        match key.as_any().downcast_ref::<T>() {
+            Some(member) => Some(value_of(storage.contains(member))),
+            None => Some(value_of(storage.clone())),
+        }
     }
 
     fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        let members = storage.members().clone();
         Some(reactive_core::descriptor::Structure {
-            value: value_of(storage.clone()),
+            value: value_of(members),
             eq: |left, right| left.downcast_ref::<PSet<T>>() == right.downcast_ref::<PSet<T>>(),
         })
     }
@@ -317,7 +423,7 @@ where
 pub struct DerivedSetRef<T> {
     view: ViewId,
     field: FieldId,
-    content: fn(&dyn Any) -> PSet<T>,
+    content: fn(&dyn Any) -> DerivedSetStorage<T>,
 }
 
 impl<T> PartialEq for DerivedSetRef<T> {
@@ -341,16 +447,13 @@ impl<T> DerivedSetRef<T>
 where
     T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
 {
-    /// The structure projection (the whole member set).
-    pub fn members(&self) -> PSet<T> {
-        read_unit_value(structure_unit(self.view, self.field), |content| {
-            Some((self.content)(content))
-        })
-    }
-
     /// Builds a handle for one derived set field.
     #[must_use]
-    pub fn new(view: ViewId, field: FieldId, content: fn(&dyn Any) -> PSet<T>) -> Self {
+    pub fn new(
+        view: ViewId,
+        field: FieldId,
+        content: fn(&dyn Any) -> DerivedSetStorage<T>,
+    ) -> Self {
         Self {
             view,
             field,
@@ -362,17 +465,33 @@ where
         UnitKey::field(self.view, self.field, UnitKind::Value)
     }
 
-    /// Reads the whole set.
+    fn membership_key(&self, member: &T) -> UnitKey {
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Membership,
+            any_key(member.clone()),
+        )
+    }
+
+    /// The structure projection (the whole member set).
+    #[must_use]
+    pub fn members(&self) -> PSet<T> {
+        read_unit_value(structure_unit(self.view, self.field), |content| {
+            Some((self.content)(content).members().clone())
+        })
+    }
+
+    /// Reads every member.
     #[must_use]
     pub fn to_vec(&self) -> Vec<T> {
-        let set: PSet<T> = read_unit_value(self.unit(), |content| Some((self.content)(content)));
-        set.iter().cloned().collect()
+        self.members().iter().cloned().collect()
     }
 
     /// Number of members.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.to_vec().len()
+        self.members().len()
     }
 
     /// Returns `true` when the set has no members.
@@ -381,13 +500,38 @@ where
         self.len() == 0
     }
 
+    /// Whether a member is present.
+    #[must_use]
+    pub fn contains(&self, member: &T) -> bool {
+        if reactive_runtime::helpers::field_is_keyed(self.view, self.field) {
+            read_unit_value(self.membership_key(member), |content| {
+                Some((self.content)(content).contains(member))
+            })
+        } else {
+            self.members().contains(member)
+        }
+    }
+
     /// Defines the whole set from the currently executing computation.
     pub fn define_all<I>(&self, members: I, label: &'static str)
     where
         I: IntoIterator<Item = T>,
     {
         let set: PSet<T> = members.into_iter().collect();
-        define_unit(self.unit(), set, label);
+        define_unit(self.unit(), DerivedSetStorage::Whole(set), label);
+    }
+
+    /// Defines a keyed set: one membership unit per member plus the structure.
+    pub fn define_keyed<I>(&self, members: I, label: &'static str)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let members: Vec<T> = members.into_iter().collect();
+        let structure: PSet<T> = members.iter().cloned().collect();
+        for member in &members {
+            define_unit(self.membership_key(member), true, label);
+        }
+        define_unit(structure_unit(self.view, self.field), structure, label);
     }
 }
 
