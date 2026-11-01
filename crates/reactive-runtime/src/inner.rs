@@ -386,6 +386,7 @@ impl Inner {
                     }
                 } else if record.suspect_at <= record.verified_at && record.value.is_some() {
                     record.verified_at = revision;
+                    record.validated_at = revision;
                     Action::Return(record.value.clone().expect("checked"))
                 } else {
                     state.next_generation += 1;
@@ -425,6 +426,7 @@ impl Inner {
                 let record = state.node_mut(node);
                 record.state = NodeState::Ready;
                 record.verified_at = revision;
+                record.validated_at = revision;
                 record.suspect_at = 0;
                 record
                     .value
@@ -712,6 +714,8 @@ impl Inner {
             record.trace = deps;
             record.state = NodeState::Ready;
             record.verified_at = revision;
+            record.executed_at = revision;
+            record.validated_at = revision;
             record.suspect_at = 0;
             record.failure = None;
             if let Some(retained) = retained_state {

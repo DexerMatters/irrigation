@@ -174,6 +174,13 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Explanation
+
+Every node records `executed_at` and `validated_at` separately, plus its
+scheduling state and waiter count. `explain_node` exposes them with the
+dependency versions, so a host can tell "replayed from a validated trace" from
+"re-executed"; `Explain::waiting_tasks` reports suspended demand tasks.
+
 ## Observation scopes
 
 `observe` subscribes to a whole View content version. `observe_units` watches an

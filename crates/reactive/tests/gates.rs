@@ -4261,3 +4261,67 @@ fn collect_reclaims_unreachable_scopes() {
     assert!(stats.scopes_reclaimed > 0, "{stats:?}");
     assert!(runtime.memory_report().scopes < before);
 }
+
+// ---------------------------------------------------------------------------
+// Explainability: validation vs execution (N15)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn explanations_distinguish_validation_from_execution() {
+    let runtime = Runtime::new();
+    runtime
+        .install(structure_consumers::KeysOnly)
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+        })
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<structure_consumers::KeysOnly>()
+        .expect("read");
+    let root = runtime
+        .dump()
+        .into_iter()
+        .find(|node| node.kind == "InvocationBody" && node.label == "root body")
+        .expect("root body")
+        .id;
+    let first = runtime.explain_node(root);
+    assert_eq!(first.executed_at, 1);
+    assert_eq!(first.validated_at, 1);
+    assert!(first.state.contains("Ready"));
+    assert_eq!(first.waiters, 0);
+
+    // A value-only edit replays the cached root without executing it.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    let _ = runtime
+        .read_outputs::<structure_consumers::KeysOnly>()
+        .expect("read");
+    let replayed = runtime.explain_node(root);
+    assert_eq!(replayed.executed_at, 1, "the body must not re-execute");
+    assert_eq!(replayed.validated_at, 2);
+
+    // A structure change invalidates the body, so it executes.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ConsumerTable>();
+            let mut entries = table.entries();
+            entries.insert(2, 20);
+        })
+        .expect("edit");
+    let _ = runtime
+        .read_outputs::<structure_consumers::KeysOnly>()
+        .expect("read");
+    let executed = runtime.explain_node(root);
+    assert_eq!(executed.executed_at, 3);
+    assert_eq!(executed.validated_at, 3);
+    assert_eq!(runtime.explain().waiting_tasks, 0);
+}

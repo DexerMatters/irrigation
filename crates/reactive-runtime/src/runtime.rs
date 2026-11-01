@@ -645,6 +645,7 @@ impl Runtime {
             root: state.root.as_ref().map(|root| root.name),
             views: state.views.len(),
             subscriptions: state.subscriptions.len(),
+            waiting_tasks: state.wait_graph.len(),
         }
     }
 
@@ -690,6 +691,10 @@ impl Runtime {
             value_changed_at: record.changed_at,
             verified_at: record.verified_at,
             suspect_at: record.suspect_at,
+            executed_at: record.executed_at,
+            validated_at: record.validated_at,
+            state: format!("{:?}", record.state),
+            waiters: record.waiters.len(),
             dependencies,
         }
     }
@@ -890,6 +895,14 @@ pub struct Explanation {
     pub verified_at: Revision,
     /// Revision of the last invalidation.
     pub suspect_at: Revision,
+    /// Revision at which the node last executed its closure.
+    pub executed_at: Revision,
+    /// Revision at which the node's trace was last validated or replayed.
+    pub validated_at: Revision,
+    /// Scheduling state (`Vacant`, `Running`, `Ready`, `Failed`).
+    pub state: String,
+    /// Tasks currently suspended on this node.
+    pub waiters: usize,
     /// Recorded observations, in dependency order.
     pub dependencies: Vec<DependencyExplanation>,
 }
@@ -955,6 +968,8 @@ pub struct Explain {
     pub views: usize,
     /// Active subscriptions.
     pub subscriptions: usize,
+    /// Tasks currently suspended on a node.
+    pub waiting_tasks: usize,
 }
 
 fn root_project<R: RootComponent>(value: &Value, index: usize) -> Value {
