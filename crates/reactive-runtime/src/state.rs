@@ -443,9 +443,30 @@ pub struct SubscriptionRecord {
     /// Watched units; empty means the whole View content.
     pub units: Vec<UnitKey>,
     /// Per-unit versions last delivered, aligned with `units`.
+    ///
+    /// For a routing subscription these are routing generations rather than
+    /// value versions.
     pub last_versions: Vec<Version>,
+    /// Whether `units` are watched by routing generation instead of value.
+    pub routing: bool,
     /// Whether the subscription is still active.
     pub active: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Routing generation of one unit's node, or zero when it has no provider.
+pub fn routing_version(state: &State, unit: &UnitKey) -> Version {
+    state
+        .units
+        .get(unit)
+        .copied()
+        .or_else(|| {
+            state
+                .regions
+                .get(&unit.view)
+                .and_then(|region| region.units.get(unit))
+                .map(|slot| slot.node)
+        })
+        .map_or(0, |node| state.node(node).routing_at)
 }
 
 /// Version of one unit's node, or zero when it has never been created.

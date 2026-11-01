@@ -435,6 +435,7 @@ impl Runtime {
             last_version: version,
             units: Vec::new(),
             last_versions: Vec::new(),
+            routing: false,
             active: Arc::clone(&active),
         });
         Ok(Subscription {
@@ -479,6 +480,7 @@ impl Runtime {
             last_version: 0,
             units,
             last_versions: versions,
+            routing: false,
             active: Arc::clone(&active),
         });
         Ok(Subscription {
@@ -527,6 +529,47 @@ impl Runtime {
         self.observe_units::<V>(units, callback)
     }
 
+    /// Observes one unit's provider routing generation.
+    ///
+    /// Fires when the unit's provider changes, including a handover that keeps
+    /// the value equal; value-only edits do not fire.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the View is not registered.
+    pub fn observe_routing<V: ViewSchema>(
+        &self,
+        unit: reactive_core::descriptor::UnitKey,
+        callback: impl Fn(&Snapshot) + Send + Sync + 'static,
+    ) -> Result<Subscription> {
+        if self.inner.view_descriptor(V::view_id()).is_none() {
+            return Err(ComputeError::internal(format!(
+                "cannot observe unregistered view `{}`",
+                V::DESCRIPTOR.name
+            )));
+        }
+        let mut state = self.inner.lock();
+        let initial = crate::state::routing_version(&state, &unit);
+        let id = state.next_subscription;
+        state.next_subscription += 1;
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        state.subscriptions.push(SubscriptionRecord {
+            id,
+            view: V::view_id(),
+            callback: crate::state::Observer::Plain(Arc::new(callback)),
+            last_version: 0,
+            units: vec![unit],
+            last_versions: vec![initial],
+            routing: true,
+            active: Arc::clone(&active),
+        });
+        Ok(Subscription {
+            inner: Arc::clone(&self.inner),
+            id,
+            active,
+        })
+    }
+
     /// Registers a callback that also receives the changed View versions.
     ///
     /// # Errors
@@ -557,6 +600,7 @@ impl Runtime {
             last_version: version,
             units: Vec::new(),
             last_versions: Vec::new(),
+            routing: false,
             active: Arc::clone(&active),
         });
         Ok(Subscription {
@@ -871,9 +915,16 @@ impl Runtime {
                     }
                 } else {
                     let units = state.subscriptions[index].units.clone();
+                    let routing = state.subscriptions[index].routing;
                     let versions: Vec<reactive_core::ids::Version> = units
                         .iter()
-                        .map(|unit| crate::state::unit_version(&state, unit))
+                        .map(|unit| {
+                            if routing {
+                                crate::state::routing_version(&state, unit)
+                            } else {
+                                crate::state::unit_version(&state, unit)
+                            }
+                        })
                         .collect();
                     if versions != state.subscriptions[index].last_versions {
                         let previous = state.subscriptions[index].last_version;

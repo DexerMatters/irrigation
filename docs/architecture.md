@@ -93,7 +93,9 @@ Defining a unit from a different provider (including a handover that keeps the
 value equal) advances the routing generation; retracting the owner does too.
 Consumers record the routing generation in their trace and validation rejects an
 observation whose routing changed even when the value did not. The runtime
-exposes `provider_of` and `routing_generation`, and `Change` marks routing-only
+exposes `provider_of` and `routing_generation`, and `observe_routing` registers
+a host subscription that fires on provider changes (including equal-valued
+handovers) but not on value-only edits. and `Change` marks routing-only
 updates for general components. The full owner dispatcher and route recipes are
 still future work.
 

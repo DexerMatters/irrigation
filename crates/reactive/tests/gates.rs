@@ -5293,3 +5293,63 @@ fn site_identity_reuse_is_counted() {
     assert_eq!(explain.site_reuses, stats.site_reuses);
     assert!(runtime.wait_cycles().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Routing observation subscriptions (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn routing_subscriptions_fire_only_on_provider_changes() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let runtime = Runtime::new();
+    runtime
+        .install(routing_generation_gate::Root)
+        .expect("install");
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    let unit = reactive::UnitKey::field(
+        <RouteSlot as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    );
+    let fired = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&fired);
+    let _routing_subscription = runtime
+        .observe_routing::<RouteSlot>(unit.clone(), move |_snapshot| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })
+        .expect("observe routing");
+
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(false))
+        .expect("handover");
+    assert_eq!(fired.load(Ordering::SeqCst), 1);
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("handover back");
+    assert_eq!(fired.load(Ordering::SeqCst), 2);
+
+    // A source unit has no provider routing; value edits do not fire.
+    let source_unit = reactive::UnitKey::field(
+        <RouteFlag as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    );
+    let source_fired = std::sync::Arc::new(AtomicUsize::new(0));
+    let source_counter = std::sync::Arc::clone(&source_fired);
+    let _source_subscription = runtime
+        .observe_routing::<RouteFlag>(source_unit, move |_snapshot| {
+            source_counter.fetch_add(1, Ordering::SeqCst);
+        })
+        .expect("observe source routing");
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(false))
+        .expect("value edit");
+    assert_eq!(source_fired.load(Ordering::SeqCst), 0);
+    assert_eq!(fired.load(Ordering::SeqCst), 3);
+}
