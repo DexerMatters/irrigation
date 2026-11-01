@@ -1,4 +1,6 @@
-//! Workload matrix: no-op transactions, map lookups and tree leaf edits.
+//! Workload matrix: no-op transactions, map lookups, tree leaf edits, and
+//! cross-family workloads (map to keyed list, source list to map, join target,
+//! graph node map).
 //!
 //! Run with `cargo run --release --example workloads -p reactive`.
 //!
@@ -80,6 +82,296 @@ fn document(size: usize) -> syntax::Document {
         items: (0..size)
             .map(|index| syntax::Expr::Literal(syntax::Literal::Int(index as i64)))
             .collect(),
+    }
+}
+
+
+// --- Cross-family workloads ------------------------------------------------
+
+#[view(source)]
+pub struct Elements {
+    values: List<u32>,
+}
+
+#[view(derived)]
+pub struct MappedList(List<u64>);
+
+#[view(derived)]
+pub struct MappedMap(Map<u32, u64>);
+
+#[view(source)]
+pub struct LeftNumbers {
+    entries: Map<u32, u64>,
+}
+
+#[view(source)]
+pub struct RightNumbers {
+    entries: Map<u32, u64>,
+}
+
+#[view(derived)]
+pub struct JoinedNumbers(Map<u32, u64>);
+
+#[view(source)]
+pub struct GraphMode {
+    size: u64,
+    bump: bool,
+}
+
+#[view(derived)]
+pub struct WorkGraph(Graph<u64, u64>);
+
+#[view(derived)]
+pub struct WorkGraphMap(Map<u64, u64>);
+
+#[reactive]
+mod cross_workloads {
+    use super::{Elements, MappedList, MappedMap, Table};
+
+    #[component]
+    pub fn map_to_list(table: &Table) -> Option<u64> {
+        reactive::ensure_view(<MappedList as reactive::ViewSchema>::DESCRIPTOR);
+        let target = MappedList.field0();
+        table
+            .entries()
+            .to_list(&target, |key, value| Some((u64::from(*key), *value)));
+        target.get_key(1)
+    }
+
+    #[component]
+    pub fn list_to_map(elements: &Elements) -> Option<u64> {
+        reactive::ensure_view(<MappedMap as reactive::ViewSchema>::DESCRIPTOR);
+        let target = MappedMap.field0();
+        elements
+            .values()
+            .to_map(&target, |id, value| Some((id as u32, u64::from(*value))));
+        target.get(&1)
+    }
+}
+
+struct NumberJoin;
+
+impl reactive::JoinSpec for NumberJoin {
+    type Key = u32;
+    type Left = u64;
+    type Right = u64;
+    type Joined = u64;
+
+    fn left() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <LeftNumbers as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn right() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <RightNumbers as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn combine(left: &u64, right: &u64) -> u64 {
+        left * right
+    }
+
+    fn target() -> Option<(reactive::ViewId, reactive::FieldId)> {
+        Some((
+            <JoinedNumbers as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        ))
+    }
+}
+
+fn define_work_graph(nodes: Vec<(u64, u64)>, edges: Vec<(u64, u64, u64, u64)>) {
+    WorkGraph.define_graph(&nodes, &edges);
+}
+
+#[reactive]
+mod graph_workload {
+    use super::{GraphMode, WorkGraph, WorkGraphMap, define_work_graph, graph_edges, graph_nodes};
+
+    #[component]
+    pub fn root(mode: &GraphMode) -> Option<u64> {
+        reactive::ensure_view(<WorkGraph as reactive::ViewSchema>::DESCRIPTOR);
+        reactive::ensure_view(<WorkGraphMap as reactive::ViewSchema>::DESCRIPTOR);
+        define_work_graph(graph_nodes(mode.size(), mode.bump()), graph_edges(mode.size()));
+        let target = WorkGraphMap.field0();
+        WorkGraph.field0().node_map(&target);
+        target.get(&1)
+    }
+}
+
+fn graph_nodes(size: u64, bump: bool) -> Vec<(u64, u64)> {
+    (0..size)
+        .map(|id| (id, if id == 1 && bump { 11 } else { id }))
+        .collect()
+}
+
+fn graph_edges(size: u64) -> Vec<(u64, u64, u64, u64)> {
+    (0..size.saturating_sub(1))
+        .map(|id| (id, id, id + 1, id * 10))
+        .collect()
+}
+
+fn seed_table(runtime: &Runtime, size: usize) {
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<Table>();
+            let mut entries = table.entries();
+            for index in 0..size {
+                entries.insert(index as u32, index as u64);
+            }
+        })
+        .expect("seed table");
+}
+
+fn cross_family_rows() {
+    for size in [100usize, 1_000] {
+        // map -> keyed list, one member per key.
+        let runtime = Runtime::new();
+        runtime
+            .install(cross_workloads::MapToList)
+            .expect("install");
+        seed_table(&runtime, size);
+        let _ = runtime
+            .read_outputs::<cross_workloads::MapToList>()
+            .expect("warm");
+        let before = runtime.stats();
+        let started = Instant::now();
+        runtime
+            .edit(|edit| {
+                let mut table = edit.view::<Table>();
+                let mut entries = table.entries();
+                entries.insert(1, 11);
+            })
+            .expect("edit");
+        let _ = runtime
+            .read_outputs::<cross_workloads::MapToList>()
+            .expect("read");
+        let elapsed = started.elapsed();
+        let after = runtime.stats();
+        println!(
+            "map-to-list\t{size}\t{}\t{}\t{}",
+            after.executions - before.executions,
+            after.revisions - before.revisions,
+            elapsed.as_micros()
+        );
+
+        // source list -> map, one entry per element identity.
+        let runtime = Runtime::new();
+        runtime
+            .install(cross_workloads::ListToMap)
+            .expect("install");
+        runtime
+            .edit(|edit| {
+                let mut elements = edit.view::<Elements>();
+                let mut values = elements.values();
+                for index in 0..size {
+                    values.push(index as u32);
+                }
+            })
+            .expect("seed list");
+        let _ = runtime
+            .read_outputs::<cross_workloads::ListToMap>()
+            .expect("warm");
+        let before = runtime.stats();
+        let started = Instant::now();
+        runtime
+            .edit(|edit| {
+                let mut elements = edit.view::<Elements>();
+                let mut values = elements.values();
+                values.set(1, 11);
+            })
+            .expect("edit");
+        let _ = runtime
+            .read_outputs::<cross_workloads::ListToMap>()
+            .expect("read");
+        let elapsed = started.elapsed();
+        let after = runtime.stats();
+        println!(
+            "list-to-map\t{size}\t{}\t{}\t{}",
+            after.executions - before.executions,
+            after.revisions - before.revisions,
+            elapsed.as_micros()
+        );
+
+        // Equi-join publishing a per-key target View.
+        let runtime = Runtime::new();
+        runtime.register_view(<LeftNumbers as reactive::ViewSchema>::DESCRIPTOR);
+        runtime.register_view(<RightNumbers as reactive::ViewSchema>::DESCRIPTOR);
+        runtime.register_view(<JoinedNumbers as reactive::ViewSchema>::DESCRIPTOR);
+        runtime
+            .install_general(reactive::EquiJoin::<NumberJoin>::new())
+            .expect("install join");
+        runtime
+            .edit(|edit| {
+                {
+                    let mut left = edit.view::<LeftNumbers>();
+                    let mut entries = left.entries();
+                    for index in 0..size {
+                        entries.insert(index as u32, index as u64);
+                    }
+                }
+                let mut right = edit.view::<RightNumbers>();
+                let mut entries = right.entries();
+                for index in 0..size {
+                    entries.insert(index as u32, 2);
+                }
+            })
+            .expect("seed join");
+        let _ = runtime
+            .read_outputs_general::<reactive::EquiJoin<NumberJoin>>()
+            .expect("warm join");
+        let before = runtime.stats();
+        let started = Instant::now();
+        runtime
+            .edit(|edit| {
+                let mut left = edit.view::<LeftNumbers>();
+                let mut entries = left.entries();
+                entries.insert(1, 11);
+            })
+            .expect("edit");
+        let _ = runtime
+            .read_outputs_general::<reactive::EquiJoin<NumberJoin>>()
+            .expect("read join");
+        let elapsed = started.elapsed();
+        let after = runtime.stats();
+        println!(
+            "join-view\t{size}\t{}\t{}\t{}",
+            after.executions - before.executions,
+            after.revisions - before.revisions,
+            elapsed.as_micros()
+        );
+
+        // Derived graph -> node map.
+        let runtime = Runtime::new();
+        runtime.install(graph_workload::Root).expect("install graph");
+        runtime
+            .edit(|edit| {
+                let mut mode = edit.view::<GraphMode>();
+                mode.set_size(size as u64);
+            })
+            .expect("seed graph");
+        let _ = runtime
+            .read_outputs::<graph_workload::Root>()
+            .expect("warm graph");
+        let before = runtime.stats();
+        let started = Instant::now();
+        runtime
+            .edit(|edit| edit.view::<GraphMode>().set_bump(true))
+            .expect("edit");
+        let _ = runtime
+            .read_outputs::<graph_workload::Root>()
+            .expect("read graph");
+        let elapsed = started.elapsed();
+        let after = runtime.stats();
+        println!(
+            "graph-node-map\t{size}\t{}\t{}\t{}",
+            after.executions - before.executions,
+            after.revisions - before.revisions,
+            elapsed.as_micros()
+        );
     }
 }
 
@@ -220,4 +512,5 @@ fn main() {
             elapsed.as_micros()
         );
     }
+    cross_family_rows();
 }

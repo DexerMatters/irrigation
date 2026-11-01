@@ -573,9 +573,9 @@ scopes that no live node references, `ReclaimStats` reports them, and
 2. `collect` prunes scopes, reuses arena slots with generation checks, and
    enforces a bounded invocation policy (F10); `memory_report` gains scopes,
    tasks, structure units, and invocation count.
-3. Benchmark matrix for cross-family workloads: map→list, list→map, join view,
-   tree flatten, each with processed entities, executions, and wall time at
-   several sizes, added to `examples/`.
+3. Benchmark matrix for cross-family workloads: `workloads.rs` now reports
+   map→list, list→map, join-view, and graph-node-map rows with executions and
+   wall time at 100 and 1000 entities (tree flatten still missing).
 4. Docs: the granularity contract in `docs/architecture.md`, the evidence index
    updated with every new gate.
 

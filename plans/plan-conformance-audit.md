@@ -116,8 +116,10 @@ the separate value-unit branch, so a direct membership read reported
 
 Phase 3 of the granularity plan has started: derived `Reduced` fields and
 derived graphs are supported families, and `Map::to_list`/`List::to_map`
-preserve per-key identity across families. Join-as-View and the graph/tree
-cross-family operators remain open.
+preserve per-key identity across families. Join-as-View and the graph
+cross-family operator are implemented; the benchmark matrix in `workloads.rs`
+reports map→list, list→map, join-view, and graph-node-map rows. Tree flatten
+remains.
 
 Still open from C1: N6 (declared primitives). The body still computes the whole
 output tuple, so per-projection demand saves the sibling projection node but not

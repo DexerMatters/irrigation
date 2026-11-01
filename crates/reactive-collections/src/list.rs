@@ -200,6 +200,31 @@ where
             .collect()
     }
 
+    /// Defines a derived map from this source list's elements.
+    ///
+    /// One map entry per element identity; a removed element retracts its entry.
+    pub fn to_map<K, V, F>(&self, target: &crate::map::MapRef<K, V>, f: F)
+    where
+        K: Ord + std::hash::Hash + Clone + std::fmt::Debug + Send + Sync + 'static,
+        V: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(u64, &T) -> Option<(K, V)>,
+    {
+        for id in self.ids().iter() {
+            let value: T = read_unit_value(
+                UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(*id)),
+                |content| {
+                    (self.content)(content)
+                        .iter()
+                        .find(|(existing, _)| existing == id)
+                        .map(|(_, value)| value.clone())
+                },
+            );
+            if let Some((key, mapped)) = f(*id, &value) {
+                target.define(key, mapped, "list_to_map");
+            }
+        }
+    }
+
     /// Maps every element through `f`, memoizing per element identity.
     ///
     /// The closure receives a [`Param`] that records the element observation on
