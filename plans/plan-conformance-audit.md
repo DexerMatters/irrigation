@@ -520,10 +520,10 @@ retirement, output transaction atomicity).
   `IncomingAdjacency` unit alongside outgoing adjacency, `GraphRef::incoming`
   reads it (or computes it from the topology for keyed derived graphs), and
   `graph_incoming_adjacency_is_indexed_per_node` covers updates and removal.
-- **N19 Fixed-point resets.** The solver recomputes from scratch on any input
-  change (conservative and sound), but a reset is not reported as a cost/event
-  and there is no SCC localization (§9.5: "a whole-SCC reset is a possible worst
-  case and must be reported as such").
+- **N19 Fixed-point resets.** Partial: `FixedPoint::contributions` reports the
+  reset cost, and the solver now reports the dependency graph's strongly
+  connected components (`sccs`, `recursive_components`) so a whole-SCC reset can
+  be identified; incremental per-SCC re-solving remains open.
 - **N20 `reactive-plan`.** Resolved: the vocabulary is re-exported as
   `reactive::plan` for tooling and diagnostics, and `reactive-runtime` no longer
   declares the unused dependency.

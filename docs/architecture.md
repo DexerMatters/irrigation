@@ -240,8 +240,10 @@ moves, so an edit to another key does not wake the callback.
 
 ## Fixed points
 
-The solver reports worklist `iterations` and the number of transfer
-`contributions`; every solve restarts from the declared seeds, so the
+The solver reports worklist `iterations`, the number of transfer
+`contributions`, and the strongly connected components of the discovered
+dependency graph (`sccs`); `recursive_components` lists the components whose
+reset is the worst case. Every solve restarts from the declared seeds, so the
 contribution count is the reset's cost.
 
 ## Retention

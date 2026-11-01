@@ -80,6 +80,8 @@ pub struct FixedPoint<K: Ord, V> {
     values: BTreeMap<K, V>,
     iterations: usize,
     contributions: usize,
+    sccs: Vec<Vec<K>>,
+    self_loops: BTreeSet<K>,
 }
 
 impl<K: Ord, V> FixedPoint<K, V> {
@@ -102,6 +104,28 @@ impl<K: Ord, V> FixedPoint<K, V> {
     #[must_use]
     pub fn contributions(&self) -> usize {
         self.contributions
+    }
+
+    /// Strongly connected components of the dependency graph, sorted.
+    #[must_use]
+    pub fn sccs(&self) -> &[Vec<K>] {
+        &self.sccs
+    }
+
+    /// Components that contain a cycle (more than one key or a self-loop).
+    ///
+    /// A reset of one of these components is the worst case the plan asks to
+    /// report: everything in the component may have to be recomputed.
+    #[must_use]
+    pub fn recursive_components(&self) -> Vec<&[K]> {
+        self.sccs
+            .iter()
+            .filter(|component| {
+                component.len() > 1
+                    || (component.len() == 1 && self.self_loops.contains(&component[0]))
+            })
+            .map(Vec::as_slice)
+            .collect()
     }
 
     /// Keys whose value is above bottom, in order.
@@ -156,6 +180,7 @@ pub fn solve_with_budget<P: FixedPointProblem>(
 
     let mut iterations = 0;
     let mut work = 0usize;
+    let mut edges: Vec<(P::Key, P::Key)> = Vec::new();
     while let Some(key) = queue.pop_front() {
         iterations += 1;
         let value = values
@@ -164,6 +189,7 @@ pub fn solve_with_budget<P: FixedPointProblem>(
             .unwrap_or_else(P::Value::bottom);
         for (target, contribution) in problem.transfer(&key, &value) {
             work += 1;
+            edges.push((key.clone(), target.clone()));
             if work > budget {
                 return Err(ComputeError::unsupported(format!(
                     "fixed point did not converge within {budget} contributions"
@@ -178,11 +204,80 @@ pub fn solve_with_budget<P: FixedPointProblem>(
         }
     }
 
+    let (sccs, self_loops) = strongly_connected(&values, &edges);
     Ok(FixedPoint {
         values,
         iterations,
         contributions: work,
+        sccs,
+        self_loops,
     })
+}
+
+/// Kosaraju's algorithm over the discovered contribution graph.
+fn strongly_connected<K: Ord + Clone, V>(
+    values: &BTreeMap<K, V>,
+    edges: &[(K, K)],
+) -> (Vec<Vec<K>>, BTreeSet<K>) {
+    let mut adjacency: BTreeMap<K, BTreeSet<K>> = BTreeMap::new();
+    let mut reverse: BTreeMap<K, BTreeSet<K>> = BTreeMap::new();
+    for key in values.keys() {
+        adjacency.entry(key.clone()).or_default();
+        reverse.entry(key.clone()).or_default();
+    }
+    let mut self_loops: BTreeSet<K> = BTreeSet::new();
+    for (from, to) in edges {
+        adjacency.entry(from.clone()).or_default().insert(to.clone());
+        reverse.entry(to.clone()).or_default().insert(from.clone());
+        if from == to {
+            self_loops.insert(from.clone());
+        }
+    }
+    let mut visited: BTreeSet<K> = BTreeSet::new();
+    let mut order: Vec<K> = Vec::new();
+    for start in adjacency.keys() {
+        if !visited.insert(start.clone()) {
+            continue;
+        }
+        let mut stack: Vec<(K, bool)> = vec![(start.clone(), false)];
+        while let Some((node, expanded)) = stack.pop() {
+            if expanded {
+                order.push(node);
+                continue;
+            }
+            stack.push((node.clone(), true));
+            if let Some(neighbors) = adjacency.get(&node) {
+                for next in neighbors {
+                    if visited.insert(next.clone()) {
+                        stack.push((next.clone(), false));
+                    }
+                }
+            }
+        }
+    }
+    let mut assigned: BTreeSet<K> = BTreeSet::new();
+    let mut components: Vec<Vec<K>> = Vec::new();
+    for start in order.into_iter().rev() {
+        if !assigned.insert(start.clone()) {
+            continue;
+        }
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        while let Some(node) = stack.pop() {
+            component.push(node.clone());
+            if let Some(neighbors) = reverse.get(&node) {
+                for next in neighbors {
+                    if assigned.insert(next.clone()) {
+                        stack.push(next.clone());
+                    }
+                }
+            }
+        }
+        component.sort();
+        components.push(component);
+    }
+    components.sort_by(|left, right| left.first().cmp(&right.first()));
+    (components, self_loops)
 }
 
 #[cfg(test)]
@@ -238,6 +333,36 @@ mod tests {
         assert_eq!(reached, reachable_from_scratch(&problem.edges, &problem.seeds));
         assert_eq!(reached, [0, 1, 2, 3].into_iter().collect());
         assert!(fixed.contributions() >= fixed.iterations());
+    }
+
+    #[test]
+    fn sccs_localize_recursive_regions() {
+        let problem = Reachability {
+            edges: vec![(0, 1), (1, 0), (2, 3), (3, 2), (4, 5)],
+            seeds: vec![0, 2, 4],
+        };
+        let fixed = solve(&problem).expect("converges");
+        let recursive = fixed.recursive_components();
+        assert!(recursive.contains(&[0, 1].as_slice()), "{recursive:?}");
+        assert!(recursive.contains(&[2, 3].as_slice()), "{recursive:?}");
+        assert_eq!(recursive.len(), 2);
+        assert!(
+            fixed
+                .sccs()
+                .iter()
+                .any(|component| component == &vec![4] || component == &vec![5])
+        );
+    }
+
+    #[test]
+    fn a_self_loop_is_recursive() {
+        let problem = Reachability {
+            edges: vec![(0, 0)],
+            seeds: vec![0],
+        };
+        let fixed = solve(&problem).expect("converges");
+        let recursive = fixed.recursive_components();
+        assert_eq!(recursive, vec![[0].as_slice()]);
     }
 
     #[test]
