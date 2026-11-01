@@ -248,6 +248,15 @@ where
         )
     }
 
+    fn incoming_adjacency_key(&self, node: u64) -> UnitKey {
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::IncomingAdjacency,
+            any_key(NodeKey(node)),
+        )
+    }
+
     /// Reads the graph's topology.
     #[must_use]
     pub fn topology(&self) -> GraphTopology {
@@ -352,6 +361,24 @@ where
         }
         let value: Vec<(u64, u64)> = read_unit_value(self.adjacency_key(node), |content| {
             Some(adjacency_of(&(self.content)(content), node))
+        });
+        value
+    }
+
+    /// Reads the incoming adjacency of one node as `(edge, source)` pairs.
+    #[must_use]
+    pub fn incoming(&self, node: u64) -> Vec<(u64, u64)> {
+        if reactive_runtime::helpers::field_is_keyed(self.view, self.field) {
+            return self
+                .topology()
+                .edges
+                .iter()
+                .filter(|(_, (_, to))| *to == node)
+                .map(|(edge, (from, _))| (*edge, *from))
+                .collect();
+        }
+        let value: Vec<(u64, u64)> = read_unit_value(self.incoming_adjacency_key(node), |content| {
+            Some(incoming_adjacency_of(&(self.content)(content), node))
         });
         value
     }
@@ -500,6 +527,15 @@ where
         )
     }
 
+    fn incoming_adjacency_key(&self, node: u64) -> UnitKey {
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::IncomingAdjacency,
+            any_key(NodeKey(node)),
+        )
+    }
+
     fn mark_dirty(&mut self, node: u64) {
         if !self.dirty.contains(&node) {
             self.dirty.push(node);
@@ -611,6 +647,8 @@ where
         for node in self.dirty.clone() {
             let adjacency = adjacency_of(self.storage, node);
             self.edit.set(self.adjacency_key(node), adjacency);
+            let incoming = incoming_adjacency_of(self.storage, node);
+            self.edit.set(self.incoming_adjacency_key(node), incoming);
         }
     }
 }
@@ -633,6 +671,17 @@ fn topology_of<N, E>(storage: &GraphStore<N, E>) -> GraphTopology {
             .map(|(id, edge)| (id, (edge.from, edge.to)))
             .collect(),
     }
+}
+
+fn incoming_adjacency_of<N, E>(storage: &GraphStore<N, E>, node: u64) -> Vec<(u64, u64)> {
+    storage
+        .incoming(node)
+        .map(|edges| {
+            edges
+                .filter_map(|edge| storage.edge(edge).map(|payload| (edge, payload.from)))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn adjacency_of<N, E>(storage: &GraphStore<N, E>, node: u64) -> Vec<(u64, u64)> {

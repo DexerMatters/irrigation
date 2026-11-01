@@ -5439,3 +5439,61 @@ fn a_per_key_observer_completes_before_the_whole_view_is_rematerialized() {
         "a source-only entry observer must not rematerialize the root"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Incoming adjacency (N18)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct IncomingGraph {
+    edges: Graph<u64, u64>,
+}
+
+#[reactive]
+mod incoming_adjacency_gate {
+    use super::IncomingGraph;
+
+    #[component]
+    pub fn root(graph: &IncomingGraph) -> Vec<(u64, u64)> {
+        let edges = graph.edges();
+        edges.incoming(2)
+    }
+}
+
+#[test]
+fn graph_incoming_adjacency_is_indexed_per_node() {
+    let runtime = Runtime::new();
+    runtime
+        .install(incoming_adjacency_gate::Root)
+        .expect("install");
+    let first = runtime
+        .edit(|edit| {
+            let mut graph = edit.view::<IncomingGraph>();
+            let mut edges = graph.edges();
+            let first = edges.add_edge(1, 2, 7);
+            let _ = edges.add_edge(3, 2, 8);
+            let _ = edges.add_edge(2, 4, 9);
+            first
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs::<incoming_adjacency_gate::Root>()
+            .expect("read"),
+        vec![(first, 1), (first + 1, 3)]
+    );
+
+    runtime
+        .edit(|edit| {
+            let mut graph = edit.view::<IncomingGraph>();
+            let mut edges = graph.edges();
+            edges.remove_edge(first);
+        })
+        .expect("remove");
+    assert_eq!(
+        runtime
+            .read_outputs::<incoming_adjacency_gate::Root>()
+            .expect("read"),
+        vec![(first + 1, 3)]
+    );
+}

@@ -513,10 +513,10 @@ retirement, output transaction atomicity).
 - **N17 Diagnostics.** `DuplicateDefinition { unit, first, second }` carries
   labels (`&'static str`), not the two source locations §2.2 asks for; cycle
   errors carry node/task ids, not invocation paths.
-- **N18 Incoming adjacency.** `GraphStore` maintains `incoming`, and
-  `remove_node` uses it, but `GraphRef` has no incoming read and the editor
-  stages only outgoing adjacency units (§5.6 says maintain both indexed
-  adjacencies).
+- **N18 Incoming adjacency.** Resolved: source editors stage a per-node
+  `IncomingAdjacency` unit alongside outgoing adjacency, `GraphRef::incoming`
+  reads it (or computes it from the topology for keyed derived graphs), and
+  `graph_incoming_adjacency_is_indexed_per_node` covers updates and removal.
 - **N19 Fixed-point resets.** The solver recomputes from scratch on any input
   change (conservative and sound), but a reset is not reported as a cost/event
   and there is no SCC localization (§9.5: "a whole-SCC reset is a possible worst

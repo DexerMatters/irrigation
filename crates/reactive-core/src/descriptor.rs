@@ -138,6 +138,8 @@ pub enum UnitKind {
     Rank,
     /// An adjacency index such as `graph.neighbors(v)`.
     Adjacency,
+    /// An incoming adjacency index such as `graph.incoming(v)`.
+    IncomingAdjacency,
     /// The View's whole immutable content, used by snapshots and iteration.
     Content,
 }
