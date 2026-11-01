@@ -332,3 +332,186 @@ fn randomized_join_edits_match_the_from_scratch_oracle() {
         assert_eq!(snapshot, expected_snapshot, "target at step {step}");
     }
 }
+
+#[view(source)]
+pub struct DiffGraph {
+    graph: Graph<u64, u64>,
+}
+
+#[reactive]
+mod diff_graph {
+    use super::DiffGraph;
+
+    #[component]
+    pub fn root(graph: &DiffGraph) -> Vec<u64> {
+        let g = graph.graph();
+        let nodes = g.nodes();
+        let edges = g.edges();
+        let outgoing: Vec<u64> = nodes.iter().copied().flat_map(|node| {
+            g.outgoing(node)
+                .into_iter()
+                .flat_map(move |(edge, to)| [node, edge, to])
+        }).collect();
+        let incoming: Vec<u64> = nodes.iter().copied().flat_map(|node| {
+            g.incoming(node)
+                .into_iter()
+                .flat_map(move |(edge, from)| [node, edge, from])
+        }).collect();
+        [nodes.clone(), edges, outgoing, incoming].concat()
+    }
+}
+
+struct GraphModel {
+    nodes: std::collections::BTreeSet<u64>,
+    edges: std::collections::BTreeMap<u64, (u64, u64, u64)>,
+    next_edge: u64,
+}
+
+impl GraphModel {
+    fn summary(&self) -> Vec<u64> {
+        let mut out: Vec<u64> = self.nodes.iter().copied().collect();
+        out.extend(self.edges.keys().copied());
+        for node in &self.nodes {
+            for (edge, (from, to, _)) in &self.edges {
+                if from == node {
+                    out.extend([*node, *edge, *to]);
+                }
+            }
+            for (edge, (from, to, _)) in &self.edges {
+                if to == node {
+                    out.extend([*node, *edge, *from]);
+                }
+            }
+        }
+        out
+    }
+}
+
+#[test]
+fn randomized_graph_edits_match_the_from_scratch_oracle() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let runtime = Runtime::new();
+    runtime.install(diff_graph::Root).expect("install");
+    let mut model = GraphModel {
+        nodes: BTreeSet::new(),
+        edges: BTreeMap::new(),
+        next_edge: 0,
+    };
+    let mut rng = reactive_test::Lcg::new(0x6a_9f);
+    for step in 0..200 {
+        let node = rng.below(6) as u64;
+        let payload = rng.below(100) as u64;
+        let op = rng.below(5);
+        eprintln!(
+            "step {step}: op {op} node {node} payload {payload} model {:?} edges {:?}",
+            model.nodes, model.edges
+        );
+        match op {
+            0 => {
+                model.nodes.insert(node);
+                runtime
+                    .edit(|edit| {
+                        let mut graph = edit.view::<DiffGraph>();
+                        let mut g = graph.graph();
+                        g.add_node(node, payload);
+                    })
+                    .expect("add node");
+            }
+            1 if !model.nodes.is_empty() => {
+                model.nodes.remove(&node);
+                model.edges.retain(|_, (from, to, _)| *from != node && *to != node);
+                runtime
+                    .edit(|edit| {
+                        let mut graph = edit.view::<DiffGraph>();
+                        let mut g = graph.graph();
+                        g.remove_node(node);
+                    })
+                    .expect("remove node");
+            }
+            2 if model.nodes.len() >= 2 => {
+                let from = *model.nodes.iter().next().unwrap();
+                let to = *model.nodes.iter().next_back().unwrap();
+                let edge = model.next_edge;
+                model.next_edge += 1;
+                model.edges.insert(edge, (from, to, payload));
+                let actual = runtime
+                    .edit(|edit| {
+                        let mut graph = edit.view::<DiffGraph>();
+                        let mut g = graph.graph();
+                        g.add_edge(from, to, payload)
+                    })
+                    .expect("add edge");
+                assert_eq!(actual, edge);
+            }
+            3 if !model.edges.is_empty() => {
+                let edge = *model.edges.keys().next().unwrap();
+                model.edges.remove(&edge);
+                runtime
+                    .edit(|edit| {
+                        let mut graph = edit.view::<DiffGraph>();
+                        let mut g = graph.graph();
+                        g.remove_edge(edge);
+                    })
+                    .expect("remove edge");
+            }
+            4 if !model.edges.is_empty() => {
+                let edge = *model.edges.keys().next().unwrap();
+                if let Some((_, _, value)) = model.edges.get_mut(&edge) {
+                    *value = payload;
+                }
+                runtime
+                    .edit(|edit| {
+                        let mut graph = edit.view::<DiffGraph>();
+                        let mut g = graph.graph();
+                        g.set_edge(edge, payload);
+                    })
+                    .expect("set edge");
+            }
+            _ => {}
+        }
+        let actual = runtime
+            .read_outputs::<diff_graph::Root>()
+            .expect("read");
+        assert_eq!(actual, model.summary(), "step {step}");
+    }
+}
+
+#[reactive]
+mod diff_edge_count {
+    use super::DiffGraph;
+
+    #[component]
+    pub fn root(graph: &DiffGraph) -> u64 {
+        graph.graph().edges().len() as u64
+    }
+}
+
+#[test]
+fn a_graph_edge_between_existing_nodes_is_visible() {
+    let runtime = Runtime::new();
+    runtime.install(diff_graph::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut graph = edit.view::<DiffGraph>();
+            let mut g = graph.graph();
+            g.add_node(2, 20);
+            g.add_node(4, 40);
+        })
+        .expect("nodes");
+    assert_eq!(
+        runtime.read_outputs::<diff_graph::Root>().expect("read"),
+        vec![2, 4]
+    );
+    let edge = runtime
+        .edit(|edit| {
+            let mut graph = edit.view::<DiffGraph>();
+            let mut g = graph.graph();
+            g.add_edge(2, 4, 49)
+        })
+        .expect("edge");
+    assert_eq!(
+        runtime.read_outputs::<diff_graph::Root>().expect("read"),
+        vec![2, 4, edge, 2, edge, 4, 4, edge, 2]
+    );
+}

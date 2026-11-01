@@ -174,6 +174,17 @@ impl Lowerer {
     fn stmt(&mut self, stmt: &Stmt, is_tail: bool) -> TokenStream {
         match stmt {
             Stmt::Local(local) => {
+                if let syn::Pat::Ident(binding) = &local.pat {
+                    if binding.mutability.is_some() {
+                        return self
+                            .error(
+                                &local.pat,
+                                "`let mut` is not supported in a component body; build the value \
+                                 functionally instead",
+                            )
+                            .tokens;
+                    }
+                }
                 let pat = &local.pat;
                 let Some(init) = &local.init else {
                     return quote!(let #pat;);

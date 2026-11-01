@@ -422,6 +422,22 @@ mod tests {
     }
 
     #[test]
+    fn mutable_locals_are_rejected() {
+        let tokens = expand_component(
+            quote!(),
+            quote!(fn c(x: u64) -> u64 {
+                let mut out = Vec::new();
+                out.push(x);
+                out.len() as u64
+            }),
+        );
+        assert!(
+            tokens.to_string().contains("let mut"),
+            "mutable locals must be rejected instead of silently losing writes"
+        );
+    }
+
+    #[test]
     fn components_are_permissive_by_default() {
         let tokens = expand_component(quote!(), quote!(fn c(x: u64) -> u64 { helper(x) }));
         assert!(!tokens.to_string().contains("opaque call"));
