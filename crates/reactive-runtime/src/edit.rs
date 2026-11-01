@@ -257,7 +257,12 @@ impl Edit {
         state.pending_conflicts.clear();
         self.inner.publish_revision(revision);
         state.stats.revisions.fetch_add(1, Ordering::Relaxed);
+        let started = std::time::Instant::now();
         invalidate(&mut state, changed, revision);
+        state
+            .stats
+            .invalidation_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         Ok(true)
     }
 }

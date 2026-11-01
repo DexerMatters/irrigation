@@ -512,6 +512,8 @@ pub struct Stats {
     pub revisions: std::sync::atomic::AtomicU64,
     /// Nodes marked suspect by invalidation.
     pub invalidations: std::sync::atomic::AtomicU64,
+    /// Nanoseconds spent marking invalidation cones.
+    pub invalidation_ns: std::sync::atomic::AtomicU64,
     /// Automatic collections triggered on demand entry.
     pub auto_collects: std::sync::atomic::AtomicU64,
     /// Site nodes created on first interning.

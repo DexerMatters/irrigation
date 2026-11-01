@@ -3121,6 +3121,16 @@ fn invalidation_cost_is_counted() {
         after,
         "a no-op transaction must not invalidate"
     );
+
+    for mode in 0..8 {
+        runtime
+            .edit(|edit| edit.view::<StructureMode>().set_mode(mode % 2))
+            .expect("edit");
+    }
+    assert!(
+        runtime.stats().invalidation_ns > 0,
+        "invalidation time must be recorded"
+    );
 }
 
 // ---------------------------------------------------------------------------

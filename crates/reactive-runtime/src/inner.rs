@@ -842,7 +842,12 @@ impl Inner {
             self.retire_unreachable(&mut state, retired, revision, &mut changed_nodes);
         }
         if !changed_nodes.is_empty() {
+            let started = std::time::Instant::now();
             invalidate(&mut state, changed_nodes, revision);
+            state.stats.invalidation_ns.fetch_add(
+                started.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         let mut waiters = Self::wake_waiters(&mut state, node);
         drop(state);

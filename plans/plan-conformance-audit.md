@@ -507,9 +507,10 @@ retirement, output transaction atomicity).
 - **N15 Explainability.** `explain_node` gives dependency versions and suspect
   flags; it cannot answer "validated vs executed", "where identity reuse
   failed", or "what blocks progress/forms a cycle" (§11.6).
-- **N16 Invalidation cost.** `invalidate` marks the cone suspect but records no
-  count/time; `RuntimeStats` has executions/validations/revisions only (§8.4
-  asks to record that cost separately).
+- **N16 Invalidation cost.** Resolved: `RuntimeStats`/`Explain` report the
+  number of nodes marked suspect (`invalidations`) and the nanoseconds spent
+  marking cones (`invalidation_ns`); `invalidation_cost_is_counted` covers both,
+  including the no-op case.
 - **N17 Diagnostics.** `DuplicateDefinition { unit, first, second }` carries
   labels (`&'static str`), not the two source locations §2.2 asks for; cycle
   errors carry node/task ids, not invocation paths.
