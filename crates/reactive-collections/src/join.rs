@@ -42,6 +42,34 @@ pub trait JoinSpec: Send + Sync + 'static {
     fn right() -> (ViewId, FieldId);
     /// Combines the two sides for one key.
     fn combine(left: &Self::Left, right: &Self::Right) -> Self::Joined;
+
+    /// Optional map View that receives one entry per joined key.
+    ///
+    /// The target View must be registered before the join is demanded (for
+    /// example with `Runtime::register_view`). The whole-map output is always
+    /// produced, so callers that do not opt in are unaffected.
+    fn target() -> Option<(ViewId, FieldId)> {
+        None
+    }
+}
+
+/// Stages one definition per joined key on the optional target View.
+fn publish<S: JoinSpec>(cx: &mut GeneralCx, joined: &BTreeMap<S::Key, S::Joined>) {
+    let Some((view, field)) = S::target() else {
+        return;
+    };
+    for (key, value) in joined {
+        cx.define(
+            UnitKey::entity(
+                view,
+                field,
+                reactive_core::descriptor::UnitKind::Value,
+                any_key(key.clone()),
+            ),
+            value.clone(),
+            "equi_join",
+        );
+    }
 }
 
 fn membership(
@@ -224,6 +252,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
                 refresh_key::<S>(cx, &mut state, key)?;
             }
         }
+        publish::<S>(cx, &state.joined);
         Ok((state.clone(), state.joined))
     }
 
@@ -279,6 +308,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
                     refresh_key::<S>(cx, &mut state, key)?;
                 }
             }
+            publish::<S>(cx, &state.joined);
             return Ok((state.clone(), state.joined));
         }
         let (left_view, left_field) = S::left();
@@ -298,6 +328,7 @@ impl<S: JoinSpec> GeneralComponent for EquiJoin<S> {
             };
             refresh_key::<S>(cx, &mut state, key)?;
         }
+        publish::<S>(cx, &state.joined);
         Ok((state.clone(), state.joined))
     }
 }

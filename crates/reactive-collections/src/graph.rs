@@ -323,6 +323,17 @@ where
         self.edge(edge).map(|edge| edge.value)
     }
 
+    /// Defines a map entry per node from this graph's payloads.
+    ///
+    /// The target map keeps one key per node; a removed node retracts its entry.
+    pub fn node_map(&self, target: &crate::map::MapRef<u64, N>) {
+        for node in self.nodes() {
+            if let Some(payload) = self.node(node) {
+                target.define(node, payload, "graph_node_map");
+            }
+        }
+    }
+
     /// Reads the outgoing adjacency of one node as `(edge, target)` pairs.
     ///
     /// Derived graphs compute it from the topology unit, so an edge edit

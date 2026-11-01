@@ -532,17 +532,21 @@ family into another, preserving per-key identity
 Derived graphs are supported: `define_graph` stages node payloads, edge payloads
 and a topology draft; node removal retracts incident edges; derived adjacency is
 computed from the topology unit; source graphs keep per-node adjacency units
-(`derived_graph_topology_and_payloads_are_separate`). Join-as-View,
-`Graph::node_map`/`Tree::flatten_map`, and per-key `GeneralComponent` outputs
-remain.
+(`derived_graph_topology_and_payloads_are_separate`). The join can publish a
+per-key target map through `JoinSpec::target` while keeping its whole-map output
+(`join_view_updates_only_changed_keys`), and `Graph::node_map` defines one map
+entry per node (`graph_node_map_updates_one_node`). Per-key `GeneralComponent`
+output uses the same `GeneralCx::define` path the join exercises.
+`Tree::flatten_map` remains.
 
-1. **Join as a View.** Publish joined keys through the keyed map protocol
-   (Phase 2), keeping the whole `BTreeMap` output for existing callers.
+1. **Join as a View.** Done: `JoinSpec::target` names an optional map View that
+   receives one entry per joined key; the whole `BTreeMap` output is unchanged.
+   The target View must be registered before the join is demanded.
 2. **Derived graphs.** Topology draft plus node/edge payload drafts, adjacency
    maintenance, and edge retraction on node removal. Derived `Reduced` defines
    its sequence unit. Derived trees remain rejected (documented).
 3. **Cross-family operators with identity:** `Map::to_list(key_fn)`,
-   `List::to_map(key_fn)`, `Graph::node_map()`, `Tree::flatten_map()`, each
+   `List::to_map(key_fn)`, `Graph::node_map()` are done; `Tree::flatten_map()`, each
    defining a keyed View so downstream per-key work survives an upstream
    value edit. These are the first APIs that make I6 checkable across families.
 4. **GeneralComponent outputs.** A typed output transaction that can stage

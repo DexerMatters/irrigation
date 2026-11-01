@@ -3992,3 +3992,193 @@ fn derived_graph_topology_and_payloads_are_separate() {
     );
     assert!(topology_version(&runtime) > before);
 }
+
+// ---------------------------------------------------------------------------
+// Per-key join View and Graph::node_map (Phase 3)
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct JoinTarget(Map<u32, u64>);
+
+struct TargetJoin;
+
+impl reactive::JoinSpec for TargetJoin {
+    type Key = u32;
+    type Left = u64;
+    type Right = u64;
+    type Joined = u64;
+
+    fn left() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <LeftTable as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn right() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <RightTable as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn combine(left: &u64, right: &u64) -> u64 {
+        left * right
+    }
+
+    fn target() -> Option<(reactive::ViewId, reactive::FieldId)> {
+        Some((
+            <JoinTarget as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        ))
+    }
+}
+
+#[test]
+fn join_view_updates_only_changed_keys() {
+    let runtime = Runtime::new();
+    runtime.register_view(<LeftTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<RightTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<JoinTarget as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<TargetJoin>::new())
+        .expect("install");
+    runtime
+        .edit(|edit| {
+            {
+                let mut l = edit.view::<LeftTable>();
+                let mut entries = l.entries();
+                entries.insert(1, 10);
+                entries.insert(2, 20);
+            }
+            let mut r = edit.view::<RightTable>();
+            let mut entries = r.entries();
+            entries.insert(1, 2);
+            entries.insert(2, 3);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<TargetJoin>>()
+            .expect("join"),
+        [(1, 20), (2, 60)].into_iter().collect()
+    );
+    assert_eq!(
+        runtime.snapshot().view::<JoinTarget>().field0(),
+        vec![(1, 20), (2, 60)]
+    );
+
+    runtime
+        .edit(|edit| {
+            let mut l = edit.view::<LeftTable>();
+            let mut entries = l.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    let revision = runtime.revision();
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<TargetJoin>>()
+            .expect("join"),
+        [(1, 22), (2, 60)].into_iter().collect()
+    );
+    assert_eq!(
+        runtime.snapshot().view::<JoinTarget>().field0(),
+        vec![(1, 22), (2, 60)]
+    );
+    let view = format!("{:?}", <JoinTarget as reactive::ViewSchema>::DESCRIPTOR.id);
+    let unit = |id: &str| {
+        runtime
+            .dump()
+            .into_iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node.unit.as_deref().is_some_and(|unit| {
+                        unit.contains(&view)
+                            && unit.contains("Value")
+                            && unit.contains(id)
+                    })
+            })
+            .expect("target value unit")
+    };
+    assert_eq!(unit("Some(\"1\")").changed_at, revision);
+    assert!(unit("Some(\"2\")").changed_at < revision);
+}
+
+#[view(derived)]
+pub struct GraphNodeMap(Map<u64, u64>);
+
+#[reactive]
+mod graph_node_map_gate {
+    use super::{DerivedGraph, GraphMode, GraphNodeMap};
+
+    #[component]
+    pub fn root(mode: &GraphMode) -> (Vec<(u64, u64)>, Option<u64>, Option<u64>) {
+        reactive::ensure_view(<GraphNodeMap as reactive::ViewSchema>::DESCRIPTOR);
+        if mode.mode() == 1 {
+            DerivedGraph.define_graph(
+                &[(1u64, 11u64), (2, 20)],
+                &[(10u64, 1, 2, 100u64)],
+            );
+        } else if mode.mode() == 2 {
+            DerivedGraph.define_graph(&[(1u64, 10u64)], &[]);
+        } else {
+            DerivedGraph.define_graph(
+                &[(1u64, 10u64), (2, 20)],
+                &[(10u64, 1, 2, 100u64)],
+            );
+        }
+        let target = GraphNodeMap.field0();
+        DerivedGraph.field0().node_map(&target);
+        (target.to_vec(), target.get(&1), target.get(&2))
+    }
+}
+
+#[test]
+fn graph_node_map_updates_one_node() {
+    let runtime = Runtime::new();
+    runtime.install(graph_node_map_gate::Root).expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs::<graph_node_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 10), (2, 20)], Some(10), Some(20))
+    );
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(1))
+        .expect("edit");
+    let revision = runtime.revision();
+    assert_eq!(
+        runtime
+            .read_outputs::<graph_node_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 11), (2, 20)], Some(11), Some(20))
+    );
+    let view = format!("{:?}", <GraphNodeMap as reactive::ViewSchema>::DESCRIPTOR.id);
+    let unit = |id: &str| {
+        runtime
+            .dump()
+            .into_iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node.unit.as_deref().is_some_and(|unit| {
+                        unit.contains(&view)
+                            && unit.contains("Value")
+                            && unit.contains(id)
+                    })
+            })
+            .expect("node-map value unit")
+    };
+    assert_eq!(unit("Some(\"1\")").changed_at, revision);
+    assert!(unit("Some(\"2\")").changed_at < revision);
+
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(2))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<graph_node_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 10)], Some(10), None)
+    );
+}
