@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 reactive-core.workspace = true
 reactive-store.workspace = true
+
+[dev-dependencies]
+reactive-test.workspace = true

@@ -609,7 +609,9 @@ test (`randomized_filter_edits_match_the_from_scratch_oracle`) exercises the
 per-identity `filter` operator over a keyed derived list under random list
 edits, and a randomized flat-map test
 (`randomized_flat_map_edits_match_the_from_scratch_oracle`) checks the
-per-identity `flat_map` operator. Schedule-perturbation
+per-identity `flat_map` operator. The fixed-point solver is checked by
+`fixed_point::tests::randomized_reachability_matches_bfs` over 200 random
+edge sets and seeds. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before

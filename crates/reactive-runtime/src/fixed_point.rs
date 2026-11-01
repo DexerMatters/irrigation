@@ -241,6 +241,32 @@ mod tests {
     }
 
     #[test]
+    fn randomized_reachability_matches_bfs() {
+        let mut rng = reactive_test::Lcg::new(0x0f_19);
+        for case in 0..200 {
+            let edge_count = rng.below(24);
+            let edges: Vec<(u32, u32)> = (0..edge_count)
+                .map(|_| (rng.below(8) as u32, rng.below(8) as u32))
+                .collect();
+            let seed_count = rng.below(3);
+            let seeds: Vec<u32> = (0..seed_count)
+                .map(|_| rng.below(8) as u32)
+                .collect();
+            let problem = Reachability {
+                edges: edges.clone(),
+                seeds: seeds.clone(),
+            };
+            let fixed = solve(&problem).expect("converges");
+            let reached: BTreeSet<u32> = fixed.non_bottom().into_iter().collect();
+            assert_eq!(
+                reached,
+                reachable_from_scratch(&edges, &seeds),
+                "case {case}"
+            );
+        }
+    }
+
+    #[test]
     fn deletions_are_handled_by_recomputation() {
         let with_edge = Reachability {
             edges: vec![(0, 1), (1, 2)],
