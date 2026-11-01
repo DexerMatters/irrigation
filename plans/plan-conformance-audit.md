@@ -92,7 +92,7 @@ C0 is complete.
 | N6 (partial) | `#[component(strict, allows = [path, ...])]` rejects undeclared free-function calls with a diagnostic; declared primitives are allowed; the default remains permissive for migration | `strict_components_reject_undeclared_calls`, `strict_components_allow_declared_primitives`, `a_strict_component_runs_a_declared_primitive` (method calls, IO, and hidden mutation still unchecked) |
 | N14/C3 (partial) | `GeneralCx` gains dependency scopes (`begin_scope`/`end_scope`/`retain`, retired-scope notification filtering), a typed `OutputTxn` (`define`/`field`/`entry`/`membership`), `observe` to retain dependencies without re-reading values, a typed component layer (`TypedGeneralComponent` with `Inputs`/`Params`/`Returns`), an async driver that completes pending futures by parking/waking the demanding thread, awaitable unit receipts (`request`/`request_typed` with registered wakers), and a local executor for non-`Send` state (`LocalGeneralComponent` with a workerless owner-thread runtime) | `retired_dependency_scopes_filter_notifications`, `typed_general_components_publish_typed_returns`, `pending_component_futures_are_driven_to_completion`, `request_receipts_are_awaitable`, `local_components_keep_non_send_state` (pooled request awaits suspend the task and yield the worker; inline demands and non-request external futures still park, dispatcher-issued output capabilities still open) |
 | §5.5 bag join | `EquiJoin` with `i64` sides is a bilinear bag join over signed weights; updates retain untouched keys' dependencies and retract removed keys from the target | `signed_weight_join_applies_the_bilinear_rule` (phase-4 progress gate and external baselines still open) |
-| N15 (partial) | `Runtime::wait_edges` exposes the wait graph, `wait_cycles` reports the node cycles, `RuntimeStats`/`Explain` count site identity creations and reuses, and `Explanation` exposes each node's scope, site, and scope ancestry | `site_identity_reuse_is_counted`, `wait_cycles_reports_a_task_cycle`, `explanations_expose_scope_identity` (failure-specific identity diagnosis still open) |
+| N15 | `Runtime::wait_edges` exposes the wait graph, `wait_cycles` reports node cycles, `RuntimeStats`/`Explain`/`IdentityReport` count site identity creations and reuses with live scope/unit/invocation counts, `Explanation` exposes scope/site/ancestry, and `is_live` detects stale node ids | `site_identity_reuse_is_counted`, `wait_cycles_reports_a_task_cycle`, `explanations_expose_scope_identity`, `identity_report_summarizes_reuse` |
 | N19 (partial) | `FixedPoint::contributions` reports the work of a from-scratch reset | `fixed_point::tests::reachability_matches_a_from_scratch_traversal` (SCC localization still open) |
 | Phase 4 gate | Invocation churn is bounded by reachability: `collect` drops old invocation records and scopes; `RuntimeConfig::max_invocations` evicts the least recently used unreferenced entries | `argument_churn_stays_within_the_retention_policy`, `invocation_cap_bounds_the_cache` |
 | §12.1 differential testing | Randomized map and source-list edit sequences are checked after every step against from-scratch oracles | `randomized_map_edits_match_the_from_scratch_oracle`, `randomized_list_edits_match_the_from_scratch_oracle` |
@@ -614,9 +614,11 @@ per-identity `flat_map` operator. The fixed-point solver is checked by
 edge sets and seeds. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
-per configuration. Still open: a phase-4 gate for "downstream progress before
-unrelated upstream units finish" (needs body-level projection demand), and the
-external baselines, which remain unavailable offline.
+per configuration. The downstream-progress requirement is evidenced by
+`a_per_key_observer_completes_before_the_whole_view_is_rematerialized` (an
+entry observer completes without bringing the root up to date); full
+body-level projection demand (the N12 tail) remains an optimization, and
+external baselines remain unavailable offline.
 
 ## 5. Risks and ordering
 

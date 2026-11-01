@@ -100,6 +100,7 @@ impl ChangeBatch {
 pub struct GeneralCx {
     runtime: Arc<dyn RuntimeOps>,
     revision: Revision,
+    node_scope: reactive_core::ids::ScopeId,
     scope: Option<u64>,
     unit_scopes: HashMap<UnitKey, u64>,
     retained: HashSet<u64>,
@@ -114,10 +115,15 @@ impl std::fmt::Debug for GeneralCx {
 }
 
 impl GeneralCx {
-    pub(crate) fn new(runtime: Arc<dyn RuntimeOps>, revision: Revision) -> Self {
+    pub(crate) fn new(
+        runtime: Arc<dyn RuntimeOps>,
+        revision: Revision,
+        node_scope: reactive_core::ids::ScopeId,
+    ) -> Self {
         Self {
             runtime,
             revision,
+            node_scope,
             scope: None,
             unit_scopes: HashMap::new(),
             retained: HashSet::new(),
@@ -151,8 +157,27 @@ impl GeneralCx {
     }
 
     /// Starts a typed output transaction committed with the new state.
+    ///
+    /// The transaction carries the dispatcher-issued [`DefinitionCapability`]
+    /// for this computation; it cannot be constructed outside the runtime.
     pub fn output(&mut self) -> OutputTxn<'_> {
-        OutputTxn { cx: self }
+        OutputTxn {
+            capability: DefinitionCapability {
+                scope: self.node_scope,
+                _private: (),
+            },
+            cx: self,
+        }
+    }
+
+    fn define_capable<T: PartialEq + Send + Sync + 'static>(
+        &mut self,
+        _capability: &DefinitionCapability,
+        unit: UnitKey,
+        value: T,
+        label: &'static str,
+    ) {
+        self.define(unit, value, label);
     }
 
     /// Requests one unit as a future receipt.
@@ -327,9 +352,27 @@ impl<T: Clone + Send + Sync + 'static> std::future::Future for TypedRequest<'_, 
     }
 }
 
+/// A dispatcher-issued permission to stage output definitions.
+///
+/// The runtime creates the capability when it opens an output transaction; the
+/// private field prevents external construction.
+pub struct DefinitionCapability {
+    scope: reactive_core::ids::ScopeId,
+    _private: (),
+}
+
+impl std::fmt::Debug for DefinitionCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefinitionCapability")
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A typed transaction for publishing per-unit definitions.
 pub struct OutputTxn<'a> {
     cx: &'a mut GeneralCx,
+    capability: DefinitionCapability,
 }
 
 impl std::fmt::Debug for OutputTxn<'_> {
@@ -341,7 +384,8 @@ impl std::fmt::Debug for OutputTxn<'_> {
 impl OutputTxn<'_> {
     /// Defines one logical unit.
     pub fn define<T: PartialEq + Send + Sync + 'static>(&mut self, unit: UnitKey, value: T) {
-        self.cx.define(unit, value, "output");
+        self.cx
+            .define_capable(&self.capability, unit, value, "output");
     }
 
     /// Defines one scalar field of a View.

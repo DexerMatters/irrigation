@@ -629,7 +629,7 @@ impl Inner {
             cancel.clone(),
         ));
         let guard = FrameGuard::push(Arc::clone(&frame));
-        let mut cx = crate::general::GeneralCx::new(self.arc(), revision);
+        let mut cx = crate::general::GeneralCx::new(self.arc(), revision, scope);
         let use_update = general.policy() == crate::general::DependencyUpdates::Incremental
             && old_state.is_some();
         let result = catch_engine(|| match (&old_state, use_update) {

@@ -43,14 +43,16 @@ pub use reactive_runtime::helpers::{
 pub use reactive_runtime::Param;
 pub use reactive_runtime::{
     AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
-    GeneralComponent, GeneralCx, GeneralInputs, LocalAdapter, LocalGeneralComponent, Request,
+    DefinitionCapability, GeneralComponent, GeneralCx, GeneralInputs, LocalAdapter,
+    LocalGeneralComponent, Request,
     TypedAdapter, TypedGeneralComponent, TypedRequest, drive as drive_future,
 };
 pub use reactive_runtime::fixed_point::{
     FixedPoint, FixedPointProblem, Lattice, solve as solve_fixed_point,
 };
 pub use reactive_runtime::{
-    ComponentSpec, DerivedView, Edit, EditableView, Explain, RecipeSelector, RootComponent,
+    ComponentSpec, DerivedView, Edit, EditableView, Explain, IdentityReport, RecipeSelector,
+    RootComponent,
     RouteSelector, RoutingRecipe, RoutingStamp, Runtime, RuntimeConfig,
     DependencyExplanation, Explanation, MemoryReport, ReclaimStats, RuntimeStats, Snapshot,
     TaskCounts,

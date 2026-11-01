@@ -6009,3 +6009,26 @@ fn routing_recipes_select_their_provider() {
         "the recipe keeps its provider"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Aggregate identity diagnostics (C4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn identity_report_summarizes_reuse() {
+    let runtime = Runtime::new();
+    runtime.install(churn::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<ChurnKey>().set_value(1))
+        .expect("seed");
+    let _ = runtime.read_outputs::<churn::Root>().expect("read");
+    let _ = runtime.read_outputs::<churn::Root>().expect("read");
+    let report = runtime.identity_report();
+    assert!(report.site_creations > 0);
+    assert!(report.site_reuses > 0);
+    assert!(report.scopes >= 1);
+    assert!(report.regions >= 1);
+    assert!(report.unit_nodes >= 1);
+    assert_eq!(report.site_reuses, runtime.stats().site_reuses);
+    assert_eq!(report.invocations, runtime.memory_report().invocations);
+}

@@ -749,6 +749,21 @@ impl Runtime {
         self.inner.provider_of(unit)
     }
 
+    /// Reports aggregate identity and reuse diagnostics.
+    #[must_use]
+    pub fn identity_report(&self) -> IdentityReport {
+        let state = self.inner.lock();
+        IdentityReport {
+            site_creations: state.stats.site_creations.load(Ordering::Relaxed),
+            site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
+            scopes: state.scopes.len(),
+            invocations: state.invocations.values().map(Vec::len).sum(),
+            invocations_evicted: state.stats.invocations_evicted.load(Ordering::Relaxed),
+            unit_nodes: state.units.len(),
+            regions: state.regions.len(),
+        }
+    }
+
     /// Captures the current provider recipe for one View region.
     #[must_use]
     pub fn routing_recipe(
@@ -1121,6 +1136,25 @@ pub trait RouteSelector: Send + Sync + 'static {
         first: reactive_core::ids::NodeId,
         second: reactive_core::ids::NodeId,
     ) -> reactive_core::ids::NodeId;
+}
+
+/// Aggregate identity diagnostics for a runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IdentityReport {
+    /// Site nodes interned for the first time.
+    pub site_creations: u64,
+    /// Site-node lookups that reused an existing identity.
+    pub site_reuses: u64,
+    /// Live interned scopes.
+    pub scopes: usize,
+    /// Retained component invocations.
+    pub invocations: usize,
+    /// Invocations evicted by the cache cap.
+    pub invocations_evicted: u64,
+    /// Installed logical units.
+    pub unit_nodes: usize,
+    /// Registered View regions.
+    pub regions: usize,
 }
 
 /// A captured provider recipe for one View region.
