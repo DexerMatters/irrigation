@@ -133,6 +133,9 @@ pub fn values_equal<T: PartialEq + Any>(left: &Value, right: &Value) -> bool {
 /// component body still has a region to define units in.
 pub fn ensure_view(descriptor: &'static reactive_core::descriptor::ViewDescriptor) {
     if let Some(frame) = reactive_core::frame::current() {
+        frame
+            .runtime()
+            .declare_view(frame.scope(), descriptor.id);
         frame.runtime().register_view(descriptor);
     }
 }

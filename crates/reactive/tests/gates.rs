@@ -5677,3 +5677,82 @@ fn joining_two_empty_source_maps_is_empty() {
     assert!(joined.is_empty());
     assert!(runtime.snapshot().view::<JoinedWeights>().field0().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Definition capabilities: declared views (C2)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct CapFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct CapSlot(u64);
+
+#[reactive]
+mod cap_denied {
+    use super::{CapFlag, CapSlot};
+
+    #[component]
+    pub fn root(flag: &CapFlag) -> u64 {
+        let _ = flag.on();
+        let unit = reactive::UnitKey::field(
+            <CapSlot as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            reactive::UnitKind::Value,
+        );
+        reactive::define_unit(unit, 7u64, "manual");
+        0
+    }
+}
+
+#[reactive]
+mod cap_allowed {
+    use super::{CapFlag, CapSlot};
+
+    #[component]
+    pub fn root(flag: &CapFlag) -> u64 {
+        let _ = flag.on();
+        reactive::ensure_view(<CapSlot as reactive::ViewSchema>::DESCRIPTOR);
+        let unit = reactive::UnitKey::field(
+            <CapSlot as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            reactive::UnitKind::Value,
+        );
+        reactive::define_unit(unit, 7u64, "manual");
+        0
+    }
+}
+
+#[test]
+fn definitions_require_a_declared_view() {
+    let runtime = Runtime::new();
+    runtime.register_view(<CapSlot as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.install(cap_denied::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<CapFlag>().set_on(true))
+        .expect("seed");
+    match runtime.read_outputs::<cap_denied::Root>() {
+        Err(reactive::ComputeError::DefinitionDenied { reason, .. }) => {
+            assert!(
+                reason.contains("ensure_view"),
+                "the denial must name the missing declaration: {reason}"
+            );
+        }
+        other => panic!("expected a definition denial, got {other:?}"),
+    }
+
+    let runtime = Runtime::new();
+    runtime.register_view(<CapSlot as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.install(cap_allowed::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<CapFlag>().set_on(true))
+        .expect("seed");
+    assert_eq!(runtime.read_outputs::<cap_allowed::Root>().expect("read"), 0);
+    assert_eq!(
+        runtime.snapshot().view::<CapSlot>().field0(),
+        7,
+        "the declared definition commits"
+    );
+}

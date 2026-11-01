@@ -205,6 +205,15 @@ An undefined structure unit initializes from the family's structure projection
 snapshot over a source collection that has never been edited sees an empty
 structure instead of a type error.
 
+## Definition capabilities
+
+A computation may define units only in Views it has declared: `ensure_view`
+records the declaration on the current scope, and `install_definitions`
+rejects a draft whose View the provider's scope never declared
+(`DefinitionDenied`). The declarations are per-scope capabilities; `collect`
+prunes declarations of dead scopes. General components keep their privileged
+status (their Views are registered at install).
+
 ## Definition diagnostics
 
 Definition staging captures the caller location through `#[track_caller]` on the

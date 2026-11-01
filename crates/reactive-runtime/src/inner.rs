@@ -529,6 +529,7 @@ impl Inner {
                     value,
                     deps,
                     definitions,
+                    true,
                     None,
                     std::collections::HashMap::new(),
                     std::collections::HashSet::new(),
@@ -647,6 +648,7 @@ impl Inner {
                     output,
                     deps,
                     definitions,
+                    false,
                     Some(state),
                     unit_scopes,
                     retained_scopes,
@@ -749,6 +751,7 @@ impl Inner {
         value: Value,
         deps: Vec<Dep>,
         definitions: Vec<DefinitionDraft>,
+        enforce_views: bool,
         retained_state: Option<crate::general::ErasedState>,
         unit_scopes: std::collections::HashMap<UnitKey, u64>,
         retained_scopes: std::collections::HashSet<u64>,
@@ -790,7 +793,14 @@ impl Inner {
         }
         let mut changed_nodes = Vec::new();
         if let Err(error) =
-            self.install_definitions(&mut state, node, definitions, revision, &mut changed_nodes)
+            self.install_definitions(
+                &mut state,
+                node,
+                definitions,
+                revision,
+                enforce_views,
+                &mut changed_nodes,
+            )
         {
             drop(state);
             return self.fail(node, error, revision);
@@ -951,6 +961,7 @@ impl Inner {
         provider: NodeId,
         drafts: Vec<DefinitionDraft>,
         revision: Revision,
+        enforce_views: bool,
         changed_nodes: &mut Vec<NodeId>,
     ) -> Result<()> {
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
@@ -963,6 +974,20 @@ impl Inner {
                     unit: format!("{:?}", draft.unit),
                     reason: String::from("view is not registered"),
                 });
+            }
+            if enforce_views {
+                let declared = state
+                    .declared_views
+                    .get(&state.node(provider).scope)
+                    .is_some_and(|views| views.contains(&draft.unit.view));
+                if !declared {
+                    return Err(ComputeError::DefinitionDenied {
+                        unit: format!("{:?}", draft.unit),
+                        reason: String::from(
+                            "the provider did not declare this View (call `ensure_view` first)",
+                        ),
+                    });
+                }
             }
         }
         let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
@@ -2005,6 +2030,14 @@ impl RuntimeOps for Inner {
         pooled
     }
 
+    fn declare_view(&self, scope: ScopeId, view: ViewId) {
+        self.lock()
+            .declared_views
+            .entry(scope)
+            .or_default()
+            .insert(view);
+    }
+
     fn try_read_unit(
         &self,
         node: NodeId,
@@ -2338,6 +2371,9 @@ impl Inner {
             .iter()
             .map(|node| state.node(*node).scope)
             .collect();
+        state
+            .declared_views
+            .retain(|scope, _| live_scopes.contains(scope));
         let scopes_reclaimed = state.scopes.prune(&live_scopes);
         // Reclaimed slots stay allocated but become reusable; a later allocation
         // advances the slot generation so stale ids are detectable.
@@ -2571,6 +2607,7 @@ mod tests {
             value_of(1u32),
             Vec::new(),
             Vec::new(),
+            false,
             None,
             std::collections::HashMap::new(),
             std::collections::HashSet::new(),
@@ -2616,6 +2653,7 @@ mod tests {
             value_of(1u32),
             Vec::new(),
             Vec::new(),
+            false,
             None,
             std::collections::HashMap::new(),
             std::collections::HashSet::new(),

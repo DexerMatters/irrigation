@@ -89,6 +89,9 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// same demand; it never executes the observed node.
     fn observe(&self, node: NodeId) -> Result<()>;
 
+    /// Records that a computation in `scope` declared `view` for definitions.
+    fn declare_view(&self, scope: ScopeId, view: ViewId);
+
     /// Non-blocking unit read for a future receipt.
     ///
     /// Returns `Ready` when the unit can be served (certifying a clean value),

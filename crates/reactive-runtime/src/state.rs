@@ -581,6 +581,8 @@ pub struct State {
     pub next_task: TaskId,
     /// Next claim generation.
     pub next_generation: u64,
+    /// Views declared (via `ensure_view`) by each scope's computations.
+    pub declared_views: FxHashMap<ScopeId, std::collections::HashSet<ViewId>>,
     /// Reclaimed arena slots available for reuse.
     pub free_nodes: Vec<u32>,
     /// Revision of the last reclamation.
