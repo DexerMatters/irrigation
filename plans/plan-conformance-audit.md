@@ -604,7 +604,10 @@ from-scratch sum. A randomized keyed-list test
 push/remove/set edits through `SourceListRef::to_list` and checks per-member
 identity and values, and a randomized set test
 (`randomized_set_edits_match_the_from_scratch_oracle`) checks per-member
-membership reads after random insertions and retractions. Schedule-perturbation
+membership reads after random insertions and retractions. A randomized filter
+test (`randomized_filter_edits_match_the_from_scratch_oracle`) exercises the
+per-identity `filter` operator over a keyed derived list under random list
+edits. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before

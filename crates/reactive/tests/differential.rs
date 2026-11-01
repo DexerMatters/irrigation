@@ -800,3 +800,83 @@ fn randomized_set_edits_match_the_from_scratch_oracle() {
         assert_eq!(actual, expected, "step {step}");
     }
 }
+
+#[view(source)]
+pub struct FilterSource {
+    values: List<u64>,
+}
+
+#[view(derived)]
+pub struct FilterKeyed(List<u64>);
+
+#[reactive]
+mod filtered_values {
+    use super::{FilterKeyed, FilterSource};
+
+    #[component]
+    pub fn root(items: &FilterSource) -> Vec<u64> {
+        reactive::ensure_view(<FilterKeyed as reactive::ViewSchema>::DESCRIPTOR);
+        let source = items.values();
+        let keyed = FilterKeyed.field0();
+        source.to_list(&keyed, |id, value| Some((id, *value)));
+        keyed.filter(|value| *value % 2 == 0)
+    }
+}
+
+#[test]
+fn randomized_filter_edits_match_the_from_scratch_oracle() {
+    let runtime = Runtime::new();
+    runtime.install(filtered_values::Root).expect("install");
+    let mut model: Vec<(u64, u64)> = Vec::new();
+    let mut next_id = 1u64;
+    let mut rng = reactive_test::Lcg::new(0x0f_17);
+    for step in 0..150 {
+        match rng.below(3) {
+            0 | 2 => {
+                let value = rng.range(0, 50);
+                model.push((next_id, value));
+                next_id += 1;
+                runtime
+                    .edit(|edit| {
+                        let mut items = edit.view::<FilterSource>();
+                        let mut values = items.values();
+                        values.push(value);
+                    })
+                    .expect("push");
+            }
+            _ if !model.is_empty() => {
+                let index = rng.below(model.len());
+                if rng.one_in(2) {
+                    model.remove(index);
+                    runtime
+                        .edit(|edit| {
+                            let mut items = edit.view::<FilterSource>();
+                            let mut values = items.values();
+                            values.remove(index);
+                        })
+                        .expect("remove");
+                } else {
+                    let value = rng.range(0, 50);
+                    model[index].1 = value;
+                    runtime
+                        .edit(|edit| {
+                            let mut items = edit.view::<FilterSource>();
+                            let mut values = items.values();
+                            values.set(index, value);
+                        })
+                        .expect("set");
+                }
+            }
+            _ => {}
+        }
+        let expected: Vec<u64> = model
+            .iter()
+            .map(|(_, value)| *value)
+            .filter(|value| value % 2 == 0)
+            .collect();
+        let actual = runtime
+            .read_outputs::<filtered_values::Root>()
+            .expect("read");
+        assert_eq!(actual, expected, "step {step}");
+    }
+}
