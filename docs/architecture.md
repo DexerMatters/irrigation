@@ -174,6 +174,13 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Lowering vocabulary
+
+`reactive::plan` publishes the site/projection/generator vocabulary used to
+describe lowered components (`Site`, `SiteShape`, `Projection`, `Generator`).
+The compiler still lowers to direct builder calls; the vocabulary exists for
+diagnostics, tooling, and future backends.
+
 ## Explanation
 
 Every node records `executed_at` and `validated_at` separately, plus its

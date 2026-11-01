@@ -87,6 +87,7 @@ C0 is complete.
 | F9 | Unit-scoped and per-entry observers fire only for watched units | `a_per_key_observer_ignores_other_keys` |
 | F10 (partial) | `collect` prunes unreachable interned scopes; `memory_report` reports scopes and tasks | `collect_reclaims_unreachable_scopes` (arena slot reuse still open) |
 | N15 (partial) | Explanations carry `executed_at`/`validated_at`, scheduling state, waiter count, and `Explain::waiting_tasks` | `explanations_distinguish_validation_from_execution` (identity-reuse and cycle inspectors still open) |
+| N20 | `reactive-plan` is published through `reactive::plan` as the lowering vocabulary; the unused runtime dependency is removed | `the_plan_vocabulary_is_public` |
 | N21 | A two-sided join transaction is gated against the from-scratch join; the join can publish a per-key target map | `a_join_tracks_both_inputs_changing_in_one_transaction`, `join_view_updates_only_changed_keys` (bag-join semantics still open) |
 | F12/F13 | `TaskStatus::Done` removed; `MapRef::len/is_empty` read the structure map directly | covered by the existing map/join gates |
 
@@ -509,9 +510,9 @@ retirement, output transaction atomicity).
   change (conservative and sound), but a reset is not reported as a cost/event
   and there is no SCC localization (§9.5: "a whole-SCC reset is a possible worst
   case and must be reported as such").
-- **N20 `reactive-plan`.** A 134-line vocabulary crate that no crate `use`s, but
-  `reactive-runtime` and `reactive` declare it as a dependency. Either wire it
-  into diagnostics/descriptors or remove it.
+- **N20 `reactive-plan`.** Resolved: the vocabulary is re-exported as
+  `reactive::plan` for tooling and diagnostics, and `reactive-runtime` no longer
+  declares the unused dependency.
 - **N21 Join evidence.** The join gate changes one side per transaction; §13.3
   counterexample 5 explicitly requires a two-input change test. The operator is
   also a per-key value join, not the §5.5 bag join with signed weights.

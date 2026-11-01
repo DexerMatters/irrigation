@@ -28,6 +28,10 @@ pub use reactive_core::ids::{
 };
 pub use reactive_core::key::{AnyKey, any_key};
 pub use reactive_core::ops::{eval, scope};
+/// Lowering vocabulary (sites, projections, generators) for diagnostics and
+/// tooling. The compiler lowers to direct builder calls; this module names the
+/// pieces of that contract.
+pub use reactive_plan as plan;
 pub use reactive_core::value::{Value, value_of};
 pub use reactive_macros::{component, reactive, tree_view, view};
 pub use reactive_runtime::field::{

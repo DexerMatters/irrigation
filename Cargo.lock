@@ -136,7 +136,6 @@ name = "reactive-runtime"
 version = "0.1.0"
 dependencies = [
  "reactive-core",
- "reactive-plan",
  "reactive-store",
 ]
 

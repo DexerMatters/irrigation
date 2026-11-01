@@ -13,4 +13,3 @@ workspace = true
 [dependencies]
 reactive-core.workspace = true
 reactive-store.workspace = true
-reactive-plan.workspace = true

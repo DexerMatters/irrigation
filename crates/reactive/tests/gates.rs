@@ -4325,3 +4325,10 @@ fn explanations_distinguish_validation_from_execution() {
     assert_eq!(executed.validated_at, 3);
     assert_eq!(runtime.explain().waiting_tasks, 0);
 }
+
+#[test]
+fn the_plan_vocabulary_is_public() {
+    let site = reactive::plan::Site::new(reactive::SiteId(7), reactive::plan::SiteShape::Read);
+    assert_eq!(site.id, reactive::SiteId(7));
+    assert_eq!(format!("{:?}", site.shape), "Read");
+}
