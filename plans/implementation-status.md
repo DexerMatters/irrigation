@@ -187,6 +187,11 @@ implementation does not claim to eliminate.
 
 ## Next work, in plan order
 
+The audit of granularity between View families and the follow-up plan are in
+[`heterogeneous-granularity-plan.md`](heterogeneous-granularity-plan.md). It
+records the confirmed defects (derived-map structure unit, source-only
+observers, macro shapes) and the family matrix this list should be read against.
+
 1. External comparative baselines (Salsa, Differential Dataflow) where the
    crates are available; the workload matrix currently reports from-scratch and
    memoized baselines.

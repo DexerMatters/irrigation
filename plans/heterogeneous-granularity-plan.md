@@ -34,9 +34,11 @@ Granularity is exact when three separate contracts hold.
    identity survives, so per-entity work done downstream survives an upstream
    edit that does not change that occurrence.
 
-Today contract 1 holds for `get`/`contains` reads in every family, contract 2
-holds for maps but not for lists/sets (and not at all for graphs/reduced), and
-contract 3 does not exist. The asymmetry is the subject of this plan.
+Today contract 1 holds for `get`/`contains` reads in every family and for
+structure reads in source views; contract 2 holds for source collections and for
+map definitions, but derived lists and sets are whole-value and derived maps
+never write their structure; contract 3 does not exist. The asymmetry is the
+subject of this plan.
 
 The invariants the finished system should state and test:
 
