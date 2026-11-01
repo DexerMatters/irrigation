@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use reactive_core::error::Result;
+use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{Revision, ViewId};
 use reactive_core::value::{Value, value_of};
 use reactive_core::descriptor::{UnitKey, UnitKind};
@@ -165,7 +166,17 @@ impl Edit {
         let mut state = self.inner.lock();
         let revision: Revision = state.revision + 1;
         let mut changed = Vec::new();
-        for update in &self.updates {
+        // One transaction can write a unit more than once: a tree editor clears
+        // a node and reinstalls it. Only the final value counts, both for the
+        // published revision and for cutoff.
+        let mut last: FxHashMap<&UnitKey, usize> = FxHashMap::default();
+        for (index, update) in self.updates.iter().enumerate() {
+            last.insert(&update.key, index);
+        }
+        let mut order: Vec<usize> = last.into_values().collect();
+        order.sort_unstable();
+        for index in order {
+            let update = &self.updates[index];
             if update.key.kind == UnitKind::Content {
                 let node = match state.units.get(&update.key) {
                     Some(node) => *node,

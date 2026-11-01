@@ -7,6 +7,8 @@
 //!
 //! Run with `cargo run --example name_resolver -p reactive`.
 
+use std::time::Instant;
+
 use reactive::{Runtime, reactive, tree_view, view};
 
 #[tree_view(root = Document, view = Syntax)]
@@ -149,8 +151,16 @@ fn main() {
             edit.view::<ast::Syntax>().set_root(&document());
         })
         .expect("seed");
+
+    let cold = runtime.stats();
+    let started = Instant::now();
     println!("before:");
     let (symbols, diagnostics) = report(&runtime);
+    println!(
+        "  cold read: {} executions in {} us",
+        runtime.stats().executions - cold.executions,
+        started.elapsed().as_micros()
+    );
     assert_eq!(symbols, vec![String::from("x")]);
     assert_eq!(diagnostics, vec![String::from("unresolved name `y`")]);
 
@@ -158,6 +168,7 @@ fn main() {
     // node's identity, so only the resolver work that reads those names
     // re-executes.
     let before = runtime.stats().executions;
+    let started = Instant::now();
     runtime
         .edit(|edit| {
             let mut tree = edit.view::<ast::Syntax>();
@@ -175,7 +186,44 @@ fn main() {
     assert_eq!(symbols, vec![String::from("y")]);
     assert_eq!(diagnostics, vec![String::from("unresolved name `x`")]);
     println!(
-        "  node executions for the edit and the repair: {}",
-        runtime.stats().executions - before
+        "  edit and repair: {} executions in {} us",
+        runtime.stats().executions - before,
+        started.elapsed().as_micros()
     );
+
+    // The resolver never reads integer payloads: replacing one publishes a
+    // revision but executes no derived node.
+    let before = runtime.stats().executions;
+    let started = Instant::now();
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<ast::Syntax>();
+            let root = tree.root();
+            let items = root.items();
+            let value = items[0].value().expect("let value");
+            tree.replace_expr(value, &ast::Expr::Int(3));
+        })
+        .expect("edit");
+    println!("\nafter changing the unread integer payload:");
+    let (symbols, diagnostics) = report(&runtime);
+    let executions = runtime.stats().executions - before;
+    println!(
+        "  edit and repair: {executions} executions in {} us",
+        started.elapsed().as_micros()
+    );
+    assert_eq!(executions, 0, "an unread payload must execute nothing");
+    assert_eq!(symbols, vec![String::from("y")]);
+    assert_eq!(diagnostics, vec![String::from("unresolved name `x`")]);
+
+    let before = runtime.stats().executions;
+    let started = Instant::now();
+    let _ = runtime
+        .read_outputs::<resolver::NameResolver>()
+        .expect("warm read");
+    let executions = runtime.stats().executions - before;
+    println!(
+        "\nrepeat read at the same revision: {executions} executions in {} us",
+        started.elapsed().as_micros()
+    );
+    assert_eq!(executions, 0);
 }

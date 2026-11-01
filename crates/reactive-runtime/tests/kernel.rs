@@ -387,3 +387,30 @@ fn snapshot_content_is_pinned_to_its_revision() {
     let next = runtime.read().unwrap();
     assert_eq!(next.view::<SettingsView>().count, 9);
 }
+
+#[test]
+fn a_transaction_is_normalized_to_its_final_values() {
+    let _serial = serial();
+    let runtime = fresh();
+    let _ = runtime.read_outputs::<Probe>().unwrap();
+    let revision = runtime.revision();
+
+    // The same unit written twice, ending at the committed value.
+    runtime
+        .edit(|edit| {
+            edit.set(flag_key(), true);
+            edit.set(flag_key(), false);
+        })
+        .expect("edit");
+    assert_eq!(runtime.revision(), revision, "a net no-op published a revision");
+
+    // The same unit written twice, ending at a new value: the last write wins.
+    runtime
+        .edit(|edit| {
+            edit.set(flag_key(), false);
+            edit.set(flag_key(), true);
+        })
+        .expect("edit");
+    assert_eq!(runtime.revision(), revision + 1);
+    assert!(runtime.read_outputs::<Probe>().is_ok());
+}

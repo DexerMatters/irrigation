@@ -31,6 +31,7 @@ cargo test -p reactive --test suspension       # suspended demand
 | First read evaluates required bodies once | `first_read_evaluates_every_required_body_once` |
 | Repeated reads reuse a certified revision | `repeated_reads_reuse_the_certified_revision` |
 | No-op edits publish no revision and execute nothing | `no_op_edit_publishes_no_revision_and_executes_nothing` |
+| A transaction is normalized to its final values per unit, even when a unit is written twice | `a_transaction_is_normalized_to_its_final_values` |
 | Unrelated inputs do not rerun the observing body | `unrelated_input_edit_does_not_rerun_the_observing_body` |
 | Branch switching replaces the active dependency set | `switching_a_branch_replaces_the_active_dependency_set` |
 | Equal component output stops downstream execution | `equal_component_output_stops_downstream_execution` |
