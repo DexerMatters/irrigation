@@ -13,6 +13,7 @@ pub use reactive_collections::{
     DerivedList, DerivedListRef, DerivedSet, DerivedSetRef, Map, MapEditor, MapRef, SourceList,
     SourceListEditor, SourceListRef, SourceSet, SourceSetEditor, SourceSetRef,
 };
+pub use reactive_collections::Context;
 pub use reactive_collections::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use reactive_collections::{EquiJoin, JoinSpec};
 pub use reactive_collections::{Reduced, ReducedEditor, ReducedRef, Reduction};

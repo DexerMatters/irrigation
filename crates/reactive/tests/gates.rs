@@ -6154,3 +6154,53 @@ fn tree_imports_report_cost_and_reuse() {
     assert_eq!(reconcile.ambiguous, 0);
     let _ = runtime.read_outputs::<flatten_gate::Root>().expect("read");
 }
+
+// ---------------------------------------------------------------------------
+// Tracked context arguments (N23 partial)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct CtxFlag {
+    on: bool,
+}
+
+#[reactive]
+mod ctx_reader {
+    use super::CtxFlag;
+
+    #[component]
+    pub fn read_ctx(ctx: reactive::Context<u64, bool>) -> bool {
+        ctx.read()
+    }
+
+    #[component]
+    pub fn root(flag: &CtxFlag) -> bool {
+        let _ = flag.on();
+        let unit = reactive::UnitKey::field(
+            <CtxFlag as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            reactive::UnitKind::Value,
+        );
+        read_ctx(reactive::Context::new(7u64, unit))
+    }
+}
+
+#[test]
+fn tracked_context_arguments_do_not_rekey_on_value_changes() {
+    let runtime = Runtime::new();
+    runtime.install(ctx_reader::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<CtxFlag>().set_on(false))
+        .expect("seed");
+    assert!(!runtime.read_outputs::<ctx_reader::Root>().expect("read"));
+    let invocations = runtime.memory_report().invocations;
+    runtime
+        .edit(|edit| edit.view::<CtxFlag>().set_on(true))
+        .expect("edit");
+    assert!(runtime.read_outputs::<ctx_reader::Root>().expect("read"));
+    assert_eq!(
+        runtime.memory_report().invocations,
+        invocations,
+        "a value change with the same context key must reuse the invocation"
+    );
+}

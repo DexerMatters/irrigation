@@ -23,6 +23,7 @@ pub mod list;
 pub mod map;
 pub mod reduce;
 pub mod set;
+pub mod context;
 pub mod tree;
 
 pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
@@ -31,6 +32,7 @@ pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, Source
 pub use map::{Map, MapEditor, MapRef};
 pub use reduce::{Reduced, ReducedEditor, ReducedRef, Reduction};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};
+pub use context::Context;
 pub use tree::{
     BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeImportReport, TreeRef,
     TreeStorage, TreeNode, TreeNodeId, TreeValue, slots as tree_slots, tree_content_vtable,
