@@ -815,6 +815,17 @@ impl Inner {
         changed_nodes: &mut Vec<NodeId>,
     ) -> Result<()> {
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
+        // Two-phase commit: every target region must exist before anything is
+        // retracted or installed, so a rejected commit leaves the regions
+        // exactly as they were.
+        for draft in &drafts {
+            if !state.regions.contains_key(&draft.unit.view) {
+                return Err(ComputeError::DefinitionDenied {
+                    unit: format!("{:?}", draft.unit),
+                    reason: String::from("view is not registered"),
+                });
+            }
+        }
         let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
         if restaged.len() != drafts.len() {
             let mut seen = HashSet::new();

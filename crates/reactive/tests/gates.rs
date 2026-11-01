@@ -2445,3 +2445,153 @@ fn a_retracted_whole_field_definition_reverts_to_empty() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Parallel operator error preservation (N7)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct ParallelNumbers {
+    values: List<u64>,
+}
+
+#[reactive]
+mod parallel_errors {
+    use super::ParallelNumbers;
+
+    #[component]
+    pub fn recursive(tag: u64) -> u64 {
+        recursive(tag)
+    }
+
+    #[component]
+    pub fn root(numbers: &ParallelNumbers) -> u64 {
+        let values = numbers.values();
+        values.map(|value| recursive(*value)).iter().sum()
+    }
+}
+
+#[test]
+fn a_cycle_inside_a_parallel_member_stays_a_cycle() {
+    let runtime = Runtime::with_config(reactive::RuntimeConfig {
+        workers: 2,
+        stack_size: 16 * 1024 * 1024,
+        ..reactive::RuntimeConfig::default()
+    });
+    runtime.install(parallel_errors::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut numbers = edit.view::<ParallelNumbers>();
+            let mut values = numbers.values();
+            for value in 0..16u64 {
+                values.push(value);
+            }
+        })
+        .expect("seed");
+    match runtime.read_outputs::<parallel_errors::Root>() {
+        Err(reactive::ComputeError::Cycle { .. }) => {}
+        other => panic!("expected a cycle, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A failed definition install is atomic (F5)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct AuditFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct AuditOuter(u64);
+
+#[view(derived)]
+pub struct AuditMissing(u64);
+
+fn audit_flag_unit() -> reactive::UnitKey {
+    reactive::UnitKey::field(
+        <AuditFlag as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    )
+}
+
+fn audit_outer_unit() -> reactive::UnitKey {
+    reactive::UnitKey::field(
+        <AuditOuter as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    )
+}
+
+fn audit_missing_unit() -> reactive::UnitKey {
+    reactive::UnitKey::field(
+        <AuditMissing as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    )
+}
+
+struct InstallAudit;
+
+impl reactive::GeneralComponent for InstallAudit {
+    type State = u64;
+    type Output = u64;
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0002);
+    const NAME: &'static str = "gates::InstallAudit";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] = &[
+        <AuditFlag as reactive::ViewSchema>::DESCRIPTOR,
+        <AuditOuter as reactive::ViewSchema>::DESCRIPTOR,
+    ];
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let on: bool = cx.read_typed(audit_flag_unit())?;
+        if on {
+            cx.define(audit_outer_unit(), 7u64, "outer");
+        } else {
+            // This view is not registered: the whole install must be rejected
+            // without retracting the `on` definition above.
+            cx.define(audit_missing_unit(), 9u64, "missing");
+        }
+        Ok((0, 0))
+    }
+
+    fn update(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+        _state: &Self::State,
+        _changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        unreachable!("the audit component resets")
+    }
+}
+
+#[test]
+fn a_failed_definition_install_is_atomic() {
+    let runtime = Runtime::new();
+    runtime.install_general(InstallAudit).expect("install");
+    runtime
+        .edit(|edit| edit.view::<AuditFlag>().set_on(true))
+        .expect("edit");
+    assert!(runtime.read_outputs_general::<InstallAudit>().is_ok());
+    assert_eq!(runtime.snapshot().view::<AuditOuter>().field0(), 7);
+
+    runtime
+        .edit(|edit| edit.view::<AuditFlag>().set_on(false))
+        .expect("edit");
+    let failed = runtime.read_outputs_general::<InstallAudit>();
+    assert!(
+        matches!(failed, Err(reactive::ComputeError::DefinitionDenied { .. })),
+        "expected a rejected definition, got {failed:?}"
+    );
+    assert_eq!(
+        runtime.snapshot().view::<AuditOuter>().field0(),
+        7,
+        "a rejected install must not retract earlier definitions"
+    );
+}

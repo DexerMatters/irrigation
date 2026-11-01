@@ -233,7 +233,13 @@ where
                     })
                     .collect();
                 for handle in handles {
-                    results.extend(handle.join().expect("parallel map worker"));
+                    match handle.join() {
+                        Ok(values) => results.extend(values),
+                        // Resume the original payload so an engine error keeps
+                        // its kind (Cycle, Cancelled, ...) instead of becoming a
+                        // generic `Panicked` with a wrapped message.
+                        Err(payload) => std::panic::resume_unwind(payload),
+                    }
                 }
             });
             for id in &ids {
