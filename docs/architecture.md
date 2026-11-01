@@ -191,6 +191,13 @@ demand fails), the failure is recorded in `Runtime::notification_error` and the
 edit still succeeds. A source-only runtime captures its snapshot without
 demanding a root.
 
+## Invocation identity
+
+Invocation body nodes carry the component's fully qualified name as their label
+(output nodes stay `invocation output`). Cycle errors and explanations use those
+labels, so a cycle or a blocked demand names the invocations involved rather
+than only node/task ids.
+
 ## Definition diagnostics
 
 Definition staging captures the caller location through `#[track_caller]` on the

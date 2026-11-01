@@ -113,9 +113,11 @@ pub trait RuntimeOps: Send + Sync + 'static {
 
     /// Returns (creating on first use) the body and output nodes of a component
     /// invocation. `args_eq` compares two type-erased argument tuples.
+    #[allow(clippy::too_many_arguments)]
     fn invocation_node(
         &self,
         component: ComponentId,
+        name: &'static str,
         args_hash: u64,
         args: Arc<dyn Any + Send + Sync>,
         scope: ScopeId,

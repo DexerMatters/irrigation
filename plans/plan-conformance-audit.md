@@ -511,10 +511,11 @@ retirement, output transaction atomicity).
   number of nodes marked suspect (`invalidations`) and the nanoseconds spent
   marking cones (`invalidation_ns`); `invalidation_cost_is_counted` covers both,
   including the no-op case.
-- **N17 Diagnostics.** Partial: `DuplicateDefinition` now names both providers
-  with captured source locations (`file:line:column`) because definitions are
-  staged through `#[track_caller]` view/handle methods; the cycle errors still
-  carry node/task ids rather than full invocation paths.
+- **N17 Diagnostics.** Resolved: `DuplicateDefinition` names both providers with
+  captured source locations (`file:line:column`), and invocation body nodes are
+  labelled with the component's name so cycle paths and explanations identify
+  the invocations involved; `a_cycle_inside_a_parallel_member_stays_a_cycle`
+  asserts the recursive component appears in the cycle path.
 - **N18 Incoming adjacency.** Resolved: source editors stage a per-node
   `IncomingAdjacency` unit alongside outgoing adjacency, `GraphRef::incoming`
   reads it (or computes it from the topology for keyed derived graphs), and

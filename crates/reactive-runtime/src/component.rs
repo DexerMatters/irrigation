@@ -98,6 +98,7 @@ pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) 
     };
     let (body, outputs) = runtime.invocation_node(
         S::ID,
+        S::NAME,
         hash,
         Arc::new(args.clone()),
         frame.scope(),
@@ -153,6 +154,7 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
     };
     let (body, outputs) = runtime.invocation_node(
         S::ID,
+        S::NAME,
         hash,
         Arc::new(args.clone()),
         frame.scope(),

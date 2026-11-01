@@ -2505,7 +2505,13 @@ fn a_cycle_inside_a_parallel_member_stays_a_cycle() {
         })
         .expect("seed");
     match runtime.read_outputs::<parallel_errors::Root>() {
-        Err(reactive::ComputeError::Cycle { .. }) => {}
+        Err(reactive::ComputeError::Cycle { path }) => {
+            assert!(
+                path.iter()
+                    .any(|step| step.contains("parallel_errors::recursive")),
+                "the cycle path must name the recursive invocation: {path:?}"
+            );
+        }
         other => panic!("expected a cycle, got {other:?}"),
     }
 }
@@ -5568,7 +5574,7 @@ fn explanations_expose_scope_identity() {
         .expect("root body");
     let invocation = dump
         .iter()
-        .find(|node| node.kind == "InvocationBody" && node.label == "invocation")
+        .find(|node| node.kind == "InvocationBody" && node.label != "root body")
         .expect("invocation");
     let root_explanation = runtime.explain_node(root.id);
     assert!(root_explanation.scope_path.is_empty());

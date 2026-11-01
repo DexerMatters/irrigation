@@ -409,7 +409,10 @@ impl Inner {
                         NodeState::Running { owner, generation } if owner == me => {
                             if task::active_contains(node) {
                                 Action::Fail(ComputeError::Cycle {
-                                    path: vec![format!("re-entrant demand of {node:?}")],
+                                    path: vec![format!(
+                                        "re-entrant demand of {} ({node:?})",
+                                        record.label
+                                    )],
                                 })
                             } else {
                                 Action::Resume(generation)
@@ -1366,12 +1369,15 @@ impl Inner {
         // A task already executing on this stack cannot wait for itself.
         if task::stack_contains(owner) {
             return Err(ComputeError::Cycle {
-                path: vec![format!("re-entrant demand of {node:?}")],
+                path: vec![format!(
+                    "re-entrant demand of {} ({node:?})",
+                    state.node(node).label
+                )],
             });
         }
         if self.would_cycle(&state, owner, me) {
             return Err(ComputeError::Cycle {
-                path: vec![format!("{me:?} -> {node:?} -> {owner:?}")],
+                path: cycle_path(&state, me, node),
             });
         }
         if frame::current().is_some_and(|frame| frame.cancel().is_cancelled()) {
@@ -1773,6 +1779,29 @@ pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
     hash_one(args)
 }
 
+/// Builds a readable cycle path from a task waiting for `node`.
+fn cycle_path(state: &State, me: TaskId, node: NodeId) -> Vec<String> {
+    let mut path = Vec::new();
+    let mut current = Some(me);
+    let mut waited = Some(node);
+    let mut seen = std::collections::HashSet::new();
+    while let (Some(task), Some(node)) = (current, waited) {
+        if !seen.insert(task) {
+            break;
+        }
+        path.push(format!(
+            "task {task} waits for {} ({node:?})",
+            state.node(node).label
+        ));
+        current = match state.node(node).state {
+            NodeState::Running { owner, .. } => Some(owner),
+            _ => None,
+        };
+        waited = current.and_then(|task| state.wait_graph.get(&task).copied());
+    }
+    path
+}
+
 /// Formats a provider description with its source location.
 fn describe_provider(
     label: &str,
@@ -2045,9 +2074,11 @@ impl RuntimeOps for Inner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn invocation_node(
         &self,
         component: ComponentId,
+        name: &'static str,
         args_hash: u64,
         args: Arc<dyn Any + Send + Sync>,
         scope: ScopeId,
@@ -2068,7 +2099,7 @@ impl RuntimeOps for Inner {
         let invocation_id = state.next_invocation + 1;
         state.next_invocation = invocation_id;
         let invocation_scope = state.scopes.child(scope, invocation_id);
-        let mut body_record = NodeRecord::empty("invocation", NodeKind::InvocationBody);
+        let mut body_record = NodeRecord::empty(name, NodeKind::InvocationBody);
         body_record.scope = invocation_scope;
         let body = state.alloc(body_record);
         let mut outputs = Vec::with_capacity(arity);
