@@ -3752,3 +3752,127 @@ fn a_named_derived_reduction_uses_generated_accessors() {
         (vec![5, 6], 11)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-family operators (Phase 3)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct CrossTable {
+    entries: Map<u32, u64>,
+}
+
+#[view(derived)]
+pub struct CrossList(List<u64>);
+
+#[view(derived)]
+pub struct CrossMap(Map<u32, u64>);
+
+#[reactive]
+mod map_to_list_gate {
+    use super::{CrossList, CrossTable};
+
+    #[component]
+    pub fn root(table: &CrossTable) -> (Vec<u64>, Option<u64>, Option<u64>) {
+        reactive::ensure_view(<CrossList as reactive::ViewSchema>::DESCRIPTOR);
+        let target = CrossList.field0();
+        table.entries().to_list(&target, |key, value| {
+            Some((u64::from(*key), *value * 2))
+        });
+        (target.ids().to_vec(), target.get_key(1), target.get_key(2))
+    }
+}
+
+#[test]
+fn map_to_list_preserves_key_identity() {
+    let runtime = Runtime::new();
+    runtime.install(map_to_list_gate::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<CrossTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+            entries.insert(2, 20);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<map_to_list_gate::Root>()
+            .expect("read"),
+        (vec![1, 2], Some(20), Some(40))
+    );
+
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<CrossTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    let revision = runtime.revision();
+    assert_eq!(
+        runtime
+            .read_outputs::<map_to_list_gate::Root>()
+            .expect("read"),
+        (vec![1, 2], Some(22), Some(40))
+    );
+    let view = format!("{:?}", <CrossList as reactive::ViewSchema>::DESCRIPTOR.id);
+    let unit = runtime
+        .dump()
+        .into_iter()
+        .find(|node| {
+            node.kind == "Unit"
+                && node
+                    .unit
+                    .as_deref()
+                    .is_some_and(|unit| {
+                        unit.contains(&view)
+                            && unit.contains("Membership")
+                            && unit.contains("Some(\"2\")")
+                    })
+        })
+        .expect("list membership unit");
+    assert!(
+        unit.changed_at < revision,
+        "an untouched key must keep its list member"
+    );
+}
+
+#[reactive]
+mod list_to_map_gate {
+    use super::{CrossMap, KeyedList, KeyedMode};
+
+    #[component]
+    pub fn root(mode: &KeyedMode) -> (Vec<(u32, u64)>, Option<u64>, Option<u64>) {
+        reactive::ensure_view(<CrossMap as reactive::ViewSchema>::DESCRIPTOR);
+        if mode.mode() == 1 {
+            KeyedList.define_keyed([(1u64, 11u64)]);
+        } else {
+            KeyedList.define_keyed([(1u64, 10u64), (2, 20)]);
+        }
+        let target = CrossMap.field0();
+        KeyedList.field0().to_map(&target, |id, value| Some((id as u32, *value)));
+        (target.to_vec(), target.get(&1), target.get(&2))
+    }
+}
+
+#[test]
+fn list_to_map_retracts_missing_keys() {
+    let runtime = Runtime::new();
+    runtime.install(list_to_map_gate::Root).expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs::<list_to_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 10), (2, 20)], Some(10), Some(20))
+    );
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<list_to_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 11)], Some(11), None)
+    );
+}

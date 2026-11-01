@@ -983,6 +983,24 @@ where
         values
     }
 
+    /// Defines a derived map from this list's keyed members.
+    ///
+    /// One map entry per identity; a removed member retracts its entry.
+    pub fn to_map<K, V, F>(&self, target: &crate::map::MapRef<K, V>, f: F)
+    where
+        K: Ord + std::hash::Hash + Clone + std::fmt::Debug + Send + Sync + 'static,
+        V: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(u64, &T) -> Option<(K, V)>,
+    {
+        for id in self.ids().iter() {
+            if let Some(value) = self.get_key(*id) {
+                if let Some((key, mapped)) = f(*id, &value) {
+                    target.define(key, mapped, "list_to_map");
+                }
+            }
+        }
+    }
+
     /// Defines a keyed list: stable identities plus one value per entity.
     pub fn define_keyed<I>(&self, items: I, label: &'static str)
     where

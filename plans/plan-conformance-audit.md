@@ -109,6 +109,10 @@ retraction bug: retracting a membership unit cleared its own certification in
 the separate value-unit branch, so a direct membership read reported
 "undefined" instead of false. Phase 2 is complete: keyed lists and sets, per-identity `map`/`filter`/`flat_map`, and the membership protocol flag.
 
+Phase 3 of the granularity plan has started: derived `Reduced` fields are a
+supported family, and `Map::to_list`/`List::to_map` preserve per-key identity
+across families. Derived graphs and join-as-View remain open.
+
 Still open from C1: N6 (declared primitives). The body still computes the whole
 output tuple, so per-projection demand saves the sibling projection node but not
 sibling body work; splitting tuple construction into lazy projections is part of

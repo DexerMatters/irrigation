@@ -524,6 +524,14 @@ Gates: `keyed_list_reorder_reuses_member_work`,
 
 ### Phase 3 — Heterogeneous composition
 
+**Status: in progress.** Derived `Reduced` fields define their whole sequence
+(`a_derived_reduction_defines_and_redefines_its_sequence`). Cross-family
+operators `Map::to_list` and `List::to_map` publish keyed definitions from one
+family into another, preserving per-key identity
+(`map_to_list_preserves_key_identity`, `list_to_map_retracts_missing_keys`).
+Derived graphs, join-as-View, `Graph::node_map`/`Tree::flatten_map`, and per-key
+`GeneralComponent` outputs remain.
+
 1. **Join as a View.** Publish joined keys through the keyed map protocol
    (Phase 2), keeping the whole `BTreeMap` output for existing callers.
 2. **Derived graphs.** Topology draft plus node/edge payload drafts, adjacency

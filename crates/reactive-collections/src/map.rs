@@ -235,6 +235,27 @@ where
             .collect()
     }
 
+    /// Defines a keyed derived list from this map's entries.
+    ///
+    /// The list targets one identity per map key; a value edit on one key
+    /// restages only that key's list member.
+    pub fn to_list<T, F>(&self, target: &crate::list::DerivedListRef<T>, f: F)
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(&K, &V) -> Option<(u64, T)>,
+    {
+        let keys = self.keys();
+        let mut items = Vec::new();
+        for key in &keys {
+            if let Some(value) = self.get(key) {
+                if let Some(item) = f(key, &value) {
+                    items.push(item);
+                }
+            }
+        }
+        target.define_keyed(items, "map_to_list");
+    }
+
     /// Defines one entry from the currently executing computation.
     ///
     /// The definition commits atomically with the computation's value and
