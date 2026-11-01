@@ -387,6 +387,91 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let root_ref = format_ident!("{}Ref", root_spec.ident);
     let root_build = format_ident!("build_{}", snake_case(&root_spec.ident.to_string()));
 
+    // ---------------------------------------------------- cross-type traversal
+    let node_ident = format_ident!("{}Node", view_ident);
+    let mut node_variants: Vec<TokenStream> = Vec::new();
+    let mut id_arms: Vec<TokenStream> = Vec::new();
+    let mut child_arms: Vec<TokenStream> = Vec::new();
+    let mut flatten_impls: Vec<TokenStream> = Vec::new();
+    for spec in &specs {
+        let name = &spec.ident;
+        let ref_ident = format_ident!("{}Ref", name);
+        node_variants.push(quote!(#name(#ref_ident)));
+        id_arms.push(quote!(#node_ident::#name(node) => node.raw(),));
+        let mut pushes = Vec::new();
+        for variant in &spec.variants {
+            for field in &variant.fields {
+                let method = &field.method;
+                match &field.shape {
+                    FieldShape::Child(enum_name) | FieldShape::OptionalChild(enum_name) => {
+                        let child = Ident::new(enum_name, name.span());
+                        pushes.push(quote! {
+                            if let Some(child) = node.#method() {
+                                out.push(#node_ident::#child(child));
+                            }
+                        });
+                    }
+                    FieldShape::VecChild(enum_name) => {
+                        let child = Ident::new(enum_name, name.span());
+                        pushes.push(quote! {
+                            out.extend(node.#method().into_iter().map(#node_ident::#child));
+                        });
+                    }
+                    FieldShape::Leaf(_) => {}
+                }
+            }
+        }
+        child_arms.push(quote! {
+            #node_ident::#name(node) => {
+                let mut out = Vec::new();
+                #(#pushes)*
+                out
+            }
+        });
+        flatten_impls.push(quote! {
+            impl #ref_ident {
+                /// Defines one target entry per node in this subtree, using `f`
+                /// to choose the value (`None` skips the node).
+                pub fn flatten_map<V, F>(&self, target: &reactive::MapRef<u64, V>, mut f: F)
+                where
+                    V: Clone + PartialEq + Send + Sync + 'static,
+                    F: FnMut(&#node_ident) -> Option<V>,
+                {
+                    let mut stack = vec![#node_ident::#name(self.clone())];
+                    while let Some(node) = stack.pop() {
+                        if let Some(value) = f(&node) {
+                            target.define(node.id(), value, "tree_flatten_map");
+                        }
+                        stack.extend(node.children());
+                    }
+                }
+            }
+        });
+    }
+    let node_def = quote! {
+        /// One node of the tree group, for cross-family flattening.
+        #[derive(Clone, Debug)]
+        pub enum #node_ident {
+            #( #node_variants, )*
+        }
+
+        impl #node_ident {
+            /// The node identity.
+            #[must_use]
+            pub fn id(&self) -> u64 {
+                match self {
+                    #( #id_arms )*
+                }
+            }
+
+            fn children(&self) -> Vec<Self> {
+                match self {
+                    #( #child_arms )*
+                }
+            }
+        }
+    };
+
     let content_impl = quote! {
         fn #content_fn(content: &dyn ::std::any::Any) -> reactive::TreeStorage {
             content
@@ -594,6 +679,8 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             #( #kind_defs )*
             #( #ref_defs )*
             #( #ref_impls )*
+            #node_def
+            #( #flatten_impls )*
             #( #build_fns )*
             #view_def
             #editor_def

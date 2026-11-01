@@ -1,7 +1,7 @@
 //! Acceptance gates from the plan: randomized oracle comparison, recursion,
 //! mutual recursion, cycle detection, and unique definitions.
 
-use reactive::{reactive, view, Runtime};
+use reactive::{reactive, tree_view, view, Runtime};
 
 // ---------------------------------------------------------------------------
 // Randomized edit sequence against a from-scratch oracle
@@ -5077,4 +5077,97 @@ fn pending_component_futures_are_driven_to_completion() {
             .expect("update"),
         (2, 4, 6)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tree flatten map (Phase 3 cross-family)
+// ---------------------------------------------------------------------------
+
+#[tree_view(root = FlattenDoc, view = FlattenTree)]
+pub mod flatten_tree {
+    /// Root of the flattening test tree.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum FlattenDoc {
+        /// A forest of items.
+        Forest { items: Vec<FlattenItem> },
+    }
+
+    /// One tree item.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum FlattenItem {
+        /// A leaf with a value.
+        Leaf { value: u64 },
+        /// A group of items.
+        Group { items: Vec<FlattenItem> },
+    }
+}
+
+#[view(derived)]
+pub struct FlatTags(Map<u64, u32>);
+
+fn flatten_tag(node: &flatten_tree::FlattenTreeNode) -> Option<u32> {
+    match node {
+        flatten_tree::FlattenTreeNode::FlattenDoc(_) => Some(0),
+        flatten_tree::FlattenTreeNode::FlattenItem(_) => Some(1),
+    }
+}
+
+#[reactive]
+mod flatten_gate {
+    use super::{FlatTags, flatten_tag, flatten_tree};
+
+    #[component]
+    pub fn root(tree: &flatten_tree::FlattenTree) -> u32 {
+        reactive::ensure_view(<FlatTags as reactive::ViewSchema>::DESCRIPTOR);
+        let target = FlatTags.field0();
+        match tree.root() {
+            Some(document) => {
+                document.flatten_map(&target, flatten_tag);
+                0
+            }
+            None => 0,
+        }
+    }
+}
+
+#[test]
+fn tree_flatten_map_publishes_one_entry_per_node() {
+    let runtime = Runtime::new();
+    runtime.install(flatten_gate::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<flatten_tree::FlattenTree>();
+            tree.set_root(&flatten_tree::FlattenDoc::Forest {
+                items: vec![
+                    flatten_tree::FlattenItem::Leaf { value: 1 },
+                    flatten_tree::FlattenItem::Group {
+                        items: vec![flatten_tree::FlattenItem::Leaf { value: 2 }],
+                    },
+                ],
+            });
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime.read_outputs::<flatten_gate::Root>().expect("read"),
+        0
+    );
+    let tags = runtime.snapshot().view::<FlatTags>().field0();
+    assert_eq!(tags.len(), 4);
+    assert_eq!(tags.iter().filter(|(_, tag)| *tag == 0).count(), 1);
+    assert_eq!(tags.iter().filter(|(_, tag)| *tag == 1).count(), 3);
+
+    // Rebuilding the tree retracts the old node ids and publishes the new ones.
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<flatten_tree::FlattenTree>();
+            tree.set_root(&flatten_tree::FlattenDoc::Forest {
+                items: vec![flatten_tree::FlattenItem::Leaf { value: 3 }],
+            });
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<flatten_gate::Root>().expect("read");
+    let tags = runtime.snapshot().view::<FlatTags>().field0();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags.iter().filter(|(_, tag)| *tag == 0).count(), 1);
+    assert_eq!(tags.iter().filter(|(_, tag)| *tag == 1).count(), 1);
 }
