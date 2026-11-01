@@ -5661,3 +5661,19 @@ fn schedule_perturbation_preserves_parallel_results() {
         }
     }
 }
+
+#[test]
+fn joining_two_empty_source_maps_is_empty() {
+    let runtime = Runtime::new();
+    runtime.register_view(<LeftWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<RightWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<JoinedWeights as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<WeightJoin>::new())
+        .expect("install");
+    let joined = runtime
+        .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
+        .expect("read");
+    assert!(joined.is_empty());
+    assert!(runtime.snapshot().view::<JoinedWeights>().field0().is_empty());
+}

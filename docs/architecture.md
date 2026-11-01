@@ -198,6 +198,13 @@ Invocation body nodes carry the component's fully qualified name as their label
 labels, so a cycle or a blocked demand names the invocations involved rather
 than only node/task ids.
 
+## Structure initialization
+
+An undefined structure unit initializes from the family's structure projection
+(`ContentVtable::structure`) rather than the generic unit getter, so a join or
+snapshot over a source collection that has never been edited sees an empty
+structure instead of a type error.
+
 ## Definition diagnostics
 
 Definition staging captures the caller location through `#[track_caller]` on the

@@ -1932,10 +1932,16 @@ impl RuntimeOps for Inner {
         if state.units.get(unit).is_some() {
             return Ok(());
         }
-        let initial = state
-            .regions
-            .get(&unit.view)
-            .and_then(|region| (region.descriptor.content.get)(&region.content, unit));
+        let initial = state.regions.get(&unit.view).and_then(|region| {
+            if unit.kind == UnitKind::Structure && unit.entity.is_none() {
+                // An undefined structure unit initializes from the family's
+                // structure projection, not the generic unit getter.
+                (region.descriptor.content.structure)(&region.content, unit.field)
+                    .map(|structure| structure.value)
+            } else {
+                (region.descriptor.content.get)(&region.content, unit)
+            }
+        });
         Self::ensure_unit_node(&mut state, unit.clone(), initial);
         Ok(())
     }

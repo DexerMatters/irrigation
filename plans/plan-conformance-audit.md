@@ -589,7 +589,10 @@ arena reclamation, bounded invocation caches.
 
 Join cross-term and bag-semantics gates (N21) are implemented
 (`signed_weight_join_applies_the_bilinear_rule`,
-`a_join_tracks_both_inputs_changing_in_one_transaction`). Schedule-perturbation
+`a_join_tracks_both_inputs_changing_in_one_transaction`), and a randomized
+join differential test (`randomized_join_edits_match_the_from_scratch_oracle`)
+caught and now covers an empty-source structure-initialization bug
+(`joining_two_empty_source_maps_is_empty`). Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before

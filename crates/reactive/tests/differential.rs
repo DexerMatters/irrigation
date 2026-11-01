@@ -198,3 +198,137 @@ fn randomized_list_edits_match_the_from_scratch_oracle() {
         );
     }
 }
+
+#[view(source)]
+pub struct DiffLeft {
+    entries: Map<u32, i64>,
+}
+
+#[view(source)]
+pub struct DiffRight {
+    entries: Map<u32, i64>,
+}
+
+#[view(derived)]
+pub struct DiffJoined(Map<u32, i64>);
+
+struct DiffWeightJoin;
+
+impl reactive::JoinSpec for DiffWeightJoin {
+    type Key = u32;
+    type Left = i64;
+    type Right = i64;
+    type Joined = i64;
+
+    fn left() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <DiffLeft as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn right() -> (reactive::ViewId, reactive::FieldId) {
+        (
+            <DiffRight as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        )
+    }
+
+    fn combine(left: &i64, right: &i64) -> i64 {
+        left * right
+    }
+
+    fn target() -> Option<(reactive::ViewId, reactive::FieldId)> {
+        Some((
+            <DiffJoined as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+        ))
+    }
+}
+
+fn expected_join(
+    left: &std::collections::BTreeMap<u32, i64>,
+    right: &std::collections::BTreeMap<u32, i64>,
+) -> std::collections::BTreeMap<u32, i64> {
+    left.iter()
+        .filter_map(|(key, left_value)| {
+            right
+                .get(key)
+                .map(|right_value| (*key, left_value * right_value))
+        })
+        .collect()
+}
+
+#[test]
+fn randomized_join_edits_match_the_from_scratch_oracle() {
+    use std::collections::BTreeMap;
+
+    let runtime = Runtime::new();
+    runtime.register_view(<DiffLeft as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<DiffRight as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<DiffJoined as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<DiffWeightJoin>::new())
+        .expect("install");
+    let mut left: BTreeMap<u32, i64> = BTreeMap::new();
+    let mut right: BTreeMap<u32, i64> = BTreeMap::new();
+    let mut rng = reactive_test::Lcg::new(0x0b_a6);
+
+    for step in 0..160 {
+        let key = rng.below(12) as u32;
+        let value = rng.range(0, 21) as i64 - 10;
+        match rng.below(3) {
+            0 => {
+                left.insert(key, value);
+                runtime
+                    .edit(|edit| {
+                        let mut view = edit.view::<DiffLeft>();
+                        let mut entries = view.entries();
+                        entries.insert(key, value);
+                    })
+                    .expect("left insert");
+            }
+            1 => {
+                right.insert(key, value);
+                runtime
+                    .edit(|edit| {
+                        let mut view = edit.view::<DiffRight>();
+                        let mut entries = view.entries();
+                        entries.insert(key, value);
+                    })
+                    .expect("right insert");
+            }
+            _ => {
+                let side = rng.below(2);
+                if side == 0 {
+                    left.remove(&key);
+                    runtime
+                        .edit(|edit| {
+                            let mut view = edit.view::<DiffLeft>();
+                            let mut entries = view.entries();
+                            entries.remove(&key);
+                        })
+                        .expect("left remove");
+                } else {
+                    right.remove(&key);
+                    runtime
+                        .edit(|edit| {
+                            let mut view = edit.view::<DiffRight>();
+                            let mut entries = view.entries();
+                            entries.remove(&key);
+                        })
+                        .expect("right remove");
+                }
+            }
+        }
+        let expected = expected_join(&left, &right);
+        let actual = runtime
+            .read_outputs_general::<reactive::EquiJoin<DiffWeightJoin>>()
+            .expect("read join");
+        assert_eq!(actual, expected, "step {step}");
+        let snapshot: Vec<(u32, i64)> = runtime.snapshot().view::<DiffJoined>().field0();
+        let expected_snapshot: Vec<(u32, i64)> =
+            expected.iter().map(|(key, value)| (*key, *value)).collect();
+        assert_eq!(snapshot, expected_snapshot, "target at step {step}");
+    }
+}
