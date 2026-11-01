@@ -4237,3 +4237,27 @@ fn a_per_key_observer_ignores_other_keys() {
     assert_eq!(seen.load(Ordering::SeqCst), 2);
     drop(subscription);
 }
+
+// ---------------------------------------------------------------------------
+// Retention (F10, scope half)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collect_reclaims_unreachable_scopes() {
+    let runtime = Runtime::new();
+    for tag in 0..32u64 {
+        let _ = runtime
+            .call::<call_projection_gate::__PairSpec>(
+                call_projection_gate::__PairArgs { tag },
+            )
+            .expect("call");
+    }
+    let before = runtime.memory_report().scopes;
+    assert!(
+        before >= 32,
+        "each distinct invocation gets a scope: {before}"
+    );
+    let stats = runtime.collect();
+    assert!(stats.scopes_reclaimed > 0, "{stats:?}");
+    assert!(runtime.memory_report().scopes < before);
+}

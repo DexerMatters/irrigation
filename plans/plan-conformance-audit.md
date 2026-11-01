@@ -85,6 +85,7 @@ C0 is complete.
 | N12 | `Runtime::read_projection`/`call_projection` demand one projection node; siblings stay unevaluated | `reading_one_projection_does_not_evaluate_the_other`, `a_call_projection_is_independently_demandable` |
 | N16 | `RuntimeStats::invalidations` records the nodes marked suspect by each invalidation cone | `invalidation_cost_is_counted` |
 | F9 | Unit-scoped and per-entry observers fire only for watched units | `a_per_key_observer_ignores_other_keys` |
+| F10 (partial) | `collect` prunes unreachable interned scopes; `memory_report` reports scopes and tasks | `collect_reclaims_unreachable_scopes` (arena slot reuse still open) |
 | N21 | A two-sided join transaction is gated against the from-scratch join; the join can publish a per-key target map | `a_join_tracks_both_inputs_changing_in_one_transaction`, `join_view_updates_only_changed_keys` (bag-join semantics still open) |
 | F12/F13 | `TaskStatus::Done` removed; `MapRef::len/is_empty` read the structure map directly | covered by the existing map/join gates |
 

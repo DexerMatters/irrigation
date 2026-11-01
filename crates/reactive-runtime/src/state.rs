@@ -327,6 +327,17 @@ impl ScopeTable {
         scope
     }
 
+    /// Drops interned scopes that no live node references.
+    pub fn prune(&mut self, live: &std::collections::HashSet<ScopeId>) -> usize {
+        let before = self.len();
+        self.by_discriminant.retain(|_, scope| live.contains(scope));
+        self.by_key.retain(|_, bucket| {
+            bucket.retain(|(_, scope)| live.contains(scope));
+            !bucket.is_empty()
+        });
+        before - self.len()
+    }
+
     /// Number of allocated scopes.
     #[must_use]
     pub fn len(&self) -> usize {

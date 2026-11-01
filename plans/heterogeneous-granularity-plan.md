@@ -563,8 +563,11 @@ Gates: `join_view_updates_only_changed_keys`,
 `Runtime::observe_units` watches a set of logical units and
 `Runtime::observe_entry` watches one map entry's membership and value units;
 the callback fires only when a watched unit's version moves
-(`a_per_key_observer_ignores_other_keys`). Scope pruning, arena slot reuse,
-the invocation policy, and the benchmark matrix remain.
+(`a_per_key_observer_ignores_other_keys`). `collect` now prunes interned
+scopes that no live node references, `ReclaimStats` reports them, and
+`memory_report` gains `scopes` and `tasks`
+(`collect_reclaims_unreachable_scopes`). Arena slot reuse (generational
+`NodeId`s), the bounded invocation policy, and the benchmark matrix remain.
 
 1. Per-entry observers (F9).
 2. `collect` prunes scopes, reuses arena slots with generation checks, and

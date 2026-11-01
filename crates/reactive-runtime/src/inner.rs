@@ -1818,6 +1818,8 @@ pub struct ReclaimStats {
     pub units_reclaimed: usize,
     /// Invocation records dropped with their bodies.
     pub invocations_reclaimed: usize,
+    /// Interned scopes dropped with their nodes.
+    pub scopes_reclaimed: usize,
 }
 
 /// A point-in-time memory report.
@@ -1839,6 +1841,10 @@ pub struct MemoryReport {
     pub invocations: usize,
     /// Registered View regions.
     pub regions: usize,
+    /// Interned scopes.
+    pub scopes: usize,
+    /// Demand task records.
+    pub tasks: usize,
 }
 
 impl Inner {
@@ -1931,6 +1937,11 @@ impl Inner {
             record.failure = None;
             record.dependents.clear();
         }
+        let live_scopes: std::collections::HashSet<ScopeId> = reachable
+            .iter()
+            .map(|node| state.node(*node).scope)
+            .collect();
+        let scopes_reclaimed = state.scopes.prune(&live_scopes);
         let doomed_keys: Vec<Arc<dyn AnyKey>> = state
             .units
             .iter()
@@ -1957,6 +1968,7 @@ impl Inner {
             nodes_reclaimed: doomed.len(),
             units_reclaimed,
             invocations_reclaimed,
+            scopes_reclaimed,
         }
     }
 
@@ -1983,6 +1995,8 @@ impl Inner {
             units: state.units.len(),
             invocations: state.invocations.values().map(Vec::len).sum(),
             regions: state.regions.len(),
+            scopes: state.scopes.len(),
+            tasks: state.tasks.len(),
         }
     }
 }

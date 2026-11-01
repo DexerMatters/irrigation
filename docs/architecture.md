@@ -181,6 +181,14 @@ explicit set of logical units, and `observe_entry` watches one map entry's
 membership and value units; these fire only when a watched unit's `changed_at`
 moves, so an edit to another key does not wake the callback.
 
+## Retention
+
+`collect` reclaims unreachable nodes, absence-predicate unit cells, invocation
+records, and interned scopes that no live node references; `ReclaimStats`
+reports each count and `memory_report` exposes scopes and task records. Arena
+slots are still not reused (that needs generational `NodeId`s), so the node
+arena only grows.
+
 ## Demand surfaces
 
 `read_outputs` demands the body and every output projection. `read_projection`
