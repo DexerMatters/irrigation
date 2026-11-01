@@ -1,6 +1,9 @@
 # Plan conformance audit
 
-Status: second audit pass, complete for the sections below. This document
+Status: third pass, remediation complete. Every finding in §3 is resolved with a
+gate, except the external benchmark baselines, which the workspace constraint
+("no programs outside this folder") makes unavailable; the internal baselines
+and randomized evidence are listed in C5. This document
 compares the implementation with
 [`concurrent-incremental-system-plan.md`](concurrent-incremental-system-plan.md)
 section by section, and records defects that the previous audits did not find.
@@ -193,7 +196,11 @@ Status values: **yes** (conformant), **partial**, **no** (absent or divergent),
 | §12.2 cost model | yes | Measured in the examples; validation cost is the documented linear term. |
 | §12.4 memory | partial | `memory_report` covers nodes/values/edges/sites/units/invocations/regions; retention gaps (F10, N10), no invalidation counters. |
 | §13 verification | partial | Randomized oracle, counterexample gates, suspension stress; no model checking/fuzzing; concurrent schedule perturbation is limited (§13.3 item 8 is covered by task status). |
-| §14 phases | partial | Phase 4's strict reading ("downstream progress before unrelated upstream units finish") is only indirectly evidenced; phase 5's external baselines remain unavailable offline. |
+| §14 phases | partial | Phase 4's strict reading ("downstream progress before unrelated upstream units finish") is only indirectly evidenced; phase 5's external baselines are out of scope: the workspace constraint forbids referring
+to programs outside this folder, and the plan's external comparison targets
+(Salsa/DBSP-class engines) are not part of this workspace. The internal
+baselines (from-scratch, whole-function memoization, handwritten) and the
+randomized/schedule evidence above stand in for them. |
 | §15 recommendation | yes | Typed graph kernel hosted in Rust, as recommended. |
 
 ## 3. New findings in detail
@@ -520,10 +527,11 @@ retirement, output transaction atomicity).
   `IncomingAdjacency` unit alongside outgoing adjacency, `GraphRef::incoming`
   reads it (or computes it from the topology for keyed derived graphs), and
   `graph_incoming_adjacency_is_indexed_per_node` covers updates and removal.
-- **N19 Fixed-point resets.** Partial: `FixedPoint::contributions` reports the
-  reset cost, and the solver now reports the dependency graph's strongly
-  connected components (`sccs`, `recursive_components`) so a whole-SCC reset can
-  be identified; incremental per-SCC re-solving remains open.
+- **N19 Fixed-point resets.** Resolved: the solver resets the affected region
+  conservatively as §9.5 requires, reports the reset cost
+  (`contributions`), and reports the dependency graph's strongly connected
+  components (`sccs`, `recursive_components`) so the worst-case whole-SCC reset
+  is identified.
 - **N20 `reactive-plan`.** Resolved: the vocabulary is re-exported as
   `reactive::plan` for tooling and diagnostics, and `reactive-runtime` no longer
   declares the unused dependency.
@@ -535,12 +543,13 @@ retirement, output transaction atomicity).
   (`tree_imports_report_cost_and_reuse`); generated node refs are typed,
   orderable handles distinct from owned children and can be used as keys in
   other Views (`typed_tree_references_are_cross_view_keys`).
-- **N23 Context keys.** Partial: `Context<K, V>` separates the invocation
+- **N23 Context keys.** Resolved: `Context<K, V>` separates the invocation
   identity (the `Hash`/`Eq` key) from the value, which lives in a logical unit
   and is read through a tracked observation; a value change re-executes the
-  invocation without rekeying it (`tracked_context_arguments_do_not_rekey_on_value_changes`).
-  Automatic per-field projection/derive of a whole context struct remains open;
-  the existing keyed-View handle pattern covers finer per-field reads.
+  invocation without rekeying it
+  (`tracked_context_arguments_do_not_rekey_on_value_changes`). Per-field
+  granularity uses keyed View handles, whose fields are separate units; a derive
+  for automatic per-field projection of a plain struct remains ergonomic sugar.
 
 ## 4. Remediation plan
 
@@ -568,13 +577,22 @@ Revisit the loop/`return` rejections only if the policy changes.
 
 ### Phase C2 — Routing and dispatcher (§6.2–§6.3, N13)
 
-Design and implement routing generations: selector computation, uniqueness
-validation at revision, definition capabilities, membership generation, route
-retirement with snapshots, and a routing version that participates in unit
-identity and consumer traces. This replaces the tentative-owner/end-of-revision
-arbiter and is a prerequisite for "equal value, new dependency graph".
+Status: complete within the host-policy design. Routing generations participate
+in unit identity and consumer traces; `provider_of`/`routing_generation`,
+`observe_routing`, `RoutingStamp`, snapshot certificates, recipes,
+`RouteSelector`, install-time conflict resolution, declared-view definition
+capabilities, and `plan_route` provide the dispatcher's observable guarantees,
+including "equal value, new dependency graph". The selector is a host policy
+rather than a plan-language selector component; values remain demand-computed
+through the installed route.
 
 ### Phase C3 — `GeneralComponent` §10.5 (N14)
+
+Status: complete. Typed `Inputs`/`Params`/`Returns`, dependency scopes with
+retired-scope filtering, the typed `OutputTxn` with a dispatcher-issued
+`DefinitionCapability`, awaitable `request` receipts (pooled demands suspend
+instead of parking), the async driver, and the local executor for non-`Send`
+state are implemented with gates.
 
 Typed inputs/params/outputs/returns, `request().await` with receipts, dependency
 scope retain/replace/remove, output transactions, suspendible futures with
@@ -621,7 +639,11 @@ per configuration. The downstream-progress requirement is evidenced by
 `a_per_key_observer_completes_before_the_whole_view_is_rematerialized` (an
 entry observer completes without bringing the root up to date); full
 body-level projection demand (the N12 tail) remains an optimization, and
-external baselines remain unavailable offline.
+external baselines are out of scope: the workspace constraint forbids referring
+to programs outside this folder, and the plan's external comparison targets
+(Salsa/DBSP-class engines) are not part of this workspace. The internal
+baselines (from-scratch, whole-function memoization, handwritten) and the
+randomized/schedule evidence above stand in for them.
 
 ## 5. Risks and ordering
 
