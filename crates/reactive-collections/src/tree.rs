@@ -524,17 +524,136 @@ impl<'a> TreeEditor<'a> {
     ///
     /// The old children are retracted. Unrelated nodes keep their identities.
     pub fn replace(&mut self, node: TreeNodeId, build: &TreeBuild) -> TreeNodeId {
-        let Some(existing) = self.storage.node(node).cloned() else {
+        if self.storage.node(node).is_none() {
             return self.set_root(build);
+        }
+        self.apply(node, build);
+        node
+    }
+
+    /// Applies a build to an existing node, reusing children whose variant is
+    /// unchanged. The node keeps its identity; only changed units are staged.
+    fn apply(&mut self, id: TreeNodeId, build: &TreeBuild) {
+        let Some(existing) = self.storage.node(id).cloned() else {
+            return;
         };
-        for slot in existing.children.iter() {
-            for child in slot.ids() {
+        self.edit
+            .set(tag_unit(self.view, id), (build.type_index, build.variant));
+        for (slot, value) in build.fields.iter().enumerate() {
+            self.edit
+                .set(field_unit(self.view, id, slot as u16), value.clone());
+        }
+        for slot in build.fields.len()..existing.fields.len() {
+            self.edit
+                .set(field_unit(self.view, id, slot as u16), TreeValue::Unit);
+        }
+        let mut children = Vec::with_capacity(build.children.len());
+        for (slot, child) in build.children.iter().enumerate() {
+            let old = existing
+                .children
+                .get(slot)
+                .cloned()
+                .unwrap_or(ChildSlot::None);
+            children.push(self.reconcile(id, old, child));
+        }
+        for slot in build.children.len()..existing.children.len() {
+            for child in existing.children[slot].ids() {
                 self.remove_subtree(child);
             }
+            self.edit
+                .set(children_unit(self.view, id, slot as u16), ChildSlot::None);
         }
-        self.clear_node_units(node);
-        self.install(node, build, existing.parent);
-        node
+        let node = TreeNode {
+            type_index: build.type_index,
+            variant: build.variant,
+            fields: build.fields.clone(),
+            children: children.clone(),
+            parent: existing.parent,
+        };
+        self.storage.nodes = self.storage.nodes.insert(id, node).0;
+        for (slot, value) in children.iter().enumerate() {
+            self.edit
+                .set(children_unit(self.view, id, slot as u16), value.clone());
+        }
+    }
+
+    fn reconcile(&mut self, parent: TreeNodeId, old: ChildSlot, build: &BuildSlot) -> ChildSlot {
+        match build {
+            BuildSlot::None => {
+                self.drop_slot(old);
+                ChildSlot::None
+            }
+            BuildSlot::Optional(None) => {
+                self.drop_slot(old);
+                ChildSlot::Optional(None)
+            }
+            BuildSlot::One(child) => {
+                let olds = old.ids();
+                let first = olds.first().copied();
+                for extra in olds.iter().skip(1) {
+                    self.remove_subtree(*extra);
+                }
+                ChildSlot::One(self.reuse_or_build(parent, first, child))
+            }
+            BuildSlot::Optional(Some(child)) => {
+                let olds = old.ids();
+                let first = olds.first().copied();
+                for extra in olds.iter().skip(1) {
+                    self.remove_subtree(*extra);
+                }
+                ChildSlot::Optional(Some(self.reuse_or_build(parent, first, child)))
+            }
+            BuildSlot::Many(builds) => {
+                let olds = old.ids();
+                let mut result = Vec::with_capacity(builds.len());
+                for (index, child) in builds.iter().enumerate() {
+                    match olds.get(index).copied() {
+                        Some(old_id) if self.reusable(old_id, child) => {
+                            self.apply(old_id, child);
+                            result.push(old_id);
+                        }
+                        old_id => {
+                            if let Some(old_id) = old_id {
+                                self.remove_subtree(old_id);
+                            }
+                            result.push(self.build(child, Some(parent)));
+                        }
+                    }
+                }
+                for id in olds.iter().skip(builds.len()) {
+                    self.remove_subtree(*id);
+                }
+                ChildSlot::Many(result)
+            }
+        }
+    }
+
+    fn reuse_or_build(
+        &mut self,
+        parent: TreeNodeId,
+        old: Option<TreeNodeId>,
+        build: &TreeBuild,
+    ) -> TreeNodeId {
+        if let Some(old) = old {
+            if self.reusable(old, build) {
+                self.apply(old, build);
+                return old;
+            }
+            self.remove_subtree(old);
+        }
+        self.build(build, Some(parent))
+    }
+
+    fn reusable(&self, id: TreeNodeId, build: &TreeBuild) -> bool {
+        self.storage.node(id).is_some_and(|node| {
+            node.type_index == build.type_index && node.variant == build.variant
+        })
+    }
+
+    fn drop_slot(&mut self, old: ChildSlot) {
+        for child in old.ids() {
+            self.remove_subtree(child);
+        }
     }
 
     /// Removes a subtree.
@@ -698,47 +817,6 @@ impl<'a> TreeEditor<'a> {
                 .set(children_unit(self.view, id, slot_id), built);
         }
         id
-    }
-
-    fn install(&mut self, id: TreeNodeId, build: &TreeBuild, parent: Option<TreeNodeId>) {
-        let node = TreeNode {
-            type_index: build.type_index,
-            variant: build.variant,
-            fields: build.fields.clone(),
-            children: vec![ChildSlot::None; build.children.len()],
-            parent,
-        };
-        self.storage.nodes = self.storage.nodes.insert(id, node).0;
-        self.edit.set(membership_unit(self.view, id), true);
-        self.edit.set(tag_unit(self.view, id), (build.type_index, build.variant));
-        self.edit.set(parent_unit(self.view, id), parent);
-        for (slot, value) in build.fields.iter().enumerate() {
-            self.edit
-                .set(field_unit(self.view, id, slot as u16), value.clone());
-        }
-        for (slot, child) in build.children.iter().enumerate() {
-            let slot_id = slot as u16;
-            let built = match child {
-                BuildSlot::None => ChildSlot::None,
-                BuildSlot::One(child) => ChildSlot::One(self.build(child, Some(id))),
-                BuildSlot::Optional(None) => ChildSlot::Optional(None),
-                BuildSlot::Optional(Some(child)) => {
-                    ChildSlot::Optional(Some(self.build(child, Some(id))))
-                }
-                BuildSlot::Many(children) => ChildSlot::Many(
-                    children
-                        .iter()
-                        .map(|child| self.build(child, Some(id)))
-                        .collect(),
-                ),
-            };
-            if let Some(mut node) = self.storage.node(id).cloned() {
-                node.children[slot] = built.clone();
-                self.storage.nodes = self.storage.nodes.insert(id, node).0;
-            }
-            self.edit
-                .set(children_unit(self.view, id, slot_id), built);
-        }
     }
 
     fn clear_node_units(&mut self, id: TreeNodeId) {

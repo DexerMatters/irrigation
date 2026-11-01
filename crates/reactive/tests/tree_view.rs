@@ -220,3 +220,88 @@ fn leaf_field_edits_do_not_invalidate_other_projections() {
         "unexpected node growth: {before:?} -> {after:?}"
     );
 }
+
+#[test]
+fn replacing_a_variant_reuses_unchanged_children() {
+    let runtime = runtime();
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<syntax::Syntax>();
+            tree.set_root(&document());
+        })
+        .expect("edit");
+
+    let (root_id, call_id, callee_id, arg_id, literal_id, second_id) = {
+        let snapshot = runtime.snapshot();
+        let view = snapshot.view::<syntax::Syntax>();
+        let root = view.root().expect("root");
+        let items = root.items();
+        let call = items[0].clone();
+        let callee = call.callee().expect("callee");
+        let args = call.args();
+        let literal = args[0].literal().expect("literal");
+        (
+            root.raw(),
+            call.raw(),
+            callee.raw(),
+            args[0].raw(),
+            literal.raw(),
+            items[1].raw(),
+        )
+    };
+
+    // Replacing the root with an identical document changes no identity.
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<syntax::Syntax>();
+            let replaced = tree.replace_root(tree.root(), &document());
+            assert_eq!(replaced.raw(), root_id);
+        })
+        .expect("edit");
+    let after_identical = {
+        let snapshot = runtime.snapshot();
+        let view = snapshot.view::<syntax::Syntax>();
+        let root = view.root().expect("root");
+        let items = root.items();
+        let call = items[0].clone();
+        let callee = call.callee().expect("callee");
+        let args = call.args();
+        let literal = args[0].literal().expect("literal");
+        (
+            root.raw(),
+            call.raw(),
+            callee.raw(),
+            args[0].raw(),
+            literal.raw(),
+            items[1].raw(),
+        )
+    };
+    assert_eq!(
+        after_identical,
+        (root_id, call_id, callee_id, arg_id, literal_id, second_id),
+        "an identical replacement must not renumber descendants"
+    );
+
+    // A variant change reuses the replaced node and removes only its old child;
+    // unrelated siblings keep their identities.
+    runtime
+        .edit(|edit| {
+            let mut tree = edit.view::<syntax::Syntax>();
+            let items = tree.root().items();
+            tree.replace_expr(
+                items[1].clone(),
+                &syntax::Expr::Name(String::from("x")),
+            );
+        })
+        .expect("edit");
+    let snapshot = runtime.snapshot();
+    let view = snapshot.view::<syntax::Syntax>();
+    let root = view.root().expect("root");
+    let items = root.items();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[1].raw(), second_id, "the replaced node keeps its id");
+    assert_eq!(items[1].name(), Some(String::from("x")));
+    assert_eq!(items[0].raw(), call_id);
+    assert_eq!(items[0].callee().expect("callee").raw(), callee_id);
+    assert_eq!(view.node_count(), 6, "the old literal child was retracted");
+}
