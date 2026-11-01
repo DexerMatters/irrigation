@@ -13,14 +13,18 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, Item, ItemFn, ItemMod, Pat, ReturnType, Type, Visibility};
 
-use crate::attr::take_component;
+use crate::attr::{ComponentConfig, parse_component_config, take_component};
 use crate::lower::Lowerer;
 use crate::names::pascal_case;
 
 /// Expands one `#[component]` function.
-pub fn expand_component(input: TokenStream) -> TokenStream {
+pub fn expand_component(args: TokenStream, input: TokenStream) -> TokenStream {
+    let config = match parse_component_config(args) {
+        Ok(config) => config,
+        Err(error) => return error.to_compile_error(),
+    };
     match syn::parse2::<ItemFn>(input) {
-        Ok(item) => match expand_fn(item) {
+        Ok(item) => match expand_fn(item, &config) {
             Ok(tokens) => tokens,
             Err(error) => error.to_compile_error(),
         },
@@ -42,8 +46,15 @@ pub fn expand_module(input: TokenStream) -> TokenStream {
     for item in items {
         match item {
             Item::Fn(mut function) => {
-                if take_component(&mut function.attrs) {
-                    match expand_fn(function) {
+                if let Some(args) = take_component(&mut function.attrs) {
+                    let config = match parse_component_config(args) {
+                        Ok(config) => config,
+                        Err(error) => {
+                            expanded.push(error.to_compile_error());
+                            continue;
+                        }
+                    };
+                    match expand_fn(function, &config) {
                         Ok(tokens) => expanded.push(tokens),
                         Err(error) => expanded.push(error.to_compile_error()),
                     }
@@ -65,7 +76,7 @@ pub fn expand_module(input: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
+fn expand_fn(item: ItemFn, config: &ComponentConfig) -> syn::Result<TokenStream> {
     let name = item.sig.ident.clone();
     let name_str = name.to_string();
     let vis = item.vis.clone();
@@ -95,6 +106,7 @@ fn expand_fn(item: ItemFn) -> syn::Result<TokenStream> {
 
     // Lower the body into tracked primitives.
     let mut lowerer = Lowerer::new();
+    lowerer.set_policy(config.strict, config.allowed.clone());
     let body = lowerer.block(&item.block);
     let body_block: syn::Block = syn::parse2(body)?;
 
@@ -382,3 +394,36 @@ fn output_types(output: &ReturnType) -> Vec<Type> {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn strict_components_reject_undeclared_calls() {
+        let tokens = expand_component(
+            quote!(strict),
+            quote!(fn c(x: u64) -> u64 { helper(x) }),
+        );
+        assert!(
+            tokens.to_string().contains("opaque call"),
+            "strict mode must reject an undeclared call"
+        );
+    }
+
+    #[test]
+    fn strict_components_allow_declared_primitives() {
+        let tokens = expand_component(
+            quote!(strict, allows = [helper]),
+            quote!(fn c(x: u64) -> u64 { helper(x) }),
+        );
+        assert!(!tokens.to_string().contains("opaque call"));
+    }
+
+    #[test]
+    fn components_are_permissive_by_default() {
+        let tokens = expand_component(quote!(), quote!(fn c(x: u64) -> u64 { helper(x) }));
+        assert!(!tokens.to_string().contains("opaque call"));
+    }
+}

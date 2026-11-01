@@ -52,6 +52,8 @@ impl Lowered {
 /// Lowers one component body.
 pub struct Lowerer {
     counter: u32,
+    strict: bool,
+    allowed: Vec<String>,
     scopes: Vec<std::collections::HashMap<String, TokenStream>>,
     /// Inside a closure body no per-expression nodes are created: the closure
     /// may be called many times in one scope (for example by an iterator
@@ -66,6 +68,8 @@ impl Lowerer {
     pub fn new() -> Self {
         Self {
             counter: 0,
+            strict: false,
+            allowed: Vec::new(),
             scopes: vec![std::collections::HashMap::new()],
             inline_depth: 0,
         }
@@ -90,6 +94,48 @@ impl Lowerer {
         quote! {
             reactive::SiteId(0x8000_0000u32 | (#counter as u32))
         }
+    }
+
+    /// Sets the strict-mode policy for opaque calls.
+    pub fn set_policy(&mut self, strict: bool, allowed: Vec<String>) {
+        self.strict = strict;
+        self.allowed = allowed;
+    }
+
+    fn is_declared_primitive(&self, name: &str) -> bool {
+        if self
+            .allowed
+            .iter()
+            .any(|allowed| name == allowed || name.ends_with(&format!("::{allowed}")))
+        {
+            return true;
+        }
+        const PURE: &[&str] = &[
+            "Some",
+            "None",
+            "Ok",
+            "Err",
+            "String::from",
+            "Vec::new",
+            "Vec::from",
+            "Box::new",
+            "u8::from",
+            "u16::from",
+            "u32::from",
+            "u64::from",
+            "usize::from",
+            "i8::from",
+            "i16::from",
+            "i32::from",
+            "i64::from",
+            "isize::from",
+            "f32::from",
+            "f64::from",
+            "Default::default",
+            "std::mem::take",
+            "std::mem::replace",
+        ];
+        PURE.contains(&name)
     }
 
     fn error<T: ToTokens>(&self, tokens: T, message: &str) -> Lowered {
@@ -279,6 +325,16 @@ impl Lowerer {
                 self.node_or_inline(quote!(#receiver.#method #turbofish (#(#args),*)))
             }
             Expr::Call(call) => {
+                if self.strict
+                    && !self.is_declared_primitive(&call.func.to_token_stream().to_string())
+                {
+                    return self.error(
+                        &call.func,
+                        "opaque call in a strict component; declare it with \
+                         `#[component(strict, allows = [path])]`, or move the work into a \
+                         `GeneralComponent`",
+                    );
+                }
                 let function = self.expr(&call.func);
                 let args: Vec<TokenStream> = call.args.iter().map(|arg| self.argument(arg)).collect();
                 self.node_or_inline(quote!(#function(#(#args),*)))

@@ -4606,3 +4606,40 @@ fn argument_churn_stays_within_the_retention_policy() {
     );
     assert!(runtime.wait_edges().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Strict components and declared primitives (N6 partial)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct StrictKey {
+    value: u64,
+}
+
+fn strict_double(value: u64) -> u64 {
+    value * 2
+}
+
+#[reactive]
+mod strict_gate {
+    use super::{StrictKey, strict_double};
+
+    #[component(strict, allows = [strict_double])]
+    pub fn root(key: &StrictKey) -> u64 {
+        let value = key.value();
+        strict_double(value)
+    }
+}
+
+#[test]
+fn a_strict_component_runs_a_declared_primitive() {
+    let runtime = Runtime::new();
+    runtime.install(strict_gate::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<StrictKey>().set_value(21))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<strict_gate::Root>().expect("read"),
+        42
+    );
+}

@@ -241,6 +241,10 @@ field edit on a leaf keeps that leaf's id.
 - Every value-producing expression becomes `reactive::eval(site, || ...)`, keyed
   by `(scope, site)`. Site ids are sequential per component; component bodies
   are isolated by their scopes.
+- `#[component(strict, allows = [helper, ...])]` rejects free-function calls
+  that are not declared primitives, keeping the unsupported-call policy
+  explicit. The default remains permissive while legacy components migrate;
+  method calls, IO, and hidden mutation are not yet checked.
 - Every `let` binding records the node that produced its value; uses observe that
   node (`observe_clone`/`observe_ref`) so consumers depend on producers.
 - Closures are lowered inline. A closure may be called many times in one scope,

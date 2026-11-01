@@ -30,8 +30,8 @@ pub fn view(args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Turns a function into a reactive component generator.
 #[proc_macro_attribute]
-pub fn component(_args: TokenStream, input: TokenStream) -> TokenStream {
-    component::expand_component(input.into()).into()
+pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
+    component::expand_component(args.into(), input.into()).into()
 }
 
 /// Declares a module of components.
