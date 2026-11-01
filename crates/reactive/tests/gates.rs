@@ -3033,3 +3033,92 @@ fn a_call_projection_is_independently_demandable() {
         (3, 4)
     );
 }
+
+#[test]
+fn a_join_tracks_both_inputs_changing_in_one_transaction() {
+    JOIN_COMBINES.store(0, std::sync::atomic::Ordering::SeqCst);
+    let runtime = Runtime::new();
+    runtime.register_view(<LeftTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<RightTable as reactive::ViewSchema>::DESCRIPTOR);
+    runtime
+        .install_general(reactive::EquiJoin::<PairJoin>::new())
+        .expect("install");
+
+    let mut left: Vec<(u32, u64)> = vec![(1, 10), (2, 20), (3, 30)];
+    let mut right: Vec<(u32, u64)> = vec![(1, 2), (2, 3), (3, 4)];
+    runtime
+        .edit(|edit| {
+            {
+                let mut l = edit.view::<LeftTable>();
+                let mut entries = l.entries();
+                for (key, value) in &left {
+                    entries.insert(*key, *value);
+                }
+            }
+            let mut r = edit.view::<RightTable>();
+            let mut entries = r.entries();
+            for (key, value) in &right {
+                entries.insert(*key, *value);
+            }
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        from_scratch_join(&left, &right)
+    );
+
+    // Both sides change in one revision, with removals, an update and
+    // insertions on each side.
+    left = vec![(1, 10), (2, 21), (4, 40)];
+    right = vec![(1, 2), (2, 3), (5, 50)];
+    runtime
+        .edit(|edit| {
+            {
+                let mut l = edit.view::<LeftTable>();
+                let mut entries = l.entries();
+                entries.remove(&3);
+                entries.insert(2, 21);
+                entries.insert(4, 40);
+            }
+            let mut r = edit.view::<RightTable>();
+            let mut entries = r.entries();
+            entries.remove(&3);
+            entries.insert(5, 50);
+        })
+        .expect("edit");
+    let expected = from_scratch_join(&left, &right);
+    assert_eq!(
+        runtime
+            .read_outputs_general::<reactive::EquiJoin<PairJoin>>()
+            .expect("join"),
+        expected
+    );
+    assert_eq!(expected.get(&1), Some(&20));
+    assert_eq!(expected.get(&2), Some(&63));
+}
+
+#[test]
+fn invalidation_cost_is_counted() {
+    let runtime = Runtime::new();
+    runtime.install(structure_map::Root).expect("install");
+    let before = runtime.stats().invalidations;
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(1))
+        .expect("edit");
+    let after = runtime.stats().invalidations;
+    assert!(
+        after > before,
+        "the edit must invalidate its dependents: {before} -> {after}"
+    );
+
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(1))
+        .expect("no-op edit");
+    assert_eq!(
+        runtime.stats().invalidations,
+        after,
+        "a no-op transaction must not invalidate"
+    );
+}

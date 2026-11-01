@@ -429,6 +429,8 @@ pub struct Stats {
     pub validations: std::sync::atomic::AtomicU64,
     /// Revisions published.
     pub revisions: std::sync::atomic::AtomicU64,
+    /// Nodes marked suspect by invalidation.
+    pub invalidations: std::sync::atomic::AtomicU64,
 }
 
 /// Everything the runtime protects with its metadata lock.
@@ -559,6 +561,7 @@ impl State {
 pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, revision: Revision) {
     let mut stack: Vec<NodeId> = seeds.into_iter().collect();
     let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut marked = 0u64;
     while let Some(node) = stack.pop() {
         if !seen.insert(node) {
             continue;
@@ -568,10 +571,15 @@ pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, re
             continue;
         }
         record.suspect_at = revision;
+        marked += 1;
         for dependent in &record.dependents {
             stack.push(*dependent);
         }
     }
+    state
+        .stats
+        .invalidations
+        .fetch_add(marked, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[cfg(test)]

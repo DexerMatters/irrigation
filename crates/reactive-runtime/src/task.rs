@@ -41,8 +41,6 @@ pub enum TaskStatus {
     Running,
     /// The attempt suspended on a node.
     Waiting(NodeId),
-    /// The attempt finished.
-    Done,
 }
 
 /// One attempt's outcome.

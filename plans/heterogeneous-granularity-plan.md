@@ -157,7 +157,8 @@ the structure unit from the committed content after `apply_definitions` and
 on change. Source editors may keep writing it until Phase 1.1 unifies both
 paths; a debug assertion can compare the two.
 
-**Status: fixed.** `ViewField::structure` projects a field's canonical structure;
+**Status: fixed.** `MapRef::len`/`is_empty` read the structure map directly (no
+`keys()` allocation). `ViewField::structure` projects a field's canonical structure;
 the content vtable carries the projection and its equality; the runtime
 recomputes the structure unit after definition installs and membership
 retraction, with cutoff on value-only edits. A statement-position `if`/`match`

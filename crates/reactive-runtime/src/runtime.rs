@@ -511,7 +511,6 @@ impl Runtime {
                 crate::task::TaskStatus::Queued => tasks.queued += 1,
                 crate::task::TaskStatus::Running => tasks.running += 1,
                 crate::task::TaskStatus::Waiting(_) => tasks.waiting += 1,
-                crate::task::TaskStatus::Done => {}
             }
         }
         RuntimeStats {
@@ -519,6 +518,7 @@ impl Runtime {
             executions: state.stats.executions.load(Ordering::Relaxed),
             validations: state.stats.validations.load(Ordering::Relaxed),
             revisions: state.stats.revisions.load(Ordering::Relaxed),
+            invalidations: state.stats.invalidations.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
             tasks,
         }
@@ -761,6 +761,8 @@ pub struct RuntimeStats {
     pub validations: u64,
     /// Published revisions.
     pub revisions: u64,
+    /// Nodes marked suspect by invalidation.
+    pub invalidations: u64,
     /// Nodes currently allocated.
     pub nodes: usize,
     /// In-flight demand tasks.

@@ -137,26 +137,33 @@ where
         UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(key.clone()))
     }
 
+    fn structure(&self) -> PMap<K, ()> {
+        read_unit_value(structure_unit(self.view, self.field), |content| {
+            Some(
+                (self.content)(content)
+                    .iter()
+                    .map(|(key, _)| (key.clone(), ()))
+                    .collect(),
+            )
+        })
+    }
+
     /// Reads the map's key set, recording one structural observation.
     #[must_use]
     pub fn keys(&self) -> Vec<K> {
-        let structure: PMap<K, ()> =
-            read_unit_value(structure_unit(self.view, self.field), |content| {
-                Some((self.content)(content).iter().map(|(key, _)| (key.clone(), ())).collect())
-            });
-        structure.iter().map(|(key, ())| key.clone()).collect()
+        self.structure().iter().map(|(key, ())| key.clone()).collect()
     }
 
     /// Number of entries.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.keys().len()
+        self.structure().len()
     }
 
     /// Returns `true` when the map has no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.structure().is_empty()
     }
 
     /// Returns `true` when the key is present.
