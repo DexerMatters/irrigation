@@ -706,12 +706,19 @@ impl Inner {
                 providers.push((unit.clone(), provider.node));
             }
         }
+        let planned = state
+            .route_plans
+            .iter()
+            .filter(|(unit, _)| unit.view == view)
+            .map(|(unit, component)| (unit.clone(), *component))
+            .collect();
         Some(crate::runtime::RoutingRecipe {
             stamp: crate::runtime::RoutingStamp {
                 view,
                 version: region.routing_version,
             },
             providers,
+            planned,
         })
     }
 

@@ -6071,3 +6071,41 @@ fn planned_routes_authorize_one_component() {
         "the planned provider's value stays authoritative"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Planned routes join the routing generation (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn planning_a_route_advances_the_routing_generation() {
+    let runtime = Runtime::new();
+    runtime.register_view(<CallSlot as reactive::ViewSchema>::DESCRIPTOR);
+    let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let unit = reactive::UnitKey::field(
+        view,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    );
+    let before = runtime.routing_stamp(view).expect("region stamp");
+    runtime.plan_route([(
+        unit.clone(),
+        <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID,
+    )]);
+    assert!(
+        !runtime.validate_routing(&before),
+        "installing a plan is a routing change"
+    );
+    let after = runtime.routing_stamp(view).expect("region stamp");
+    assert!(runtime.validate_routing(&after));
+    let recipe = runtime.routing_recipe(view).expect("recipe");
+    assert!(
+        recipe
+            .planned
+            .iter()
+            .any(|(planned, component)| {
+                *planned == unit
+                    && *component == <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID
+            }),
+        "the recipe names the planned component"
+    );
+}

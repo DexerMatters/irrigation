@@ -785,7 +785,11 @@ impl Runtime {
     ) {
         let mut state = self.inner.lock();
         for (unit, component) in entries {
+            let view = unit.view;
             state.route_plans.insert(unit, component);
+            if let Some(region) = state.regions.get_mut(&view) {
+                region.routing_version = region.routing_version.wrapping_add(1);
+            }
         }
     }
 
@@ -1180,6 +1184,11 @@ pub struct RoutingRecipe {
     pub stamp: RoutingStamp,
     /// One provider per installed logical unit, unsorted.
     pub providers: Vec<(reactive_core::descriptor::UnitKey, reactive_core::ids::NodeId)>,
+    /// Planned provider components for units that do not have a value yet.
+    pub planned: Vec<(
+        reactive_core::descriptor::UnitKey,
+        reactive_core::ids::ComponentId,
+    )>,
 }
 
 /// A [`RouteSelector`] that prefers the providers captured in a recipe.
