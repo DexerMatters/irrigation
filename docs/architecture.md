@@ -280,6 +280,9 @@ field edit on a leaf keeps that leaf's id.
 - Every value-producing expression becomes `reactive::eval(site, || ...)`, keyed
   by `(scope, site)`. Site ids are sequential per component; component bodies
   are isolated by their scopes.
+- `let mut` locals are rejected: locals are immutable bindings in the lowered
+  graph, so mutable state must be expressed functionally or in a
+  `GeneralComponent`. This prevents silently dropped writes.
 - `#[component(strict, allows = [helper, ...])]` rejects free-function calls
   that are not declared primitives, keeping the unsupported-call policy
   explicit. The default remains permissive while legacy components migrate;

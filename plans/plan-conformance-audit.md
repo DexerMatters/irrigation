@@ -143,7 +143,7 @@ Status values: **yes** (conformant), **partial**, **no** (absent or divergent),
 | Plan | Status | Evidence / note |
 |---|---|---|
 | §2.1 primitive-level precision | partial | `get`/`contains_key`/`edge_weight` observe narrow units (tests); `map[k].field` observes the whole value of key `k`, not its fields; whole collection algorithms re-traverse members for assembly while bodies stay memoized (F6). |
-| §2.1 reject unsupported lowering | **no** | Loops, `return`, `unsafe`, `async`, effect macros are rejected, but arbitrary function calls are accepted as opaque nodes (N6); the plan names opaque calls explicitly. |
+| §2.1 reject unsupported lowering | **partial** | Loops, `return`, `unsafe`, `async`, effect macros, and `let mut` locals (whose writes the closure lowering cannot preserve) are rejected with diagnostics; strict components reject undeclared free-function calls. The default still accepts arbitrary calls as opaque nodes (N6). |
 | §2.2 one definition per unit | **partial/no** | Enforced for root demands, bypassed by `Runtime::call` (N3); diagnostics lack source locations (N17). |
 | §2.2 diagnostics at construction/expansion | partial | End-of-revision reachability resolution (handover) is a different mechanism; no source spans. |
 | §2.3 dynamic dependency staging | yes | Key nodes + membership/value units discovered at execution; cached and re-validated (negative-read gates). |
@@ -592,7 +592,11 @@ Join cross-term and bag-semantics gates (N21) are implemented
 `a_join_tracks_both_inputs_changing_in_one_transaction`), and a randomized
 join differential test (`randomized_join_edits_match_the_from_scratch_oracle`)
 caught and now covers an empty-source structure-initialization bug
-(`joining_two_empty_source_maps_is_empty`). Schedule-perturbation
+(`joining_two_empty_source_maps_is_empty`). A randomized graph differential
+test (`randomized_graph_edits_match_the_from_scratch_oracle`) drives node, edge,
+and payload edits and compares the full node/edge/adjacency summary; it exposed
+a lowering bug where `let mut` writes were silently dropped, now rejected at
+compile time. Schedule-perturbation
 coverage is added: `schedule_perturbation_preserves_parallel_results` runs a
 parallel map under 1/2/4 workers with randomized spins/yields and eight edits
 per configuration. Still open: a phase-4 gate for "downstream progress before
