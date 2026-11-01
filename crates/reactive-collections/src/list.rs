@@ -77,6 +77,16 @@ where
             .is_some_and(|id| storage.iter().any(|(existing, _)| existing == id))
     }
 
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        let ids: PSeq<u64> = storage.iter().map(|(id, _)| *id).collect();
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(ids),
+            eq: |left, right| {
+                left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>()
+            },
+        })
+    }
+
     fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         let id = key.as_any().downcast_ref::<u64>()?;
         storage

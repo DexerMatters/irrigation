@@ -1,11 +1,12 @@
 # Heterogeneous View granularity: audit and plan
 
-Status: audit complete; Phase C0 fixes are in progress in the companion audit.
-F3, F4 and F5 are fixed with gates (see `plan-conformance-audit.md`, C0
-progress): observer refresh no longer fails edits, retirement skips live
-claims, and definition installs are two-phase. F1, F2 and the structural F6–F13
-items remain open. Commit `fea9055` (transaction normalization) came out of the
-first audit and is merged.
+Status: audit complete; phase 0 of this plan is complete. F1 and F2 are fixed
+with gates, as are F3–F5: derived collection structure units are maintained
+from committed content, derived `Reduced`/`Graph` fields are rejected at
+compile time, observer refresh no longer fails edits, retirement skips live
+claims, and definition installs are two-phase. The structural F6–F13 items
+remain open. Commit `fea9055` (transaction normalization) came out of the first
+audit and is merged.
 
 Relation to the other documents:
 
@@ -156,10 +157,18 @@ the structure unit from the committed content after `apply_definitions` and
 on change. Source editors may keep writing it until Phase 1.1 unifies both
 paths; a debug assertion can compare the two.
 
-**Gates.** `derived_map_structure_follows_definition_changes` (key add, key
-remove, whole-map replace, read-before-first-define ordering),
-`derived_map_value_edits_do_not_touch_structure`,
-`join_over_derived_maps_tracks_key_sets`.
+**Status: fixed.** `ViewField::structure` projects a field's canonical structure;
+the content vtable carries the projection and its equality; the runtime
+recomputes the structure unit after definition installs and membership
+retraction, with cutoff on value-only edits. A statement-position `if`/`match`
+is now its own node, so a switched-off branch retires its definitions before the
+next statement reads the affected units. Gates:
+`derived_map_structure_follows_definition_changes` (key add, key remove,
+whole-map replace, read-before-first-define ordering, statement-position
+definitions) and `derived_map_value_edits_do_not_touch_structure`.
+`join_over_derived_maps_tracks_key_sets` is still missing: `EquiJoin` cannot
+demand a provider component because the runtime has one root. Structure refresh
+is per-unit on retraction; batching is part of the Phase 1.1 unification.
 
 ### F2 — Derived `Reduced` and `Graph` fields fail to compile with macro-internal errors (high)
 

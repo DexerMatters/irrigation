@@ -67,6 +67,13 @@ fn settings_contains(_content: &Arc<dyn Any + Send + Sync>, _key: &UnitKey) -> b
     true
 }
 
+fn settings_structure(
+    _content: &Arc<dyn Any + Send + Sync>,
+    _field: reactive_core::ids::FieldId,
+) -> Option<reactive_core::descriptor::Structure> {
+    None
+}
+
 fn settings_get(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> Option<Value> {
     let content = content.downcast_ref::<SettingsContent>()?;
     match key.field.0 {
@@ -98,6 +105,7 @@ static SETTINGS_DESC: ViewDescriptor = ViewDescriptor {
         retract: settings_retract,
         contains: settings_contains,
         get: settings_get,
+        structure: settings_structure,
         eq: settings_eq,
         debug: settings_debug,
     },

@@ -74,6 +74,23 @@ Implemented and gated (commit `fd0a4ce`…`d9f…`):
 
 C0 is complete.
 
+### C1 progress
+
+| Finding | Fix | Gate |
+|---|---|---|
+| F1 | Derived collection structure units are projected from committed content and refreshed on membership changes, with cutoff on value-only edits | `derived_map_structure_follows_definition_changes`, `derived_map_value_edits_do_not_touch_structure` |
+| F2 | Derived `Reduced`/`Graph` fields are rejected with attribute-level diagnostics | `a_derived_reduced_field_is_a_clear_diagnostic`, `a_derived_graph_field_is_a_clear_diagnostic` (macro unit tests) |
+| N24 (new) | Statement-position `if`/`match`/block statements are nodes, so a switched-off branch retires definitions before the next statement reads their units | covered by the statement form of `derived_map_structure_follows_definition_changes` |
+
+N24 was found while gating F1: definitions staged in statement-position branches
+were retired only at the enclosing component's commit, after later statements
+had already read the stale units. The lowering now gives control-flow statements
+their own `eval` node.
+
+Still open from C1: N6 (declared primitives), N11 (tree replacement identity),
+N12 (per-projection demand). The join-over-derived-maps gate is deferred: the
+runtime has one root, and `EquiJoin` cannot demand a provider component.
+
 ## 2. Section-by-section conformance
 
 Status values: **yes** (conformant), **partial**, **no** (absent or divergent),

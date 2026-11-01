@@ -52,6 +52,7 @@ pub use reactive_runtime::{
     read_unit_value, try_read_unit_value, view_content,
 };
 pub use reactive_core::descriptor::{
+    Structure,
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
 };
 pub use reactive_store::field::{Scalar, ViewField};

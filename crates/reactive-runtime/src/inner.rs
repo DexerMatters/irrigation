@@ -25,7 +25,7 @@ use std::time::Duration;
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::{self, CancelToken, Dep, Frame, FrameGuard};
 use reactive_core::hash::{FxHashMap, hash_one};
-use reactive_core::ids::{ComponentId, NodeId, Revision, ScopeId, SiteId, Version, ViewId};
+use reactive_core::ids::{ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId};
 use reactive_core::key::{AnyKey, any_key};
 use reactive_core::ops::{RuntimeOps, catch_engine};
 use reactive_core::value::{Value, value_of};
@@ -909,6 +909,55 @@ impl Inner {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Recomputes one field's structure unit from the committed content.
+    fn refresh_structure(
+        state: &mut State,
+        region: &mut Region,
+        field: FieldId,
+        revision: Revision,
+        changed_nodes: &mut Vec<NodeId>,
+    ) {
+        let descriptor = region.descriptor;
+        let Some(structure) = (descriptor.content.structure)(&region.content, field) else {
+            return;
+        };
+        let key = UnitKey::field(descriptor.id, field, UnitKind::Structure);
+        let node = match region.units.get(&key) {
+            Some(slot) => slot.node,
+            None => {
+                let node = Self::ensure_unit_node(state, key.clone(), None);
+                region.units.insert(
+                    any_key(key.clone()),
+                    UnitSlot {
+                        node,
+                        present: true,
+                    },
+                );
+                node
+            }
+        };
+        let changed = {
+            let record = state.node(node);
+            record
+                .value
+                .as_ref()
+                .is_none_or(|old| !(structure.eq)(old, &structure.value))
+        };
+        {
+            let record = state.node_mut(node);
+            if changed {
+                record.value = Some(structure.value);
+                record.changed_at = revision;
+                changed_nodes.push(node);
+            }
+            record.verified_at = revision;
+            record.suspect_at = 0;
+            record.state = NodeState::Ready;
+            record.failure = None;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn apply_definitions(
         &self,
         state: &mut State,
@@ -921,6 +970,7 @@ impl Inner {
     ) -> Result<()> {
         let descriptor = region.descriptor;
         let mut content = Arc::clone(&region.content);
+        let mut dirty_fields: Vec<FieldId> = Vec::new();
         for draft in drafts {
             let owner = owner_key(&draft.unit);
             if let Some(existing) = region.owners.get(&owner) {
@@ -1001,6 +1051,9 @@ impl Inner {
                 if let Some(slot) = region.units.get_mut(&membership) {
                     slot.present = true;
                 }
+                if !dirty_fields.contains(&draft.unit.field) {
+                    dirty_fields.push(draft.unit.field);
+                }
             }
             content = (descriptor.content.define)(&content, &draft.unit, Arc::clone(&draft.value));
             region.owners.insert(
@@ -1031,6 +1084,9 @@ impl Inner {
             changed_nodes.push(region.content_node);
         }
         region.content = content;
+        for field in dirty_fields {
+            Self::refresh_structure(state, region, field, revision, changed_nodes);
+        }
         Ok(())
     }
 
@@ -1075,12 +1131,14 @@ impl Inner {
                 changed_nodes.extend(dependents);
             }
         }
+        let mut removed_membership = false;
         if unit.entity.is_some() {
             let membership = membership_key(unit);
             if let Some(slot) = region.units.get(&membership) {
                 let node = slot.node;
                 let present = slot.present;
                 if present {
+                    removed_membership = true;
                     let record = state.node_mut(node);
                     record.value = Some(value_of(false));
                     record.changed_at = revision;
@@ -1120,6 +1178,9 @@ impl Inner {
             changed_nodes.push(region.content_node);
         }
         region.content = content;
+        if removed_membership {
+            Self::refresh_structure(state, region, unit.field, revision, changed_nodes);
+        }
         Ok(())
     }
 

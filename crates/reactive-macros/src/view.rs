@@ -79,12 +79,29 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
 
     let derived = matches!(kind, ViewKindArg::Derived);
     for field in &fields {
-        if let FieldShape::Tree(_) = field.shape {
-            return Err(syn::Error::new_spanned(
-                &field.ty,
-                "tree fields are declared with `#[tree_view]`; \
-                 a `#[view]` struct cannot own an enum-group tree",
-            ));
+        match &field.shape {
+            FieldShape::Tree(_) => {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "tree fields are declared with `#[tree_view]`; \
+                     a `#[view]` struct cannot own an enum-group tree",
+                ));
+            }
+            FieldShape::Reduced(_) if derived => {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "derived views cannot declare `Reduced` fields; \
+                     maintain a reduction with a `GeneralComponent` or a source view",
+                ));
+            }
+            FieldShape::Graph(_, _) if derived => {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "derived views cannot declare `Graph` fields; \
+                     populate a graph with edits or a `GeneralComponent`",
+                ));
+            }
+            _ => {}
         }
     }
 
@@ -104,6 +121,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let retract_fn = format_ident!("__{}_retract", prefix);
     let contains_fn = format_ident!("__{}_contains", prefix);
     let get_fn = format_ident!("__{}_get", prefix);
+    let structure_fn = format_ident!("__{}_structure", prefix);
     let eq_fn = format_ident!("__{}_eq", prefix);
     let debug_fn = format_ident!("__{}_debug", prefix);
 
@@ -223,6 +241,18 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         })
         .collect();
 
+    let structure_arms: Vec<TokenStream> = fields
+        .iter()
+        .map(|field| {
+            let ident = &field.ident;
+            let index = field.index;
+            let marker = marker_for(&field.shape, derived);
+            quote! {
+                #index => <#marker as reactive::ViewField>::structure(&next.#ident),
+            }
+        })
+        .collect();
+
     let vtable = quote! {
         fn #empty_fn() -> ::std::sync::Arc<dyn ::std::any::Any + Send + Sync> {
             ::std::sync::Arc::new(#content_ident::empty())
@@ -283,6 +313,17 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             }
         }
 
+        fn #structure_fn(
+            content: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+            field: reactive::FieldId,
+        ) -> Option<reactive::Structure> {
+            let next = content.downcast_ref::<#content_ident>()?;
+            match field.0 {
+                #( #structure_arms )*
+                _ => None,
+            }
+        }
+
         fn #eq_fn(
             left: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
             right: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -316,6 +357,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 retract: #retract_fn,
                 contains: #contains_fn,
                 get: #get_fn,
+                structure: #structure_fn,
                 eq: #eq_fn,
                 debug: #debug_fn,
             },
@@ -876,5 +918,36 @@ fn single_field_forwarding(
             }
         },
         FieldShape::Graph(_, _) | FieldShape::Tree(_) => quote!(),
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn a_derived_reduced_field_is_a_clear_diagnostic() {
+        let error = expand_inner(quote!(derived), quote!(struct Bad(Reduced<Sum>);))
+            .expect_err("derived reductions must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("derived views cannot declare `Reduced`"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn a_derived_graph_field_is_a_clear_diagnostic() {
+        let error = expand_inner(quote!(derived), quote!(struct Bad(Graph<u32, u64>);))
+            .expect_err("derived graphs must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("derived views cannot declare `Graph`"),
+            "unexpected diagnostic: {error}"
+        );
     }
 }

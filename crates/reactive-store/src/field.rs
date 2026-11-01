@@ -37,6 +37,12 @@ pub trait ViewField: 'static {
 
     /// Reads one value out of the storage, if present.
     fn get(storage: &Self::Storage, key: &dyn AnyKey) -> Option<Value>;
+
+    /// Projects this field's structure (a map's key set, a list's element-id
+    /// sequence, a set's members), when the family has one.
+    fn structure(_storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        None
+    }
 }
 
 /// A single-valued field.

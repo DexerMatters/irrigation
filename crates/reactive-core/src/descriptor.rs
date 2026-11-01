@@ -50,6 +50,25 @@ pub struct FieldDescriptor {
     pub kind: FieldKind,
 }
 
+/// A canonical structure projection of a collection field.
+///
+/// A map's structure is its key set, a list's is its element-id sequence, and a
+/// set's is its member set. The projection lets the runtime maintain structure
+/// units from committed content without knowing the concrete field type.
+#[derive(Clone)]
+pub struct Structure {
+    /// The structure value (for example `PMap<K, ()>` for a map).
+    pub value: crate::value::Value,
+    /// Equality for cutoff on this projection.
+    pub eq: fn(&crate::value::Value, &crate::value::Value) -> bool,
+}
+
+impl fmt::Debug for Structure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Structure")
+    }
+}
+
 /// Operations on a View's immutable content.
 ///
 /// The runtime stores content type-erased; generated code supplies these
@@ -80,6 +99,8 @@ pub struct ContentVtable {
         &Content,
         &UnitKey,
     ) -> Option<crate::value::Value>,
+    /// Projects a field's structure, when the family has one.
+    pub structure: fn(&Content, FieldId) -> Option<Structure>,
     /// Compares two content values semantically.
     pub eq: fn(
         &Content,

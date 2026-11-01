@@ -892,9 +892,17 @@ pub const fn tree_content_vtable() -> ContentVtable {
         retract: tree_retract,
         contains: tree_contains,
         get: tree_get,
+        structure: tree_structure,
         eq: tree_eq,
         debug: tree_debug,
     }
+}
+
+fn tree_structure(
+    _content: &reactive_core::descriptor::Content,
+    _field: reactive_core::ids::FieldId,
+) -> Option<reactive_core::descriptor::Structure> {
+    None
 }
 
 /// The field layout reported by a tree View descriptor.

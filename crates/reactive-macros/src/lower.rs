@@ -114,12 +114,18 @@ impl Lowerer {
     /// Lowers a block.
     pub fn block(&mut self, block: &Block) -> TokenStream {
         self.scopes.push(std::collections::HashMap::new());
-        let statements: Vec<TokenStream> = block.stmts.iter().map(|stmt| self.stmt(stmt)).collect();
+        let last = block.stmts.len().saturating_sub(1);
+        let statements: Vec<TokenStream> = block
+            .stmts
+            .iter()
+            .enumerate()
+            .map(|(index, stmt)| self.stmt(stmt, index == last))
+            .collect();
         self.scopes.pop();
         quote!({ #(#statements)* })
     }
 
-    fn stmt(&mut self, stmt: &Stmt) -> TokenStream {
+    fn stmt(&mut self, stmt: &Stmt, is_tail: bool) -> TokenStream {
         match stmt {
             Stmt::Local(local) => {
                 let pat = &local.pat;
@@ -168,8 +174,21 @@ impl Lowerer {
             }
             Stmt::Expr(expr, semi) => {
                 let lowered = self.expr_node(expr);
-                let tokens = lowered.tokens;
-                if semi.is_some() {
+                let mut tokens = lowered.tokens;
+                // Control-flow statements are effect barriers: a branch can
+                // stage definitions, and a switched-off branch must retire
+                // them before the next statement reads the affected units.
+                // Giving the statement its own node makes that retirement
+                // cascade at the statement boundary instead of at the end of
+                // the enclosing component.
+                let wrapped = lowered.node.is_none()
+                    && self.inline_depth == 0
+                    && matches!(expr, Expr::If(_) | Expr::Match(_) | Expr::Block(_));
+                if wrapped {
+                    let site = self.site();
+                    tokens = quote!(reactive::eval(#site, || #tokens));
+                }
+                if semi.is_some() || (wrapped && !is_tail) {
                     quote!(#tokens;)
                 } else {
                     quote!(#tokens)

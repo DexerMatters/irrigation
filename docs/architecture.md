@@ -138,6 +138,13 @@ are logical units:
 | graph | topology, per-node membership and payload, per-edge payload, per-node adjacency |
 | tree | root, per-node tag, per-field leaf, per-child-slot, parent, membership |
 
+A collection field's structure (a map's key set, a list's element-id sequence, a
+set's members) is maintained by the runtime from the committed content, using
+the content vtable's `structure` projection and its equality for cutoff.
+Definition installs and membership retractions refresh it; value-only edits do
+not. Derived `Reduced` and `Graph` fields are rejected at compile time: those
+families need a `GeneralComponent` or a source View.
+
 Source units are created by edits; derived units by definitions. A definition is
 owned by exactly one provider node; a second live provider is a deterministic
 `DuplicateDefinition` error, including on the `call` path. Installation is

@@ -68,6 +68,16 @@ where
             .is_some_and(|key| storage.contains_key(key))
     }
 
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        let keys: PMap<K, ()> = storage.iter().map(|(key, _)| (key.clone(), ())).collect();
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(keys),
+            eq: |left, right| {
+                left.downcast_ref::<PMap<K, ()>>() == right.downcast_ref::<PMap<K, ()>>()
+            },
+        })
+    }
+
     fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         let key = key.as_any().downcast_ref::<K>()?;
         storage.get(key).map(|value| value_of(value.clone()))

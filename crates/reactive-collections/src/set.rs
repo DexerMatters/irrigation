@@ -63,6 +63,13 @@ where
             .is_some_and(|value| storage.contains(value))
     }
 
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(storage.clone()),
+            eq: |left, right| left.downcast_ref::<PSet<T>>() == right.downcast_ref::<PSet<T>>(),
+        })
+    }
+
     fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         Some(value_of(storage.clone()))
     }
@@ -283,6 +290,13 @@ where
 
     fn contains(_storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> bool {
         true
+    }
+
+    fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
+        Some(reactive_core::descriptor::Structure {
+            value: value_of(storage.clone()),
+            eq: |left, right| left.downcast_ref::<PSet<T>>() == right.downcast_ref::<PSet<T>>(),
+        })
     }
 
     fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {

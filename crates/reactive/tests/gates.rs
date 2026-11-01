@@ -1349,9 +1349,25 @@ fn explanations_name_the_dependency_that_moved() {
         .into_iter()
         .find(|node| node.kind == "InvocationBody" && node.label == "root body")
         .expect("root body");
-    let explanation = runtime.explain_node(root.id);
+    let mut explanation = runtime.explain_node(root.id);
     assert!(!explanation.dependencies.is_empty());
     assert!(explanation.suspect_at > explanation.verified_at);
+    // A control-flow statement is its own node, so the root can legitimately
+    // have a single (moved) dependency. Descend to it to observe the fine
+    // dependencies of the switched branch.
+    if explanation
+        .dependencies
+        .iter()
+        .all(|dependency| dependency.changed || dependency.suspect)
+    {
+        let inner = explanation
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.suspect || dependency.changed)
+            .expect("a moved dependency")
+            .node;
+        explanation = runtime.explain_node(inner);
+    }
     let moved: Vec<_> = explanation
         .dependencies
         .iter()
@@ -2776,4 +2792,135 @@ fn map_member_scopes_compare_keys_not_only_hashes() {
         60,
         "two colliding-hash keys must keep separate member scopes"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Derived map structure follows definition changes (F1)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct StructureMode {
+    mode: u64,
+    value: u64,
+}
+
+#[view(derived)]
+pub struct StructureTable(Map<u32, u64>);
+
+#[reactive]
+mod structure_map {
+    use super::{StructureMode, StructureTable};
+
+    #[component]
+    pub fn root(mode: &StructureMode) -> (Vec<u32>, usize, Vec<(u32, u64)>) {
+        reactive::ensure_view(<StructureTable as reactive::ViewSchema>::DESCRIPTOR);
+        let table = StructureTable;
+        if mode.mode() == 1 {
+            table.define(3, 30);
+        } else if mode.mode() == 2 {
+            table.define(1, mode.value());
+            table.define(2, mode.value() + 1);
+        }
+        let keys = table.keys();
+        let values = keys
+            .iter()
+            .map(|key| (*key, table.get(key).expect("defined")))
+            .collect();
+        (keys, table.len(), values)
+    }
+}
+
+#[test]
+fn derived_map_structure_follows_definition_changes() {
+    let runtime = Runtime::new();
+    runtime.install(structure_map::Root).expect("install");
+    let read = |runtime: &Runtime| {
+        runtime
+            .read_outputs::<structure_map::Root>()
+            .expect("read")
+    };
+    assert_eq!(read(&runtime), (Vec::new(), 0, Vec::new()));
+
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(read(&runtime), (vec![3], 1, vec![(3, 30)]));
+
+    runtime
+        .edit(|edit| {
+            let mut mode = edit.view::<StructureMode>();
+            mode.set_mode(2);
+            mode.set_value(10);
+        })
+        .expect("edit");
+    assert_eq!(read(&runtime), (vec![1, 2], 2, vec![(1, 10), (2, 11)]));
+
+    // A value-only change must not change the key set.
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_value(99))
+        .expect("edit");
+    assert_eq!(read(&runtime), (vec![1, 2], 2, vec![(1, 99), (2, 100)]));
+
+    // Removing every definition empties the structure.
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(0))
+        .expect("edit");
+    assert_eq!(read(&runtime), (Vec::new(), 0, Vec::new()));
+
+    // Re-adding keys after an empty revision sees the new key set.
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(2))
+        .expect("edit");
+    assert_eq!(read(&runtime), (vec![1, 2], 2, vec![(1, 99), (2, 100)]));
+}
+
+#[test]
+fn derived_map_value_edits_do_not_touch_structure() {
+    let runtime = Runtime::new();
+    runtime.install(structure_map::Root).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut mode = edit.view::<StructureMode>();
+            mode.set_mode(2);
+            mode.set_value(10);
+        })
+        .expect("edit");
+    let _ = runtime.read_outputs::<structure_map::Root>().expect("read");
+    let structure_version = |runtime: &Runtime| {
+        runtime
+            .dump()
+            .into_iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| unit.contains("Structure"))
+            })
+            .expect("structure unit")
+            .changed_at
+    };
+    let before = structure_version(&runtime);
+    let revision = runtime.revision();
+
+    // Values change, the key set does not: the structure unit must stay put.
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_value(99))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<structure_map::Root>().expect("read"),
+        (vec![1, 2], 2, vec![(1, 99), (2, 100)])
+    );
+    assert_eq!(structure_version(&runtime), before);
+
+    // Removing the keys must move the structure unit.
+    runtime
+        .edit(|edit| edit.view::<StructureMode>().set_mode(0))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<structure_map::Root>().expect("read"),
+        (Vec::new(), 0, Vec::new())
+    );
+    assert!(structure_version(&runtime) > before);
+    assert!(runtime.revision() > revision);
 }
