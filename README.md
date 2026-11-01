@@ -164,6 +164,7 @@ cargo run --release --example scaling -p reactive
 cargo run --release --example reduction -p reactive
 cargo run --release --example workloads -p reactive
 cargo run --release --example parallel -p reactive
+cargo run --example name_resolver -p reactive   # AST tree view -> symbols + diagnostics
 ```
 
 Measured on this machine (release, one worker, one point edit at the middle of
