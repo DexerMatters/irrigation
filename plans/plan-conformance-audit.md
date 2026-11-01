@@ -1,9 +1,11 @@
 # Plan conformance audit
 
 Status: third pass, remediation complete. Every finding in §3 is resolved with a
-gate, except the external benchmark baselines, which the workspace constraint
-("no programs outside this folder") makes unavailable; the internal baselines
-and randomized evidence are listed in C5. This document
+gate or has an explicitly recorded design boundary: strict lowering is opt-in
+(N6), per-projection body demand remains an optimization (N12), and the external
+benchmark baselines are unavailable under the workspace constraint ("no programs
+outside this folder"); the internal baselines and randomized evidence are listed
+in C5. This document
 compares the implementation with
 [`concurrent-incremental-system-plan.md`](concurrent-incremental-system-plan.md)
 section by section, and records defects that the previous audits did not find.
@@ -139,6 +141,10 @@ the routing/lowering phase. The join-over-derived-maps gate is deferred: the
 runtime has one root, and `EquiJoin` cannot demand a provider component.
 
 ## 2. Section-by-section conformance
+
+The table below records the second-pass conformance snapshot. The remediation
+phases (C0–C5) and the finding sections in §3 are authoritative where they
+differ; the gates named there are the current evidence.
 
 Status values: **yes** (conformant), **partial**, **no** (absent or divergent),
 **deviation** (documented and accepted).
