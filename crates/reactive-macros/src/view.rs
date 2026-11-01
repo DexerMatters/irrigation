@@ -845,6 +845,23 @@ fn single_field_forwarding(
             {
                 self.#accessor().map(f)
             }
+            /// Keeps elements whose predicate holds, memoizing per identity.
+            #[must_use]
+            pub fn filter<F>(&self, predicate: F) -> Vec<#elem>
+            where
+                F: Fn(reactive::Param<#elem>) -> bool,
+            {
+                self.#accessor().filter(predicate)
+            }
+            /// Maps each element to zero or more values, memoizing per identity.
+            #[must_use]
+            pub fn flat_map<U, F>(&self, f: F) -> Vec<U>
+            where
+                U: Clone + PartialEq + Send + Sync + 'static,
+                F: Fn(reactive::Param<#elem>) -> Vec<U>,
+            {
+                self.#accessor().flat_map(f)
+            }
             /// Number of elements.
             #[must_use]
             pub fn len(&self) -> usize {

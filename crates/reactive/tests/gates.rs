@@ -3586,3 +3586,88 @@ fn keyed_set_membership_is_per_member() {
     assert_eq!(membership("Some(\"1\")").changed_at, removal);
     assert!(membership("Some(\"2\")").changed_at < removal);
 }
+
+static KEYED_FILTER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static KEYED_FLAT_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[reactive]
+mod keyed_filters {
+    use super::{KeyedList, KeyedMode};
+    use std::sync::atomic::Ordering;
+
+    #[component]
+    pub fn root(mode: &KeyedMode) -> (Vec<u64>, Vec<u64>) {
+        if mode.mode() == 1 {
+            KeyedList.define_keyed([(2u64, 20u64), (1, 10)]);
+        } else if mode.mode() == 2 {
+            KeyedList.define_keyed([(1u64, 11u64), (2, 20)]);
+        } else {
+            KeyedList.define_keyed([(1u64, 10u64), (2, 20)]);
+        }
+        let filtered = KeyedList.filter(|value| {
+            super::KEYED_FILTER_CALLS.fetch_add(1, Ordering::SeqCst);
+            *value % 20 == 0
+        });
+        let flat = KeyedList.flat_map(|value| {
+            super::KEYED_FLAT_CALLS.fetch_add(1, Ordering::SeqCst);
+            vec![*value]
+        });
+        (filtered, flat)
+    }
+}
+
+#[test]
+fn derived_list_filter_and_flat_map_memoize_per_identity() {
+    KEYED_FILTER_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+    KEYED_FLAT_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let runtime = Runtime::new();
+    runtime.install(keyed_filters::Root).expect("install");
+    assert_eq!(
+        runtime.read_outputs::<keyed_filters::Root>().expect("read"),
+        (vec![20], vec![10, 20])
+    );
+    assert_eq!(
+        KEYED_FILTER_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        KEYED_FLAT_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+
+    // A reorder reuses every predicate and flat-map result.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<keyed_filters::Root>().expect("read"),
+        (vec![20], vec![20, 10])
+    );
+    assert_eq!(
+        KEYED_FILTER_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "a reorder must not re-run the predicate"
+    );
+    assert_eq!(
+        KEYED_FLAT_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "a reorder must not re-run flat_map"
+    );
+
+    // A value edit re-runs only the edited member's predicate and flat-map.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<keyed_filters::Root>().expect("read"),
+        (vec![20], vec![11, 20])
+    );
+    assert_eq!(
+        KEYED_FILTER_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+    assert_eq!(
+        KEYED_FLAT_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+}

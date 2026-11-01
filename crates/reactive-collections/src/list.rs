@@ -847,6 +847,142 @@ where
         }
     }
 
+    /// Keeps elements whose predicate holds, memoizing per identity.
+    #[must_use]
+    pub fn filter<F>(&self, predicate: F) -> Vec<T>
+    where
+        F: Fn(reactive_runtime::Param<T>) -> bool,
+    {
+        let frame = reactive_core::frame::current_or_engine_panic("derived list filter");
+        let runtime = std::sync::Arc::clone(frame.runtime());
+        let call_scope =
+            runtime.child_scope(frame.scope(), u64::from(frame.node().0), "derived_list_filter");
+        let storage: DerivedListStorage<T> =
+            read_unit_value(self.unit(), |content| Some((self.content)(content)));
+        let mut kept = Vec::new();
+        match storage {
+            DerivedListStorage::Keyed(_) => {
+                for id in self.ids().iter() {
+                    let member_scope = runtime.child_scope(call_scope, *id, "list_member");
+                    let param_node = runtime.site_node(member_scope, SiteId(1));
+                    let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                        self.get_key(*id).unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(
+                                reactive_core::error::ComputeError::internal(
+                                    "keyed list member disappeared",
+                                ),
+                            )
+                        })
+                    });
+                    let result_node = runtime.site_node(member_scope, SiteId(2));
+                    let keep = reactive_core::ops::eval_node_with(&runtime, result_node, || {
+                        predicate(reactive_runtime::Param::new(param_node, value.clone()))
+                    });
+                    if keep {
+                        kept.push(value);
+                    }
+                }
+            }
+            DerivedListStorage::Whole(items) => {
+                for (index, _) in items.iter().enumerate() {
+                    let member_scope =
+                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let param_node = runtime.site_node(member_scope, SiteId(1));
+                    let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                        let storage: DerivedListStorage<T> = read_unit_value(
+                            self.unit(),
+                            |content| Some((self.content)(content)),
+                        );
+                        storage.get(index as u64).cloned().unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(
+                                reactive_core::error::ComputeError::internal(
+                                    "whole-value list member disappeared",
+                                ),
+                            )
+                        })
+                    });
+                    let result_node = runtime.site_node(member_scope, SiteId(2));
+                    let keep = reactive_core::ops::eval_node_with(&runtime, result_node, || {
+                        predicate(reactive_runtime::Param::new(param_node, value.clone()))
+                    });
+                    if keep {
+                        kept.push(value);
+                    }
+                }
+            }
+        }
+        kept
+    }
+
+    /// Maps each element to zero or more values, memoizing per identity.
+    #[must_use]
+    pub fn flat_map<U, F>(&self, f: F) -> Vec<U>
+    where
+        U: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(reactive_runtime::Param<T>) -> Vec<U>,
+    {
+        let frame = reactive_core::frame::current_or_engine_panic("derived list flat_map");
+        let runtime = std::sync::Arc::clone(frame.runtime());
+        let call_scope = runtime.child_scope(
+            frame.scope(),
+            u64::from(frame.node().0),
+            "derived_list_flat_map",
+        );
+        let storage: DerivedListStorage<T> =
+            read_unit_value(self.unit(), |content| Some((self.content)(content)));
+        let mut values = Vec::new();
+        match storage {
+            DerivedListStorage::Keyed(_) => {
+                for id in self.ids().iter() {
+                    let member_scope = runtime.child_scope(call_scope, *id, "list_member");
+                    let param_node = runtime.site_node(member_scope, SiteId(1));
+                    let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                        self.get_key(*id).unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(
+                                reactive_core::error::ComputeError::internal(
+                                    "keyed list member disappeared",
+                                ),
+                            )
+                        })
+                    });
+                    let result_node = runtime.site_node(member_scope, SiteId(2));
+                    values.extend(reactive_core::ops::eval_node_with(
+                        &runtime,
+                        result_node,
+                        || f(reactive_runtime::Param::new(param_node, value.clone())),
+                    ));
+                }
+            }
+            DerivedListStorage::Whole(items) => {
+                for (index, _) in items.iter().enumerate() {
+                    let member_scope =
+                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let param_node = runtime.site_node(member_scope, SiteId(1));
+                    let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                        let storage: DerivedListStorage<T> = read_unit_value(
+                            self.unit(),
+                            |content| Some((self.content)(content)),
+                        );
+                        storage.get(index as u64).cloned().unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(
+                                reactive_core::error::ComputeError::internal(
+                                    "whole-value list member disappeared",
+                                ),
+                            )
+                        })
+                    });
+                    let result_node = runtime.site_node(member_scope, SiteId(2));
+                    values.extend(reactive_core::ops::eval_node_with(
+                        &runtime,
+                        result_node,
+                        || f(reactive_runtime::Param::new(param_node, value.clone())),
+                    ));
+                }
+            }
+        }
+        values
+    }
+
     /// Defines a keyed list: stable identities plus one value per entity.
     pub fn define_keyed<I>(&self, items: I, label: &'static str)
     where
