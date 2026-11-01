@@ -539,7 +539,10 @@ where
     /// Reads the whole list.
     #[must_use]
     pub fn to_vec(&self) -> Vec<T> {
-        read_unit_value(self.unit(), |content| Some((self.content)(content).to_vec()))
+        // The unit stores the same `PSeq<T>` that `define_all` stages; the
+        // initializer must return that type, not a converted `Vec<T>`.
+        let list: PSeq<T> = read_unit_value(self.unit(), |content| Some((self.content)(content)));
+        list.to_vec()
     }
 
     /// Number of elements.

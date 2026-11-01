@@ -2254,3 +2254,194 @@ fn a_provider_handover_updates_its_observer() {
     drop(observed);
     drop(subscription);
 }
+
+// ---------------------------------------------------------------------------
+// Derived list live reads (N1)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct DerivedListFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct DerivedSlot(List<u64>);
+
+#[reactive]
+mod derived_list_provider {
+    use super::{DerivedListFlag, DerivedSlot};
+
+    #[component]
+    pub fn provider(flag: &DerivedListFlag) -> u64 {
+        if flag.on() {
+            let _ = DerivedSlot::from(vec![1u64, 2, 3]);
+            1
+        } else {
+            let _ = DerivedSlot::from(vec![4u64]);
+            2
+        }
+    }
+
+    #[component]
+    pub fn root(flag: &DerivedListFlag) -> (u64, Vec<u64>, usize, Option<u64>) {
+        let marker = provider(flag);
+        let slot = DerivedSlot;
+        (marker, slot.to_vec(), slot.len(), slot.get(2))
+    }
+}
+
+#[test]
+fn derived_list_live_reads_match_the_snapshot() {
+    let runtime = Runtime::new();
+    runtime.install(derived_list_provider::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<DerivedListFlag>().set_on(true))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<derived_list_provider::Root>().expect("live read"),
+        (1, vec![1, 2, 3], 3, Some(3))
+    );
+    assert_eq!(runtime.snapshot().view::<DerivedSlot>().field0(), vec![1, 2, 3]);
+
+    runtime
+        .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<derived_list_provider::Root>().expect("live read"),
+        (2, vec![4], 1, None)
+    );
+    assert_eq!(runtime.snapshot().view::<DerivedSlot>().field0(), vec![4]);
+}
+
+// ---------------------------------------------------------------------------
+// Edit outcome vs observer refresh (N4, F3)
+// ---------------------------------------------------------------------------
+
+/// A general root whose demand always fails.
+struct BrokenRoot;
+
+impl reactive::GeneralComponent for BrokenRoot {
+    type State = u64;
+    type Output = u64;
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0001);
+    const NAME: &'static str = "gates::BrokenRoot";
+
+    fn initialize(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        Err(reactive::ComputeError::internal("deliberate failure"))
+    }
+
+    fn update(
+        &self,
+        _cx: &mut reactive::GeneralCx,
+        _state: &Self::State,
+        _changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        unreachable!("the failing root never updates")
+    }
+}
+
+#[test]
+fn a_source_only_edit_notifies_its_observer() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let runtime = Runtime::new();
+    runtime
+        .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
+        .expect("seed");
+    let seen = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::clone(&seen);
+    let subscription = runtime
+        .observe::<DerivedListFlag>(move |_snapshot| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .expect("observe");
+    runtime
+        .edit(|edit| edit.view::<DerivedListFlag>().set_on(true))
+        .expect("edit");
+    assert_eq!(seen.load(Ordering::SeqCst), 1, "the observer never fired");
+    assert!(runtime.notification_error().is_none());
+    drop(subscription);
+}
+
+#[test]
+fn an_edit_is_not_failed_by_a_failing_root() {
+    let runtime = Runtime::new();
+    runtime.install_general(BrokenRoot).expect("install general");
+    runtime
+        .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
+        .expect("seed");
+    let subscription = runtime
+        .observe::<DerivedListFlag>(|_snapshot| {})
+        .expect("observe");
+    let result = runtime.edit(|edit| edit.view::<DerivedListFlag>().set_on(true));
+    assert!(result.is_ok(), "a committed edit must not fail: {result:?}");
+    assert!(
+        runtime.notification_error().is_some(),
+        "the failed refresh must be reported"
+    );
+    assert!(runtime.snapshot().view::<DerivedListFlag>().on());
+    drop(subscription);
+}
+
+// ---------------------------------------------------------------------------
+// Whole-field definition retraction (N2)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct RetractFlag {
+    on: bool,
+}
+
+#[view(derived)]
+pub struct Conditional(u64);
+
+#[reactive]
+mod conditional_definition {
+    use super::{Conditional, RetractFlag};
+
+    #[component]
+    pub fn provider(flag: &RetractFlag) -> u64 {
+        if flag.on() {
+            let total = Conditional;
+            total.define_field0(42);
+            1
+        } else {
+            2
+        }
+    }
+
+    #[component]
+    pub fn root(flag: &RetractFlag) -> (u64, u64) {
+        let marker = provider(flag);
+        let total = Conditional;
+        (marker, total.field0())
+    }
+}
+
+#[test]
+fn a_retracted_whole_field_definition_reverts_to_empty() {
+    let runtime = Runtime::new();
+    runtime.install(conditional_definition::Root).expect("install");
+    for (on, expected) in [(true, (1, 42)), (false, (2, 0)), (true, (1, 42))] {
+        runtime
+            .edit(|edit| edit.view::<RetractFlag>().set_on(on))
+            .expect("edit");
+        assert_eq!(
+            runtime
+                .read_outputs::<conditional_definition::Root>()
+                .expect("read"),
+            expected,
+            "on={on}"
+        );
+        assert_eq!(
+            runtime.snapshot().view::<Conditional>().field0(),
+            expected.1,
+            "snapshot must agree with the live read (on={on})"
+        );
+    }
+}

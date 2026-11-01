@@ -158,11 +158,22 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             let index = field.index;
             let marker = marker_for(&field.shape, derived);
             match field.shape {
-                FieldShape::Scalar(_) => quote! { #index => {}, },
+                FieldShape::Scalar(_) => quote! {
+                    #index => {
+                        next.#ident = <#marker as reactive::ViewField>::empty();
+                    },
+                },
                 _ => quote! {
                     #index => {
-                        let entity = key.entity.as_deref().unwrap_or(&());
-                        next.#ident = <#marker as reactive::ViewField>::retract(&next.#ident, entity);
+                        match key.entity.as_deref() {
+                            Some(entity) => {
+                                next.#ident =
+                                    <#marker as reactive::ViewField>::retract(&next.#ident, entity);
+                            }
+                            // Retracting a whole-field definition returns the
+                            // field to its empty value.
+                            None => next.#ident = <#marker as reactive::ViewField>::empty(),
+                        }
                     },
                 },
             }

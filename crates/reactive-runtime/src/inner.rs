@@ -330,7 +330,7 @@ impl Inner {
             return Err(ComputeError::Cancelled);
         }
         let me = task::current_or_detached();
-        loop {
+        let generation = loop {
             let action = {
                 let mut state = self.lock();
                 let revision = state.revision;
@@ -341,19 +341,22 @@ impl Inner {
                     } else {
                         record.failure = None;
                         record.state = NodeState::Vacant;
-                        Action::Claim
+                        state.next_generation += 1;
+                        let generation = state.next_generation;
+                        state.node_mut(node).state = NodeState::Running { owner: me, generation };
+                        Action::Claim(generation)
                     }
                 } else if record.verified_at == revision && record.value.is_some() {
                     Action::Return(record.value.clone().expect("checked"))
                 } else if record.is_running() {
                     match record.state {
-                        NodeState::Running { owner, .. } if owner == me => {
+                        NodeState::Running { owner, generation } if owner == me => {
                             if task::active_contains(node) {
                                 Action::Fail(ComputeError::Cycle {
                                     path: vec![format!("re-entrant demand of {node:?}")],
                                 })
                             } else {
-                                Action::Resume
+                                Action::Resume(generation)
                             }
                         }
                         _ => Action::Wait,
@@ -362,8 +365,10 @@ impl Inner {
                     record.verified_at = revision;
                     Action::Return(record.value.clone().expect("checked"))
                 } else {
-                    record.state = NodeState::Running { owner: me };
-                    Action::Claim
+                    state.next_generation += 1;
+                    let generation = state.next_generation;
+                    state.node_mut(node).state = NodeState::Running { owner: me, generation };
+                    Action::Claim(generation)
                 }
             };
 
@@ -375,9 +380,9 @@ impl Inner {
                 }
                 Action::Fail(error) => return Err(error),
                 Action::Wait => self.wait_for(node, me)?,
-                Action::Claim | Action::Resume => break,
+                Action::Claim(generation) | Action::Resume(generation) => break generation,
             }
-        }
+        };
 
         // Ordered validation: stop at the first observation that cannot be
         // certified without executing its own computation.
@@ -413,7 +418,7 @@ impl Inner {
         let general_index = self.lock().node(node).general;
         if let Some(index) = general_index {
             task::active_push(node);
-            let result = self.run_general(node, index, revision);
+            let result = self.run_general(node, index, revision, me, generation);
             task::active_pop(node);
             return result;
         }
@@ -441,7 +446,7 @@ impl Inner {
             node,
             scope,
             depth + 1,
-            cancel,
+            cancel.clone(),
         ));
         task::active_push(node);
         let guard = FrameGuard::push(Arc::clone(&frame));
@@ -456,7 +461,8 @@ impl Inner {
         }
         match result {
             Ok(Ok(value)) => {
-                let committed = self.commit(node, value, deps, definitions, None, eq, revision)?;
+                let committed =
+                    self.commit(node, value, deps, definitions, None, eq, revision, me, generation, &cancel)?;
                 let version = self.changed_at(node);
                 frame::record_dep(Dep { node, version });
                 Ok(committed)
@@ -479,6 +485,8 @@ impl Inner {
         node: NodeId,
         index: usize,
         revision: Revision,
+        owner: TaskId,
+        generation: u64,
     ) -> Result<Value> {
         let (general, old_trace, old_state, scope) = {
             let state = self.lock();
@@ -529,7 +537,7 @@ impl Inner {
             node,
             scope,
             depth + 1,
-            cancel,
+            cancel.clone(),
         ));
         let guard = FrameGuard::push(Arc::clone(&frame));
         let mut cx = crate::general::GeneralCx::new(self.arc(), revision);
@@ -556,6 +564,9 @@ impl Inner {
                     Some(state),
                     &eq,
                     revision,
+                    owner,
+                    generation,
+                    &cancel,
                 )?;
                 let version = self.changed_at(node);
                 frame::record_dep(Dep { node, version });
@@ -615,12 +626,39 @@ impl Inner {
         retained_state: Option<crate::general::ErasedState>,
         eq: &dyn Fn(&Value, &Value) -> bool,
         revision: Revision,
+        owner: TaskId,
+        generation: u64,
+        cancel: &CancelToken,
     ) -> Result<Value> {
         let mut state = self.lock();
-        if state.revision != revision {
+        // A commit from a claim that is no longer ours must not publish. This is
+        // the generation check the plan requires; it also makes the retirement
+        // race harmless if a guard is ever missed.
+        let owns = matches!(
+            state.node(node).state,
+            NodeState::Running {
+                owner: current_owner,
+                generation: current_generation,
+            } if current_owner == owner && current_generation == generation
+        );
+        if !owns {
             return Err(ComputeError::internal(
-                "input revision changed while a computation was running",
+                "commit from a claim that is no longer owned",
             ));
+        }
+        if cancel.is_cancelled() {
+            drop(state);
+            return self.fail(node, ComputeError::Cancelled, revision);
+        }
+        if state.revision != revision {
+            drop(state);
+            return self.fail(
+                node,
+                ComputeError::internal(
+                    "input revision changed while a computation was running",
+                ),
+                revision,
+            );
         }
         let mut changed_nodes = Vec::new();
         if let Err(error) =
@@ -705,6 +743,12 @@ impl Inner {
             state.node(node).kind,
             NodeKind::Unit | NodeKind::RegionContent
         ) {
+            return;
+        }
+        // A node owned by a live task, or with waiters, is not dead: clearing
+        // it would hand a second task the same claim. Leave it; a later commit
+        // or reclamation retires it once the claim is released.
+        if state.node(node).is_running() || !state.node(node).waiters.is_empty() {
             return;
         }
         let definitions = state.node(node).definitions.clone();
@@ -980,6 +1024,28 @@ impl Inner {
         region.owners.remove(&owner);
         let mut content = Arc::clone(&region.content);
         content = (descriptor.content.retract)(&content, unit);
+        if unit.entity.is_none() {
+            // A whole-field definition was retracted: the field reverts to its
+            // empty value, and the unit node takes that value so readers and
+            // snapshots agree.
+            let structure = UnitKey::field(unit.view, unit.field, UnitKind::Structure);
+            let value = (descriptor.content.get)(&content, &structure);
+            if let Some(slot) = region.units.get(unit) {
+                let node = slot.node;
+                let dependents = state.node(node).dependents.clone();
+                {
+                    let record = state.node_mut(node);
+                    record.value = value;
+                    record.changed_at = revision;
+                    record.verified_at = revision;
+                    record.suspect_at = 0;
+                    record.state = NodeState::Ready;
+                    record.failure = None;
+                }
+                changed_nodes.push(node);
+                changed_nodes.extend(dependents);
+            }
+        }
         if unit.entity.is_some() {
             let membership = membership_key(unit);
             if let Some(slot) = region.units.get(&membership) {
@@ -1001,6 +1067,10 @@ impl Inner {
                 let node = slot.node;
                 let record = state.node_mut(node);
                 record.suspect_at = revision;
+                // A directly read retracted unit must not be served from the
+                // old certified value; membership guards family handles, this
+                // guards direct unit reads.
+                record.verified_at = 0;
                 let dependents = record.dependents.clone();
                 changed_nodes.extend(dependents);
             }
@@ -1293,6 +1363,22 @@ impl Inner {
         self.pool.workers()
     }
 
+    /// Records an observer-refresh failure without failing the transaction.
+    pub(crate) fn set_notification_error(&self, error: ComputeError) {
+        self.lock().notification_error = Some(error);
+    }
+
+    /// Clears the observer-refresh failure after a successful refresh.
+    pub(crate) fn clear_notification_error(&self) {
+        self.lock().notification_error = None;
+    }
+
+    /// Returns `true` when a root component (ordinary or general) is installed.
+    pub(crate) fn has_root(&self) -> bool {
+        let state = self.lock();
+        state.root.is_some() || state.general_root.is_some()
+    }
+
     /// Marks the most recently started demand as cancelled, if there is one.
     pub fn cancel_active(&self) {
         let task = *self
@@ -1377,9 +1463,10 @@ enum Action {
     Return(Value),
     Fail(ComputeError),
     Wait,
-    Claim,
+    /// Claim the node with a fresh generation.
+    Claim(u64),
     /// The task already owns this node and still has to finish it.
-    Resume,
+    Resume(u64),
 }
 
 impl RuntimeOps for Inner {
@@ -1668,5 +1755,117 @@ impl Inner {
             invocations: state.invocations.values().map(Vec::len).sum(),
             regions: state.regions.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_rejects_a_stale_generation() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let node = {
+            let mut state = inner.lock();
+            let node = state.alloc(NodeRecord::empty("claimed", NodeKind::Operator));
+            state.node_mut(node).state = NodeState::Running {
+                owner: 1,
+                generation: 7,
+            };
+            node
+        };
+        let eq = |_: &Value, _: &Value| false;
+        let cancel = CancelToken::default();
+        let stale = inner.commit(
+            node,
+            value_of(1u32),
+            Vec::new(),
+            Vec::new(),
+            None,
+            &eq,
+            0,
+            1,
+            6,
+            &cancel,
+        );
+        assert!(matches!(stale, Err(ComputeError::Internal { .. })));
+        let state = inner.lock();
+        assert!(
+            matches!(
+                state.node(node).state,
+                NodeState::Running { owner: 1, generation: 7 }
+            ),
+            "a stale commit must not disturb the live claim"
+        );
+        assert!(state.node(node).value.is_none());
+    }
+
+    #[test]
+    fn commit_checks_cancellation_under_the_lock() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let node = {
+            let mut state = inner.lock();
+            let node = state.alloc(NodeRecord::empty("claimed", NodeKind::Operator));
+            state.node_mut(node).state = NodeState::Running {
+                owner: 1,
+                generation: 1,
+            };
+            node
+        };
+        let eq = |_: &Value, _: &Value| false;
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        let result = inner.commit(
+            node,
+            value_of(1u32),
+            Vec::new(),
+            Vec::new(),
+            None,
+            &eq,
+            0,
+            1,
+            1,
+            &cancel,
+        );
+        assert!(matches!(result, Err(ComputeError::Cancelled)));
+        let state = inner.lock();
+        assert!(
+            matches!(state.node(node).state, NodeState::Vacant),
+            "a cancelled commit releases its claim"
+        );
+    }
+
+    #[test]
+    fn retirement_leaves_a_running_node_alone() {
+        let inner = Inner::new(RuntimeConfig {
+            workers: 1,
+            stack_size: 4 * 1024 * 1024,
+            ..RuntimeConfig::default()
+        });
+        let mut state = inner.lock();
+        let node = state.alloc(NodeRecord::empty("running", NodeKind::Operator));
+        {
+            let record = state.node_mut(node);
+            record.state = NodeState::Running {
+                owner: 7,
+                generation: 1,
+            };
+            record.value = Some(value_of(7u32));
+            record.verified_at = 1;
+        }
+        let mut changed = Vec::new();
+        inner.retire_unreachable(&mut state, node, 1, &mut changed);
+        let record = state.node(node);
+        assert!(record.is_running(), "a live claim must not be retired");
+        assert!(record.value.is_some(), "a live claim keeps its value");
+        assert!(changed.is_empty());
     }
 }

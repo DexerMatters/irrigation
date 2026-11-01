@@ -30,6 +30,8 @@ pub enum NodeState {
     Running {
         /// The task that claimed the node.
         owner: TaskId,
+        /// Claim generation, used to reject stale commits.
+        generation: u64,
     },
     /// A committed value is available.
     Ready,
@@ -416,6 +418,8 @@ pub struct State {
     pub tasks: FxHashMap<TaskId, TaskSlot>,
     /// Next task identity.
     pub next_task: TaskId,
+    /// Next claim generation.
+    pub next_generation: u64,
     /// Active subscriptions.
     pub subscriptions: Vec<SubscriptionRecord>,
     /// Next subscription id.
@@ -434,6 +438,12 @@ pub struct State {
     pub pending_conflicts: Vec<PendingConflict>,
     /// Diagnostics counters.
     pub stats: Stats,
+    /// Last observer-refresh failure, recorded by `edit`.
+    ///
+    /// A failed refresh does not fail the transaction; it is reported here so
+    /// the host can distinguish "the edit committed" from "an observer could
+    /// not be refreshed".
+    pub notification_error: Option<ComputeError>,
 }
 
 impl State {

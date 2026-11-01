@@ -294,9 +294,26 @@ impl Runtime {
             (value, changed)
         };
         if changed {
-            self.notify_subscribers()?;
+            // The transaction is already committed: a failed observer refresh
+            // must not turn a successful edit into an error. It is reported
+            // through `notification_error` instead.
+            if let Err(error) = self.notify_subscribers() {
+                self.inner.set_notification_error(error);
+            } else {
+                self.inner.clear_notification_error();
+            }
         }
         Ok(value)
+    }
+
+    /// Returns the last observer-refresh failure, if any.
+    ///
+    /// [`Runtime::edit`] commits before refreshing observers. A failure to
+    /// demand the root while refreshing them does not fail the edit; it is
+    /// recorded here until the next successful refresh.
+    #[must_use]
+    pub fn notification_error(&self) -> Option<ComputeError> {
+        self.inner.lock().notification_error.clone()
     }
 
     /// Registers a callback that runs after every change to `V`.
@@ -553,7 +570,14 @@ impl Runtime {
         if !has_subscriptions {
             return Ok(());
         }
-        let snapshot = self.read()?;
+        // Observers keep the root's observation roots active when one is
+        // installed. A source-only runtime has no root to demand, so its
+        // snapshot is captured directly.
+        let snapshot = if self.inner.has_root() {
+            self.read()?
+        } else {
+            self.snapshot()
+        };
         let pending: Vec<PendingSubscription> = {
             let state = self.inner.lock();
             state
