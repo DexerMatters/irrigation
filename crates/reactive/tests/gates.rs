@@ -3318,3 +3318,176 @@ fn structure_is_maintained_for_every_family() {
         (vec![0, 1], vec![1, 2])
     );
 }
+
+// ---------------------------------------------------------------------------
+// Keyed derived lists (Phase 2)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct KeyedMode {
+    mode: u64,
+}
+
+#[view(derived)]
+pub struct KeyedList(List<u64>);
+
+#[reactive]
+mod keyed_lists {
+    use super::{KeyedList, KeyedMode};
+
+    #[component]
+    pub fn root(mode: &KeyedMode) -> (Vec<u64>, Vec<u64>, Option<u64>, Option<u64>) {
+        if mode.mode() == 1 {
+            KeyedList.define_keyed([(2u64, 20u64), (1, 10)]);
+        } else if mode.mode() == 2 {
+            KeyedList.define_keyed([(1u64, 10u64)]);
+        } else if mode.mode() == 3 {
+            KeyedList.define_keyed([(1u64, 11u64), (2, 20)]);
+        } else {
+            KeyedList.define_keyed([(1u64, 10u64), (2, 20)]);
+        }
+        let list = KeyedList;
+        (
+            list.ids().to_vec(),
+            list.to_vec(),
+            list.get_key(1),
+            list.get_key(2),
+        )
+    }
+}
+
+#[test]
+fn keyed_list_identity_survives_reorder_and_removal() {
+    let runtime = Runtime::new();
+    runtime.install(keyed_lists::Root).expect("install");
+    let read = |runtime: &Runtime| {
+        runtime
+            .read_outputs::<keyed_lists::Root>()
+            .expect("read")
+    };
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(0))
+        .expect("edit");
+    assert_eq!(
+        read(&runtime),
+        (vec![1, 2], vec![10, 20], Some(10), Some(20))
+    );
+
+    // Reordering the structure keeps every member identity and value.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(
+        read(&runtime),
+        (vec![2, 1], vec![20, 10], Some(10), Some(20))
+    );
+
+    // Removing one key retracts exactly that member.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
+        .expect("edit");
+    let revision = runtime.revision();
+    assert_eq!(
+        read(&runtime),
+        (vec![1], vec![10], Some(10), None)
+    );
+    let units = runtime.dump();
+    let membership = |id: &str| {
+        units
+            .iter()
+            .find(|node| {
+                node.kind == "Unit"
+                    && node
+                        .unit
+                        .as_deref()
+                        .is_some_and(|unit| {
+                            unit.contains("Membership") && unit.contains(id)
+                        })
+            })
+            .expect("membership unit")
+    };
+    assert_eq!(
+        membership("Some(\"2\")").changed_at,
+        revision,
+        "the removed member's membership must change"
+    );
+    assert!(
+        membership("Some(\"1\")").changed_at < revision,
+        "the surviving member's membership must not change"
+    );
+
+    // A value edit on one member updates only that member's value.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(3))
+        .expect("edit");
+    assert_eq!(
+        read(&runtime),
+        (vec![1, 2], vec![11, 20], Some(11), Some(20))
+    );
+}
+
+static KEYED_MAP_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[reactive]
+mod keyed_map {
+    use super::{KeyedList, KeyedMode};
+    use std::sync::atomic::Ordering;
+
+    #[component]
+    pub fn root(mode: &KeyedMode) -> Vec<u64> {
+        if mode.mode() == 1 {
+            KeyedList.define_keyed([(2u64, 20u64), (1, 10)]);
+        } else if mode.mode() == 2 {
+            KeyedList.define_keyed([(1u64, 11u64), (2, 20)]);
+        } else {
+            KeyedList.define_keyed([(1u64, 10u64), (2, 20)]);
+        }
+        KeyedList.map(|value| {
+            super::KEYED_MAP_CALLS.fetch_add(1, Ordering::SeqCst);
+            *value * 2
+        })
+    }
+}
+
+#[test]
+fn derived_list_map_reuses_members_after_reorder_and_value_edit() {
+    KEYED_MAP_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let runtime = Runtime::new();
+    runtime.install(keyed_map::Root).expect("install");
+    assert_eq!(
+        runtime.read_outputs::<keyed_map::Root>().expect("read"),
+        vec![20, 40]
+    );
+    assert_eq!(
+        KEYED_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+
+    // A reorder re-runs the map call but reuses both member results.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<keyed_map::Root>().expect("read"),
+        vec![40, 20]
+    );
+    assert_eq!(
+        KEYED_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "a reorder must not recompute any member"
+    );
+
+    // A value edit recomputes exactly the edited member.
+    runtime
+        .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<keyed_map::Root>().expect("read"),
+        vec![22, 40]
+    );
+    assert_eq!(
+        KEYED_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "only the edited member is recomputed"
+    );
+}

@@ -490,6 +490,16 @@ writers for source views. Gates:
 
 ### Phase 2 — Identity-preserving derived collections
 
+**Status: in progress.** Derived lists now have two storage modes: a whole-value
+definition (`from`, positional identities, unchanged behavior) and a keyed
+definition (`define_keyed`, explicit identities). The keyed protocol stages one
+value draft per entity plus the assembled storage; the runtime retracts absent
+entities and keeps surviving identities. `ids`, `get_key` and per-member `map`
+are available on derived lists. Gates:
+`keyed_list_identity_survives_reorder_and_removal`,
+`derived_list_map_reuses_members_after_reorder_and_value_edit`. Keyed sets,
+`filter`/`flat_map`, and the removal/rank gates still remain.
+
 1. **Protocol.** A provider stages a structure draft (ordered ids / member ids)
    plus one value draft per entity; the runtime diffs old and new structure,
    retracts absent entities, and reuses ids for surviving ones.

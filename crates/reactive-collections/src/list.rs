@@ -464,7 +464,127 @@ where
     }
 }
 
-/// A derived list field defined as one whole value.
+/// Storage for a derived list: one whole value or keyed entities.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DerivedListStorage<T> {
+    /// A whole-value definition; identities are positional.
+    Whole(PSeq<T>),
+    /// A keyed definition; identities are explicit.
+    Keyed(PSeq<(u64, T)>),
+}
+
+impl<T> DerivedListStorage<T> {
+    /// Number of elements.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Whole(items) => items.len(),
+            Self::Keyed(items) => items.len(),
+        }
+    }
+
+    /// Returns `true` when the list has no elements.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Identity sequence.
+    #[must_use]
+    pub fn ids(&self) -> PSeq<u64> {
+        match self {
+            Self::Whole(items) => (0..items.len() as u64).collect(),
+            Self::Keyed(items) => items.iter().map(|(id, _)| *id).collect(),
+        }
+    }
+
+    /// Value by identity (positional for a whole-value list).
+    #[must_use]
+    pub fn get(&self, id: u64) -> Option<&T> {
+        match self {
+            Self::Whole(items) => items.get(id as usize),
+            Self::Keyed(items) => items
+                .iter()
+                .find(|(existing, _)| *existing == id)
+                .map(|(_, value)| value),
+        }
+    }
+
+    /// Whether the identity is present.
+    #[must_use]
+    pub fn contains(&self, id: u64) -> bool {
+        self.get(id).is_some()
+    }
+
+    fn with_entity(&self, id: u64, value: T) -> Self
+    where
+        T: Clone,
+    {
+        match self {
+            Self::Whole(items) => {
+                let mut keyed: PSeq<(u64, T)> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| (index as u64, item.clone()))
+                    .collect();
+                keyed = upsert(keyed, id, value);
+                Self::Keyed(keyed)
+            }
+            Self::Keyed(items) => Self::Keyed(upsert(items.clone(), id, value)),
+        }
+    }
+
+    fn without_entity(&self, id: u64) -> Self
+    where
+        T: Clone,
+    {
+        match self {
+            Self::Whole(_) => self.clone(),
+            Self::Keyed(items) => match items.iter().position(|(existing, _)| *existing == id) {
+                Some(index) => Self::Keyed(items.remove(index).0),
+                None => self.clone(),
+            },
+        }
+    }
+
+    fn reorder(&self, ids: &PSeq<u64>) -> Self
+    where
+        T: Clone,
+    {
+        match self {
+            Self::Keyed(items) => {
+                let mut ordered = PSeq::new();
+                for id in ids.iter() {
+                    if let Some((_, value)) = items.iter().find(|(existing, _)| existing == id) {
+                        ordered = ordered.push((*id, value.clone()));
+                    }
+                }
+                Self::Keyed(ordered)
+            }
+            Self::Whole(_) => self.clone(),
+        }
+    }
+}
+
+impl<T: Clone> DerivedListStorage<T> {
+    /// Values in order.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<T> {
+        match self {
+            Self::Whole(items) => items.to_vec(),
+            Self::Keyed(items) => items.iter().map(|(_, value)| value.clone()).collect(),
+        }
+    }
+}
+
+fn upsert<T: Clone>(items: PSeq<(u64, T)>, id: u64, value: T) -> PSeq<(u64, T)> {
+    match items.iter().position(|(existing, _)| *existing == id) {
+        Some(index) => items.set(index, (id, value)),
+        None => items.push((id, value)),
+    }
+}
+
+/// A derived list field: one whole value or keyed entities.
 pub struct DerivedList<T>(PhantomData<fn() -> T>);
 
 impl<T> std::fmt::Debug for DerivedList<T> {
@@ -477,39 +597,55 @@ impl<T> ViewField for DerivedList<T>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
 {
-    type Storage = PSeq<T>;
+    type Storage = DerivedListStorage<T>;
 
     const KIND: FieldKind = FieldKind::List;
 
     fn empty() -> Self::Storage {
-        PSeq::new()
+        DerivedListStorage::Whole(PSeq::new())
     }
 
     fn define(
         storage: &Self::Storage,
-        _key: &dyn reactive_core::key::AnyKey,
+        key: &dyn reactive_core::key::AnyKey,
         value: Value,
     ) -> Self::Storage {
-        value
-            .downcast_ref::<PSeq<T>>()
-            .cloned()
-            .unwrap_or_else(|| storage.clone())
-    }
-
-    fn retract(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+        if let Some(id) = key.as_any().downcast_ref::<u64>() {
+            if let Some(item) = value.downcast_ref::<T>() {
+                return storage.with_entity(*id, item.clone());
+            }
+        }
+        if let Some(next) = value.downcast_ref::<DerivedListStorage<T>>() {
+            return next.clone();
+        }
+        if let Some(ids) = value.downcast_ref::<PSeq<u64>>() {
+            return storage.reorder(ids);
+        }
         storage.clone()
     }
 
-    fn contains(_storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> bool {
-        true
+    fn retract(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Self::Storage {
+        match key.as_any().downcast_ref::<u64>() {
+            Some(id) => storage.without_entity(*id),
+            None => DerivedListStorage::Whole(PSeq::new()),
+        }
     }
 
-    fn get(storage: &Self::Storage, _key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
-        Some(value_of(storage.clone()))
+    fn contains(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> bool {
+        key.as_any()
+            .downcast_ref::<u64>()
+            .is_none_or(|id| storage.contains(*id))
+    }
+
+    fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
+        match key.as_any().downcast_ref::<u64>() {
+            Some(id) => storage.get(*id).cloned().map(value_of),
+            None => Some(value_of(storage.clone())),
+        }
     }
 
     fn structure(storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
-        let ids: PSeq<u64> = (0..storage.len() as u64).collect();
+        let ids = storage.ids();
         Some(reactive_core::descriptor::Structure {
             value: value_of(ids),
             eq: |left, right| {
@@ -524,7 +660,7 @@ where
 pub struct DerivedListRef<T> {
     view: ViewId,
     field: FieldId,
-    content: fn(&dyn Any) -> PSeq<T>,
+    content: fn(&dyn Any) -> DerivedListStorage<T>,
 }
 
 impl<T> PartialEq for DerivedListRef<T> {
@@ -550,7 +686,7 @@ where
 {
     /// Builds a handle for one derived list field.
     #[must_use]
-    pub fn new(view: ViewId, field: FieldId, content: fn(&dyn Any) -> PSeq<T>) -> Self {
+    pub fn new(view: ViewId, field: FieldId, content: fn(&dyn Any) -> DerivedListStorage<T>) -> Self {
         Self {
             view,
             field,
@@ -562,28 +698,43 @@ where
         UnitKey::field(self.view, self.field, UnitKind::Value)
     }
 
-    /// The positional identity sequence of the whole-value list.
+    fn structure_key(&self) -> UnitKey {
+        structure_unit(self.view, self.field)
+    }
+
+    fn membership_key(&self, id: u64) -> UnitKey {
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Membership,
+            any_key(id),
+        )
+    }
+
+    fn value_key(&self, id: u64) -> UnitKey {
+        UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(id))
+    }
+
+    /// Identity sequence of the list.
     #[must_use]
     pub fn ids(&self) -> PSeq<u64> {
-        read_unit_value(structure_unit(self.view, self.field), |content| {
-            let list = (self.content)(content);
-            Some((0..list.len() as u64).collect())
+        read_unit_value(self.structure_key(), |content| {
+            Some((self.content)(content).ids())
         })
     }
 
     /// Reads the whole list.
     #[must_use]
     pub fn to_vec(&self) -> Vec<T> {
-        // The unit stores the same `PSeq<T>` that `define_all` stages; the
-        // initializer must return that type, not a converted `Vec<T>`.
-        let list: PSeq<T> = read_unit_value(self.unit(), |content| Some((self.content)(content)));
-        list.to_vec()
+        let storage: DerivedListStorage<T> =
+            read_unit_value(self.unit(), |content| Some((self.content)(content)));
+        storage.to_vec()
     }
 
     /// Number of elements.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.to_vec().len()
+        self.ids().len()
     }
 
     /// Returns `true` when the list has no elements.
@@ -592,10 +743,28 @@ where
         self.len() == 0
     }
 
-    /// Reads one element.
+    /// Reads one element by rank.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<T> {
         self.to_vec().into_iter().nth(index)
+    }
+
+    /// Reads one element by identity.
+    ///
+    /// Meaningful for keyed definitions; whole-value definitions have
+    /// positional identities that are renumbered by every define.
+    #[must_use]
+    pub fn get_key(&self, id: u64) -> Option<T> {
+        let present: bool = read_unit_value(self.membership_key(id), |content| {
+            Some((self.content)(content).contains(id))
+        });
+        if !present {
+            return None;
+        }
+        let value: T = read_unit_value(self.value_key(id), |content| {
+            (self.content)(content).get(id).cloned()
+        });
+        Some(value)
     }
 
     /// Defines the whole list from the currently executing computation.
@@ -604,7 +773,95 @@ where
         I: IntoIterator<Item = T>,
     {
         let list: PSeq<T> = items.into_iter().collect();
-        define_unit(self.unit(), list, label);
+        define_unit(self.unit(), DerivedListStorage::Whole(list), label);
+    }
+
+    /// Maps every element through `f`, memoizing per identity.
+    ///
+    /// A keyed list keeps one member scope per identity, so a reorder or an
+    /// unrelated value edit reuses the mapped results. A whole-value list has
+    /// positional identities and re-runs every member when the value changes.
+    #[must_use]
+    pub fn map<U, F>(&self, f: F) -> Vec<U>
+    where
+        U: Clone + PartialEq + Send + Sync + 'static,
+        F: Fn(reactive_runtime::Param<T>) -> U + Send + Sync,
+    {
+        let frame = reactive_core::frame::current_or_engine_panic("derived list map");
+        let runtime = std::sync::Arc::clone(frame.runtime());
+        let call_scope =
+            runtime.child_scope(frame.scope(), u64::from(frame.node().0), "derived_list_map");
+        let storage: DerivedListStorage<T> =
+            read_unit_value(self.unit(), |content| Some((self.content)(content)));
+        match storage {
+            DerivedListStorage::Keyed(_) => {
+                let ids = self.ids();
+                ids.iter()
+                    .map(|id| {
+                        let member_scope = runtime.child_scope(call_scope, *id, "list_member");
+                        let param_node = runtime.site_node(member_scope, SiteId(1));
+                        let value: T =
+                            reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                                self.get_key(*id).unwrap_or_else(|| {
+                                    reactive_core::ops::panic_engine(
+                                        reactive_core::error::ComputeError::internal(
+                                            "keyed list member disappeared",
+                                        ),
+                                    )
+                                })
+                            });
+                        let result_node = runtime.site_node(member_scope, SiteId(2));
+                        reactive_core::ops::eval_node_with(&runtime, result_node, || {
+                            f(reactive_runtime::Param::new(param_node, value.clone()))
+                        })
+                    })
+                    .collect()
+            }
+            DerivedListStorage::Whole(items) => items
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let member_scope =
+                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let param_node = runtime.site_node(member_scope, SiteId(1));
+                    let value: T =
+                        reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                            let storage: DerivedListStorage<T> = read_unit_value(
+                                self.unit(),
+                                |content| Some((self.content)(content)),
+                            );
+                            storage.get(index as u64).cloned().unwrap_or_else(|| {
+                                reactive_core::ops::panic_engine(
+                                    reactive_core::error::ComputeError::internal(
+                                        "whole-value list member disappeared",
+                                    ),
+                                )
+                            })
+                        });
+                    let result_node = runtime.site_node(member_scope, SiteId(2));
+                    reactive_core::ops::eval_node_with(&runtime, result_node, || {
+                        f(reactive_runtime::Param::new(param_node, value.clone()))
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    /// Defines a keyed list: stable identities plus one value per entity.
+    pub fn define_keyed<I>(&self, items: I, label: &'static str)
+    where
+        I: IntoIterator<Item = (u64, T)>,
+    {
+        let items: Vec<(u64, T)> = items.into_iter().collect();
+        let sequence: PSeq<(u64, T)> = items.iter().cloned().collect();
+        for (id, value) in &items {
+            define_unit(self.value_key(*id), value.clone(), label);
+        }
+        define_unit(
+            self.unit(),
+            DerivedListStorage::Keyed(sequence),
+            label,
+        );
     }
 }
 
@@ -694,8 +951,36 @@ mod tests {
         let storage = <DerivedList<u32> as ViewField>::define(
             &storage,
             key.entity_key().map_or(&(), |key| key.as_ref()),
-            value_of([1u32, 2, 3].into_iter().collect::<PSeq<u32>>()),
+            value_of(DerivedListStorage::Whole(
+                [1u32, 2, 3].into_iter().collect::<PSeq<u32>>(),
+            )),
         );
         assert_eq!(storage.to_vec(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn derived_list_field_keyed_entities_keep_identity() {
+        let mut storage = <DerivedList<u32> as ViewField>::empty();
+        for (id, value) in [(2u64, 20u32), (1, 10)] {
+            storage = <DerivedList<u32> as ViewField>::define(
+                &storage,
+                any_key(id).as_ref(),
+                value_of(value),
+            );
+        }
+        let key = UnitKey::field(ViewId(1), FieldId(0), UnitKind::Value);
+        storage = <DerivedList<u32> as ViewField>::define(
+            &storage,
+            key.entity_key().map_or(&(), |key| key.as_ref()),
+            value_of(DerivedListStorage::Keyed(
+                [(2u64, 20u32), (1, 10)].into_iter().collect(),
+            )),
+        );
+        assert_eq!(storage.to_vec(), vec![20, 10]);
+        assert_eq!(storage.ids().to_vec(), vec![2, 1]);
+        assert_eq!(storage.get(1), Some(&10));
+        let structure = <DerivedList<u32> as ViewField>::structure(&storage).expect("structure");
+        let ids = structure.value.downcast_ref::<PSeq<u64>>().expect("ids");
+        assert_eq!(ids.to_vec(), vec![2, 1]);
     }
 }

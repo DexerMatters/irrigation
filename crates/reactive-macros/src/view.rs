@@ -426,7 +426,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                     if derived {
                         quote! {
                             #vis fn #ident(&self) -> Vec<#elem> {
-                                self.content.#ident.iter().cloned().collect()
+                                self.content.#ident.to_vec()
                             }
                         }
                     } else {
@@ -795,7 +795,27 @@ fn single_field_forwarding(
                 handle
             }
         },
-        FieldShape::List(elem) => quote! {
+        FieldShape::List(elem) => {
+            let keyed = if derived {
+                quote! {
+                    /// Defines a keyed list: stable identities plus one value per entity.
+                    pub fn define_keyed<I>(&self, items: I)
+                    where
+                        I: IntoIterator<Item = (u64, #elem)>,
+                    {
+                        reactive::ensure_view(<Self as reactive::ViewSchema>::DESCRIPTOR);
+                        self.#accessor().define_keyed(items, #name_str);
+                    }
+                    /// Reads one element by identity.
+                    #[must_use]
+                    pub fn get_key(&self, id: u64) -> Option<#elem> {
+                        self.#accessor().get_key(id)
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            quote! {
             /// Reads every element.
             #[must_use]
             pub fn to_vec(&self) -> Vec<#elem> {
@@ -805,6 +825,15 @@ fn single_field_forwarding(
             #[must_use]
             pub fn ids(&self) -> reactive::PSeq<u64> {
                 self.#accessor().ids()
+            }
+            /// Maps every element, memoizing per identity.
+            #[must_use]
+            pub fn map<U, F>(&self, f: F) -> Vec<U>
+            where
+                U: Clone + PartialEq + Send + Sync + 'static,
+                F: Fn(reactive::Param<#elem>) -> U + Send + Sync,
+            {
+                self.#accessor().map(f)
             }
             /// Number of elements.
             #[must_use]
@@ -838,7 +867,9 @@ fn single_field_forwarding(
                 handle.define_all(items);
                 handle
             }
-        },
+            #keyed
+            }
+        }
         FieldShape::Set(elem) => quote! {
             /// Reads every member.
             #[must_use]

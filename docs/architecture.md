@@ -143,9 +143,12 @@ content, using the content vtable's `structure` projection and its equality for
 cutoff: a map's key set, a list's id sequence, a set's members, a graph's
 topology, and a reduced field's sequence. Definition installs (both per-entity
 and whole-value), membership retractions, and whole-field retractions refresh
-it; value-only edits do not. Derived lists and sets are still whole-value
-definitions; their structure is the positional id sequence or member set that
-Phase 2 keyed definitions will replace. Derived `Reduced` and `Graph` fields are
+it; value-only edits do not. Derived lists have two storage modes: a whole-value definition with positional
+identities, and a keyed definition (`define_keyed`) with explicit `u64`
+identities, one value unit per entity, and an assembled storage value. The
+keyed mode keeps member scopes keyed by identity, so a reorder or an unrelated
+value edit reuses per-member `map` results. Derived sets are still whole-value;
+their structure is the member set. Derived `Reduced` and `Graph` fields are
 rejected at compile time: those families need a `GeneralComponent` or a source
 View.
 
