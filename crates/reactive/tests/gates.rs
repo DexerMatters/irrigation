@@ -6032,3 +6032,42 @@ fn identity_report_summarizes_reuse() {
     assert_eq!(report.site_reuses, runtime.stats().site_reuses);
     assert_eq!(report.invocations, runtime.memory_report().invocations);
 }
+
+// ---------------------------------------------------------------------------
+// Planned provider routes (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn planned_routes_authorize_one_component() {
+    let runtime = Runtime::new();
+    let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let unit = reactive::UnitKey::field(
+        view,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+    );
+    runtime.plan_route([(
+        unit,
+        <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID,
+    )]);
+    assert_eq!(
+        runtime
+            .call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 })
+            .expect("planned provider"),
+        1
+    );
+    match runtime.call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 }) {
+        Err(reactive::ComputeError::DefinitionDenied { reason, .. }) => {
+            assert!(
+                reason.contains("planned"),
+                "the denial must name the planned route: {reason}"
+            );
+        }
+        other => panic!("expected a planned-route denial, got {other:?}"),
+    }
+    assert_eq!(
+        runtime.snapshot().view::<CallSlot>().field0(),
+        1,
+        "the planned provider's value stays authoritative"
+    );
+}

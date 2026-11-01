@@ -94,6 +94,9 @@ impl Runtime {
             record.site = reactive_core::ids::SiteId(index as u32);
             outputs.push(state.alloc(record));
         }
+        state
+            .scope_components
+            .insert(reactive_core::ids::ScopeId::ROOT, R::ID);
         state.root = Some(RootRecord {
             component: R::ID,
             name: R::NAME,
@@ -771,6 +774,19 @@ impl Runtime {
         view: reactive_core::ids::ViewId,
     ) -> Option<RoutingRecipe> {
         self.inner.routing_recipe(view)
+    }
+
+    /// Plans the provider component for units before any value exists.
+    ///
+    /// A definition of a planned unit from any other component is rejected.
+    pub fn plan_route(
+        &self,
+        entries: impl IntoIterator<Item = (reactive_core::descriptor::UnitKey, reactive_core::ids::ComponentId)>,
+    ) {
+        let mut state = self.inner.lock();
+        for (unit, component) in entries {
+            state.route_plans.insert(unit, component);
+        }
     }
 
     /// Installs the provider-selection policy for live definition conflicts.

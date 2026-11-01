@@ -400,6 +400,12 @@ impl ScopeTable {
         before - self.len()
     }
 
+    /// Returns one scope's parent, when it has one.
+    #[must_use]
+    pub fn parent(&self, scope: ScopeId) -> Option<ScopeId> {
+        self.parents.get(&scope).map(|(parent, _)| *parent)
+    }
+
     /// Returns the ancestry of one scope, outermost first.
     #[must_use]
     pub fn path(&self, scope: ScopeId) -> Vec<String> {
@@ -603,6 +609,10 @@ pub struct State {
     pub next_generation: u64,
     /// Views declared (via `ensure_view`) by each scope's computations.
     pub declared_views: FxHashMap<ScopeId, std::collections::HashSet<ViewId>>,
+    /// The component that owns each body scope.
+    pub scope_components: FxHashMap<ScopeId, reactive_core::ids::ComponentId>,
+    /// Planned provider components for units, installed before values exist.
+    pub route_plans: FxHashMap<UnitKey, reactive_core::ids::ComponentId>,
     /// Reclaimed arena slots available for reuse.
     pub free_nodes: Vec<u32>,
     /// Revision of the last reclamation.

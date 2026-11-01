@@ -1023,6 +1023,17 @@ impl Inner {
                     });
                 }
             }
+            if let Some(planned) = state.route_plans.get(&draft.unit) {
+                let provider_component = component_of(state, state.node(provider).scope);
+                if provider_component != Some(*planned) {
+                    return Err(ComputeError::DefinitionDenied {
+                        unit: format!("{:?}", draft.unit),
+                        reason: String::from(
+                            "the unit is planned for a different provider component",
+                        ),
+                    });
+                }
+            }
         }
         let restaged: HashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
         if restaged.len() != drafts.len() {
@@ -1931,6 +1942,21 @@ pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
     hash_one(args)
 }
 
+/// Returns the component that owns a scope, walking member scopes to the body.
+fn component_of(
+    state: &State,
+    scope: ScopeId,
+) -> Option<reactive_core::ids::ComponentId> {
+    let mut current = scope;
+    for _ in 0..64 {
+        if let Some(component) = state.scope_components.get(&current) {
+            return Some(*component);
+        }
+        current = state.scopes.parent(current)?;
+    }
+    None
+}
+
 /// Builds a readable cycle path from a task waiting for `node`.
 fn cycle_path(state: &State, me: TaskId, node: NodeId) -> Vec<String> {
     let mut path = Vec::new();
@@ -2290,6 +2316,7 @@ impl RuntimeOps for Inner {
         let invocation_id = state.next_invocation + 1;
         state.next_invocation = invocation_id;
         let invocation_scope = state.scopes.child(scope, invocation_id);
+        state.scope_components.insert(invocation_scope, component);
         let mut body_record = NodeRecord::empty(name, NodeKind::InvocationBody);
         body_record.scope = invocation_scope;
         let body = state.alloc(body_record);

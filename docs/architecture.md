@@ -216,6 +216,14 @@ trivial `()` state; `Runtime::install_local_general` requires a workerless
 runtime, so every demand runs inline on the owner thread with the normal frame,
 dependency, and definition recording. A demand from another thread is rejected.
 
+## Planned routes
+
+`Runtime::plan_route` assigns units to provider components before any value
+exists. Body scopes record their owning component (root or invocation), and a
+definition of a planned unit from any other component is rejected at install
+time with `DefinitionDenied`. This is the dispatcher's pre-value authorization:
+a lazy provider cannot opportunistically claim planned keys.
+
 ## Routing recipes
 
 `Runtime::routing_recipe(view)` captures the region's provider mapping and
