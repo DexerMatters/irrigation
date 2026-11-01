@@ -99,7 +99,9 @@ handovers) but not on value-only edits. and `Change` marks routing-only
 updates for general components. Each View region also carries a routing version bumped on any provider
 addition, handover, or removal; `Runtime::routing_stamp` captures a
 `RoutingStamp` for the region and `validate_routing` rejects it after routing
-changes (a value-only edit leaves it valid). This is a revisioned routing
+changes (a value-only edit leaves it valid). Snapshots capture their regions'
+routing stamps (`Snapshot::routing_stamp`), so a host can tell whether the
+routing a snapshot observed is still current. This is a revisioned routing
 certificate and recipe-validation primitive; the full owner dispatcher,
 selector recipes, and snapshot-tied retirement are still future work.
 

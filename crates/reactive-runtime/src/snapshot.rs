@@ -68,6 +68,7 @@ pub struct Snapshot {
     revision: Revision,
     views: FxHashMap<ViewId, Arc<dyn Any + Send + Sync>>,
     versions: FxHashMap<ViewId, Version>,
+    routing: FxHashMap<ViewId, u64>,
 }
 
 impl std::fmt::Debug for Snapshot {
@@ -84,12 +85,25 @@ impl Snapshot {
         revision: Revision,
         views: FxHashMap<ViewId, Arc<dyn Any + Send + Sync>>,
         versions: FxHashMap<ViewId, Version>,
+        routing: FxHashMap<ViewId, u64>,
     ) -> Self {
         Self {
             revision,
             views,
             versions,
+            routing,
         }
+    }
+
+    /// The routing certificate this snapshot observed for one View.
+    #[must_use]
+    pub fn routing_stamp(&self, view: ViewId) -> Option<crate::runtime::RoutingStamp> {
+        self.routing
+            .get(&view)
+            .map(|version| crate::runtime::RoutingStamp {
+                view,
+                version: *version,
+            })
     }
 
     /// The revision this snapshot observes.

@@ -1707,11 +1707,13 @@ impl Inner {
         let revision = state.revision;
         let mut views: FxHashMap<ViewId, Arc<dyn Any + Send + Sync>> = FxHashMap::default();
         let mut versions: FxHashMap<ViewId, Version> = FxHashMap::default();
+        let mut routing: FxHashMap<ViewId, u64> = FxHashMap::default();
         for (id, region) in &state.regions {
             views.insert(*id, Arc::clone(&region.content));
             versions.insert(*id, state.node(region.content_node).changed_at);
+            routing.insert(*id, region.routing_version);
         }
-        crate::snapshot::Snapshot::new(revision, views, versions)
+        crate::snapshot::Snapshot::new(revision, views, versions, routing)
     }
 
     /// Number of worker threads.

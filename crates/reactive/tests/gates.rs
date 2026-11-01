@@ -5843,3 +5843,38 @@ fn local_components_keep_non_send_state() {
     let pooled = Runtime::new();
     assert!(pooled.install_local_general(LocalSum).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot routing certificates (C2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn snapshots_carry_routing_certificates() {
+    let runtime = Runtime::new();
+    runtime
+        .install(routing_generation_gate::Root)
+        .expect("install");
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(true))
+        .expect("seed");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    let view = <RouteSlot as reactive::ViewSchema>::DESCRIPTOR.id;
+    let snapshot = runtime.snapshot();
+    let stamp = snapshot.routing_stamp(view).expect("routing stamp");
+    assert!(runtime.validate_routing(&stamp));
+
+    runtime
+        .edit(|edit| edit.view::<RouteFlag>().set_on(false))
+        .expect("handover");
+    let _ = runtime
+        .read_outputs::<routing_generation_gate::Root>()
+        .expect("read");
+    assert!(!runtime.validate_routing(&stamp), "the old snapshot is stale");
+    let fresh = runtime
+        .snapshot()
+        .routing_stamp(view)
+        .expect("fresh routing stamp");
+    assert!(runtime.validate_routing(&fresh));
+}
