@@ -89,6 +89,7 @@ C0 is complete.
 | N15 (partial) | Explanations carry `executed_at`/`validated_at`, scheduling state, waiter count, and `Explain::waiting_tasks` | `explanations_distinguish_validation_from_execution` (identity-reuse and cycle inspectors still open) |
 | N20 | `reactive-plan` is published through `reactive::plan` as the lowering vocabulary; the unused runtime dependency is removed | `the_plan_vocabulary_is_public` |
 | N13 (partial) | Units carry a routing generation bumped on provider changes; deps record it and validation checks it; `provider_of`/`routing_generation` expose the route; `Change` flags routing-only changes | `a_provider_handover_advances_the_routing_generation`, `trace_validation_rejects_a_routing_change_with_an_equal_value` (dispatcher/recipes/route retirement still open) |
+| N14/C3 (partial) | `GeneralCx` gains dependency scopes (`begin_scope`/`end_scope`/`retain`, retired-scope notification filtering) and a typed `OutputTxn` (`define`/`field`/`entry`/`membership`) | `retired_dependency_scopes_filter_notifications` (typed Inputs/Params/Returns, `request().await`/suspendible futures, local executor, output capabilities still open) |
 | N21 | A two-sided join transaction is gated against the from-scratch join; the join can publish a per-key target map | `a_join_tracks_both_inputs_changing_in_one_transaction`, `join_view_updates_only_changed_keys` (bag-join semantics still open) |
 | F12/F13 | `TaskStatus::Done` removed; `MapRef::len/is_empty` read the structure map directly | covered by the existing map/join gates |
 

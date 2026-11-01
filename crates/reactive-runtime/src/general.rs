@@ -22,9 +22,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use reactive_core::descriptor::UnitKey;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
+
+use reactive_core::descriptor::{UnitKey, UnitKind};
 use reactive_core::error::{ComputeError, Result};
-use reactive_core::ids::Revision;
+use reactive_core::ids::{FieldId, Revision, ViewId};
+use reactive_core::key::any_key;
 use reactive_core::ops::RuntimeOps;
 use reactive_core::value::{Value, value_of};
 
@@ -96,6 +100,9 @@ impl ChangeBatch {
 pub struct GeneralCx {
     runtime: Arc<dyn RuntimeOps>,
     revision: Revision,
+    scope: Option<u64>,
+    unit_scopes: HashMap<UnitKey, u64>,
+    retained: HashSet<u64>,
 }
 
 impl std::fmt::Debug for GeneralCx {
@@ -108,7 +115,44 @@ impl std::fmt::Debug for GeneralCx {
 
 impl GeneralCx {
     pub(crate) fn new(runtime: Arc<dyn RuntimeOps>, revision: Revision) -> Self {
-        Self { runtime, revision }
+        Self {
+            runtime,
+            revision,
+            scope: None,
+            unit_scopes: HashMap::new(),
+            retained: HashSet::new(),
+        }
+    }
+
+    /// Starts a dependency scope; subsequent reads are attributed to it.
+    pub fn begin_scope(&mut self, scope: u64) {
+        self.scope = Some(scope);
+    }
+
+    /// Ends the current dependency scope.
+    pub fn end_scope(&mut self) {
+        self.scope = None;
+    }
+
+    /// Retains a scope's changes for the next update.
+    ///
+    /// Changes to units read under an unretained scope are filtered from the
+    /// next [`ChangeBatch`].
+    pub fn retain(&mut self, scope: u64) {
+        self.retained.insert(scope);
+    }
+
+    /// Takes the scope attribution and retained set after a run.
+    pub(crate) fn take_scopes(&mut self) -> (HashMap<UnitKey, u64>, HashSet<u64>) {
+        (
+            std::mem::take(&mut self.unit_scopes),
+            std::mem::take(&mut self.retained),
+        )
+    }
+
+    /// Starts a typed output transaction committed with the new state.
+    pub fn output(&mut self) -> OutputTxn<'_> {
+        OutputTxn { cx: self }
     }
 
     /// The revision being computed.
@@ -123,6 +167,9 @@ impl GeneralCx {
     ///
     /// Fails when the unit was never defined.
     pub fn read(&mut self, unit: UnitKey) -> Result<Value> {
+        if let Some(scope) = self.scope {
+            self.unit_scopes.insert(unit.clone(), scope);
+        }
         self.runtime.ensure_unit(&unit)?;
         let node = self
             .runtime
@@ -158,6 +205,57 @@ impl GeneralCx {
             eq: values_equal::<T>,
             label,
         });
+    }
+}
+
+/// A typed transaction for publishing per-unit definitions.
+pub struct OutputTxn<'a> {
+    cx: &'a mut GeneralCx,
+}
+
+impl std::fmt::Debug for OutputTxn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OutputTxn")
+    }
+}
+
+impl OutputTxn<'_> {
+    /// Defines one logical unit.
+    pub fn define<T: PartialEq + Send + Sync + 'static>(&mut self, unit: UnitKey, value: T) {
+        self.cx.define(unit, value, "output");
+    }
+
+    /// Defines one scalar field of a View.
+    pub fn field<T: PartialEq + Send + Sync + 'static>(
+        &mut self,
+        view: ViewId,
+        field: FieldId,
+        value: T,
+    ) {
+        self.define(UnitKey::field(view, field, UnitKind::Value), value);
+    }
+
+    /// Defines one map entry.
+    pub fn entry<K, V>(&mut self, view: ViewId, field: FieldId, key: K, value: V)
+    where
+        K: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+        V: PartialEq + Send + Sync + 'static,
+    {
+        self.define(
+            UnitKey::entity(view, field, UnitKind::Value, any_key(key)),
+            value,
+        );
+    }
+
+    /// Sets one entity's membership.
+    pub fn membership<K>(&mut self, view: ViewId, field: FieldId, key: K, present: bool)
+    where
+        K: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+    {
+        self.define(
+            UnitKey::entity(view, field, UnitKind::Membership, any_key(key)),
+            present,
+        );
     }
 }
 

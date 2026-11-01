@@ -99,6 +99,10 @@ pub struct NodeRecord {
     pub general: Option<usize>,
     /// Retained state of a custom component, committed with its output.
     pub general_state: Option<crate::general::ErasedState>,
+    /// Units read under a dependency scope by a general component.
+    pub general_unit_scopes: std::collections::HashMap<UnitKey, u64>,
+    /// Dependency scopes retained by the last general-component run.
+    pub general_retained_scopes: std::collections::HashSet<u64>,
     /// Tasks suspended on this node, to be queued when it completes.
     pub waiters: Vec<TaskId>,
 }
@@ -128,6 +132,8 @@ impl NodeRecord {
             definitions: Vec::new(),
             general: None,
             general_state: None,
+            general_unit_scopes: std::collections::HashMap::new(),
+            general_retained_scopes: std::collections::HashSet::new(),
             waiters: Vec::new(),
         }
     }

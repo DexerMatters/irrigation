@@ -4418,3 +4418,142 @@ fn a_provider_handover_advances_the_routing_generation() {
     );
     assert_ne!(runtime.provider_of(&unit), before_provider);
 }
+
+// ---------------------------------------------------------------------------
+// GeneralComponent: dependency scopes and output transaction (C3 slice)
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct ScopedTable {
+    entries: Map<u32, u64>,
+}
+
+#[view(derived)]
+pub struct ScopedOut(Map<u32, u64>);
+
+fn scoped_value(key: u32) -> reactive::UnitKey {
+    reactive::UnitKey::entity(
+        <ScopedTable as reactive::ViewSchema>::DESCRIPTOR.id,
+        reactive::FieldId(0),
+        reactive::UnitKind::Value,
+        reactive::any_key(key),
+    )
+}
+
+struct ScopedReader;
+
+impl reactive::GeneralComponent for ScopedReader {
+    type State = ([u64; 2], usize);
+    type Output = ([u64; 2], usize);
+
+    const ID: reactive::ComponentId = reactive::ComponentId(0x00DD_0003);
+    const NAME: &'static str = "gates::ScopedReader";
+    const VIEWS: &'static [&'static reactive::ViewDescriptor] = &[
+        <ScopedTable as reactive::ViewSchema>::DESCRIPTOR,
+        <ScopedOut as reactive::ViewSchema>::DESCRIPTOR,
+    ];
+
+    fn dependency_updates(&self) -> reactive::DependencyUpdates {
+        reactive::DependencyUpdates::Incremental
+    }
+
+    fn initialize(
+        &self,
+        cx: &mut reactive::GeneralCx,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let mut values = [0u64; 2];
+        cx.begin_scope(1);
+        values[0] = cx.read_typed(scoped_value(1))?;
+        cx.end_scope();
+        cx.begin_scope(2);
+        values[1] = cx.read_typed(scoped_value(2))?;
+        cx.end_scope();
+        cx.retain(1);
+        cx.output().entry(
+            <ScopedOut as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            1u32,
+            values[0],
+        );
+        Ok(((values, 0), (values, 0)))
+    }
+
+    fn update(
+        &self,
+        cx: &mut reactive::GeneralCx,
+        state: &Self::State,
+        changes: &reactive::ChangeBatch,
+    ) -> reactive::Result<(Self::State, Self::Output)> {
+        let batch = changes.changes().len();
+        cx.begin_scope(1);
+        let first: u64 = cx.read_typed(scoped_value(1))?;
+        cx.end_scope();
+        cx.retain(1);
+        let values = [first, state.0[1]];
+        cx.output().entry(
+            <ScopedOut as reactive::ViewSchema>::DESCRIPTOR.id,
+            reactive::FieldId(0),
+            1u32,
+            first,
+        );
+        Ok(((values, batch), (values, batch)))
+    }
+}
+
+#[test]
+fn retired_dependency_scopes_filter_notifications() {
+    let runtime = Runtime::new();
+    runtime.install_general(ScopedReader).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ScopedTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 10);
+            entries.insert(2, 20);
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<ScopedReader>()
+            .expect("initialize"),
+        ([10, 20], 0)
+    );
+    assert_eq!(
+        runtime.snapshot().view::<ScopedOut>().field0(),
+        vec![(1, 10)]
+    );
+
+    // Key 2 was read under a retired scope: its edit is filtered from the batch.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ScopedTable>();
+            let mut entries = table.entries();
+            entries.insert(2, 21);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<ScopedReader>()
+            .expect("retired scope"),
+        ([10, 20], 0)
+    );
+
+    // Key 1 is in the retained scope: its edit is delivered.
+    runtime
+        .edit(|edit| {
+            let mut table = edit.view::<ScopedTable>();
+            let mut entries = table.entries();
+            entries.insert(1, 11);
+        })
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs_general::<ScopedReader>()
+            .expect("retained scope"),
+        ([11, 20], 1)
+    );
+    assert_eq!(
+        runtime.snapshot().view::<ScopedOut>().field0(),
+        vec![(1, 11)]
+    );
+}

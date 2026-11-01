@@ -498,8 +498,20 @@ impl Inner {
         }
         match result {
             Ok(Ok(value)) => {
-                let committed =
-                    self.commit(node, value, deps, definitions, None, eq, revision, me, generation, &cancel)?;
+                let committed = self.commit(
+                    node,
+                    value,
+                    deps,
+                    definitions,
+                    None,
+                    std::collections::HashMap::new(),
+                    std::collections::HashSet::new(),
+                    eq,
+                    revision,
+                    me,
+                    generation,
+                    &cancel,
+                )?;
                 let version = self.changed_at(node);
                 let routing = self.routing_at(node);
                 frame::record_dep(Dep { node, version, routing });
@@ -526,7 +538,7 @@ impl Inner {
         owner: TaskId,
         generation: u64,
     ) -> Result<Value> {
-        let (general, old_trace, old_state, scope) = {
+        let (general, old_trace, old_state, scope, old_unit_scopes, old_retained) = {
             let state = self.lock();
             let record = state.node(node);
             let general = Arc::clone(&state.generals[index]);
@@ -535,6 +547,8 @@ impl Inner {
                 record.trace.clone(),
                 record.general_state.clone(),
                 record.scope,
+                record.general_unit_scopes.clone(),
+                record.general_retained_scopes.clone(),
             )
         };
         let changes = {
@@ -544,6 +558,12 @@ impl Inner {
                 let record = state.node(dep.node);
                 if record.changed_at != dep.version || record.routing_at != dep.routing {
                     if let Some(unit) = &record.unit {
+                        if old_unit_scopes
+                            .get(unit)
+                            .is_some_and(|scope| !old_retained.contains(scope))
+                        {
+                            continue;
+                        }
                         changes.push(crate::general::Change {
                             unit: unit.clone(),
                             previous: dep.version,
@@ -586,6 +606,7 @@ impl Inner {
             (Some(state), true) => general.update(&mut cx, state, &changes),
             _ => general.initialize(&mut cx),
         });
+        let (unit_scopes, retained_scopes) = cx.take_scopes();
         let definitions: Vec<DefinitionDraft> = frame.take_staged();
         let deps = frame.take_deps();
         drop(guard);
@@ -601,6 +622,8 @@ impl Inner {
                     deps,
                     definitions,
                     Some(state),
+                    unit_scopes,
+                    retained_scopes,
                     &eq,
                     revision,
                     owner,
@@ -701,6 +724,8 @@ impl Inner {
         deps: Vec<Dep>,
         definitions: Vec<DefinitionDraft>,
         retained_state: Option<crate::general::ErasedState>,
+        unit_scopes: std::collections::HashMap<UnitKey, u64>,
+        retained_scopes: std::collections::HashSet<u64>,
         eq: &dyn Fn(&Value, &Value) -> bool,
         revision: Revision,
         owner: TaskId,
@@ -773,6 +798,8 @@ impl Inner {
             if let Some(retained) = retained_state {
                 record.general_state = Some(retained);
             }
+            record.general_unit_scopes = unit_scopes;
+            record.general_retained_scopes = retained_scopes;
             if changed {
                 record.changed_at = revision;
             }
@@ -2124,6 +2151,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            std::collections::HashMap::new(),
+            std::collections::HashSet::new(),
             &eq,
             0,
             1,
@@ -2167,6 +2196,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            std::collections::HashMap::new(),
+            std::collections::HashSet::new(),
             &eq,
             0,
             1,

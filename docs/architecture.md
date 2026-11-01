@@ -252,7 +252,11 @@ field edit on a leaf keeps that leaf's id.
 
 `GeneralComponent` retains state and consumes a `ChangeBatch` of changed units.
 `Reset` reinitializes (always sound); `Incremental` calls `update`. State,
-output, trace, and definitions commit atomically. `EquiJoin` and `FixedPointProblem`
+output, trace, and definitions commit atomically. `GeneralCx` supports
+dependency scopes: reads inside `begin_scope`/`end_scope` are attributed to the
+scope, `retain` keeps a scope's changes for the next batch, and changes to
+retired scopes are filtered. `cx.output()` returns a typed `OutputTxn` that
+stages per-unit definitions (`define`, `field`, `entry`, `membership`). `EquiJoin` and `FixedPointProblem`
 are built on this boundary.
 
 ## Where to extend

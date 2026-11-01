@@ -549,9 +549,11 @@ output uses the same `GeneralCx::define` path the join exercises.
    `List::to_map(key_fn)`, `Graph::node_map()` are done; `Tree::flatten_map()`, each
    defining a keyed View so downstream per-key work survives an upstream
    value edit. These are the first APIs that make I6 checkable across families.
-4. **GeneralComponent outputs.** A typed output transaction that can stage
-   definitions per unit from `initialize`/`update`, so custom algorithms publish
-   per-key results instead of whole values.
+4. **GeneralComponent outputs.** Done in part: `GeneralCx::output` returns a
+   typed `OutputTxn` (`define`/`field`/`entry`/`membership`) that stages
+   per-unit definitions; `GeneralCx` also supports dependency scopes with
+   retired-scope notification filtering. Gate:
+   `retired_dependency_scopes_filter_notifications`.
 
 Gates: `join_view_updates_only_changed_keys`,
 `map_to_list_preserves_key_identity`, `graph_node_map_updates_one_node`,
