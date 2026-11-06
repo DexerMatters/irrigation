@@ -11,8 +11,10 @@ description.workspace = true
 workspace = true
 
 [features]
-# Compiles the runtime observation path and the Observatory example.
-observatory = ["reactive-runtime/observe"]
+# The observation path: runtime events, the board's projection crate, and the
+# syntax pipeline the example hosts display. Off by default; only the
+# observatory examples require it.
+observatory = ["dep:reactive-observe", "reactive-runtime/observe"]
 
 [dependencies]
 reactive-core.workspace = true
@@ -20,11 +22,14 @@ reactive-store.workspace = true
 reactive-collections.workspace = true
 reactive-runtime.workspace = true
 reactive-macros.workspace = true
+reactive-observe = { workspace = true, optional = true }
 
 [dev-dependencies]
-reactive-test.workspace = true
-reactive-observe.workspace = true
+# A consumer of this facade, so it cannot also be an optional dependency here:
+# a regular dependency on it would close a package cycle. Only the examples that
+# are gated on `observatory` use it.
 reactive-syntax.workspace = true
+reactive-test.workspace = true
 
 [[example]]
 name = "observatory"
@@ -32,8 +37,18 @@ path = "examples/observatory/main.rs"
 required-features = ["observatory"]
 
 [[example]]
-name = "observe_cost"
-path = "examples/observe_cost.rs"
+name = "observatory_json"
+path = "examples/observatory_json.rs"
+required-features = ["observatory"]
+
+[[example]]
+name = "observatory_min"
+path = "examples/observatory_min.rs"
+required-features = ["observatory"]
+
+[[example]]
+name = "observatory_syntax"
+path = "examples/observatory_syntax.rs"
 required-features = ["observatory"]
 
 [[example]]
@@ -42,6 +57,6 @@ path = "examples/observe_board.rs"
 required-features = ["observatory"]
 
 [[example]]
-name = "observatory_syntax"
-path = "examples/observatory_syntax.rs"
+name = "observe_cost"
+path = "examples/observe_cost.rs"
 required-features = ["observatory"]

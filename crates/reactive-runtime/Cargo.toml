@@ -11,9 +11,8 @@ description.workspace = true
 workspace = true
 
 [features]
-# Emit runtime observation events. Runtime call sites reference the module
-# unconditionally, so it is enabled by default until those sites are gated.
-default = ["observe"]
+# Emit runtime observation events and expose the projection methods. Off by
+# default: the `reactive` facade turns it on through its `observatory` feature.
 observe = []
 
 [dependencies]

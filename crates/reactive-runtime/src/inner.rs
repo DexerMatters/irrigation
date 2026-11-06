@@ -236,6 +236,7 @@ impl Inner {
             self_ref: OnceLock::new(),
             pool,
             active_task: Mutex::new(None),
+            #[cfg(feature = "observe")]
             observer: OnceLock::new(),
         });
         let _ = inner.self_ref.set(Arc::downgrade(&inner));
@@ -945,6 +946,7 @@ impl Inner {
     /// Timestamps come from the records that run — a component's body and its
     /// output projections — never from the units and sites in its scope, whose
     /// own timestamps belong to whoever published them.
+    #[cfg(feature = "observe")]
     #[must_use]
     pub fn component_facts(&self) -> Vec<crate::observe::ComponentFacts> {
         use crate::observe::{ComponentFacts, ComponentKind};
