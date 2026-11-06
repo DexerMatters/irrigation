@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      # Observation is opt-in; the off state is a build contract, not a wish.
+      - name: Observation off
+        run: |
+          cargo check -p reactive-runtime --no-default-features --locked
+          cargo test -p reactive-runtime --no-default-features --locked
+
+      # The facade must build without the observation path, and the examples
+      # only with it.
+      - name: Facade feature matrix
+        run: |
+          cargo check -p reactive --all-targets --locked
+          cargo build -p reactive --examples --features observatory --locked
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Markdown links
+        run: python3 scripts/check-md-links.py
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/observatory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/observatory/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
