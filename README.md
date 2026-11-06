@@ -67,8 +67,9 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
 | `reactive-runtime` | node arena, ordered validation, change cutoff, reverse-edge invalidation, edits, derived regions, snapshots, subscriptions, worker pool, fixed points |
 | `reactive-collections` | source list/map/set with per-entity observations, tracked parameter handles, per-member operators, derived collections |
 | `reactive-macros` | `#[view]`, `#[component]`, `#[reactive]` lowering to tracked primitives |
-| `reactive-plan` | lowering vocabulary: sites, projections, generators, observations |
 | `reactive-test` | deterministic generators, oracle trait, execution accounting |
+| `reactive-observe` | bounded event recorder, revision journal, View projection, std HTTP server for the board |
+| `reactive-syntax` | text → lexer → AST pipeline published as ordinary general components (a consumer, not the kernel) |
 | `reactive` | public facade |
 
 ### How a change flows
@@ -120,24 +121,12 @@ identity, a component that ran says `ran at r2`, and one that ran without
 changing anything says `same content`. Selecting an older revision on the tape
 re-annotates the board from the journal.
 
-Three hosts ship with the workspace:
-
-```sh
-# JSON: lexer and parser as general components, plus a sink that walks the
-# published tree and writes a keyed table of JSON paths.
-cargo run --example observatory_json -p reactive --features observatory -- --bind 127.0.0.1:7791
-
-# The same pipeline over a smaller grammar, with no sink.
-cargo run --example observatory_syntax -p reactive --features observatory -- --bind 127.0.0.1:7790
-
-# The demo above: a program text and a weight list, both editable, feeding a
-# root and five invoked components.
-cargo run --example observatory -p reactive --features observatory
-```
-
+Three hosts ship with the workspace: the JSON pipeline, the smaller syntax
+pipeline, and the demo. Their commands, the page's editing workflow, and the
+frontend's own notes live in [`web/observatory/README.md`](web/observatory/README.md).
+`--example observe_board` puts ten Views on one board, one per module kind, and
 `cargo run --release --example observe_cost` reports what recording costs on the
-scaling workload, and `--example observe_board` puts ten Views on one board, one
-per module kind.
+scaling workload.
 
 Design and delivery notes: [`plans/runtime-visualization-plan.md`](plans/runtime-visualization-plan.md)
 and [`plans/runtime-visualization-status.md`](plans/runtime-visualization-status.md).
@@ -325,3 +314,8 @@ The implementation follows the plan's phase order. Where the plan and the code
 diverge, the divergence is listed in
 [`plans/implementation-status.md`](plans/implementation-status.md) rather than
 hidden.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.

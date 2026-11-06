@@ -14,8 +14,9 @@ there is no CST tree.
 
 ## 1. What the profile measured
 
-Source: [`json_typing_profile.rs`](../crates/reactive-syntax/tests/json_typing_profile.rs),
-20-entry JSON document (856 tokens, 1.7 KB), release-free debug build.
+Source: `json_typing_profile.rs` (since removed; the fixture gate is
+`crates/reactive-syntax/tests/fixture.rs`), 20-entry JSON document (856 tokens,
+1.7 KB), release-free debug build.
 
 | phase | median | tokens relexed | bytes relexed | AST nodes moved |
 |---|---|---|---|---|
@@ -57,8 +58,8 @@ Both the read cost and the commit cost were re-measured after the O(1)
 
 ### Measured causes
 
-- **R1 — the parser re-reads every token unit per edit.** `read_tokens`
-  ([`reactive_components.rs`](../crates/reactive-syntax/src/reactive_components.rs))
+- **R1 — the parser re-reads every token unit per edit.** `read_tokens` (in the
+  since-removed `reactive_components.rs`)
   reads `Tokens::kind/text/range/flags/states/...` for *all* tokens: ~12 ms per
   edit at 856 tokens, ~30 ms at 2 117 — O(document), not O(edit).
 - **R2 — the AST is parsed from scratch.** `ParserComponent::parse_ast` calls
@@ -446,15 +447,14 @@ scheduled.
 
 ## 15. Relation to the other plans
 
-- [`ast-only-parser-tree-metadata-plan.md`](ast-only-parser-tree-metadata-plan.md)
-  fixed the published shape: structure in the tree, everything else in units.
-  This plan keeps that shape and makes its *maintenance* incremental.
+- The earlier AST plans fixed the published shape — structure in the tree,
+  everything else in units — and this plan keeps that shape while making its
+  *maintenance* incremental.
 - [`kernel-change-notification-plan.md`](kernel-change-notification-plan.md)
   fixed reuse and notification. This plan removes the runtime ordering
   workaround it needed (§3.1, §3.2) and makes the component contract uniform.
-- [`parser-adapter-after-diff-plan.md`](parser-adapter-after-diff-plan.md)
-  introduced the after-diff on the CST; this plan moves the same idea to the AST
-  and makes it the validation step of the incremental parse.
+- The CST-era after-diff is replaced here: the same idea now runs on the AST and
+  is the validation step of the incremental parse.
 
 ---
 

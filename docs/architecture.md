@@ -25,6 +25,12 @@ reactive           facade + tests + examples
 `reactive-core` never depends on the runtime. `reactive-macros` only emits code
 that names the facade, so generated code compiles in user crates.
 
+Two crates sit beside the kernel and are not part of its invariants:
+`reactive-observe` reads committed state (it never demands a node) and serves it
+over std HTTP; `reactive-syntax` is a consumer that implements an incremental
+text → lexer → parser pipeline as ordinary general components. This document
+specifies the kernel, not those consumers.
+
 ## The node
 
 Every memoized computation is a `NodeRecord`:
