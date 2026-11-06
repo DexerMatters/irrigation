@@ -158,9 +158,10 @@ fn push_ast(
     } else if let Some(rule) = node.rule() {
         (
             String::from("rule"),
-            rules
-                .get(&rule)
-                .map_or_else(|| format!("rule {rule:#x}"), |name| name.to_string()),
+            rules.get(&rule).map_or_else(
+                || format!("rule {rule:#x}"),
+                std::string::ToString::to_string,
+            ),
             tree_units::tag(AstTree::view_id(), node.raw()),
         )
     } else {
@@ -334,7 +335,7 @@ fn main() -> std::io::Result<()> {
                 move || document.lock().expect("document").text().to_owned()
             },
             {
-                let runtime = runtime.clone();
+                let runtime = runtime;
                 let document = Arc::clone(&document);
                 move |text: &str| {
                     // The editor sends its whole buffer; commit the one edit that

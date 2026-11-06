@@ -419,6 +419,10 @@ fn cross_family_rows() {
 #[view(derived)]
 pub struct SyntaxFlatten(Map<u64, u32>);
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "`flatten_map` takes `fn(&Node) -> Option<u32>`; this grammar maps every node"
+)]
 fn flatten_tag(node: &syntax::SyntaxNode) -> Option<u32> {
     match node {
         syntax::SyntaxNode::Document(_) => Some(0),

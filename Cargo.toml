@@ -43,6 +43,18 @@ unused_must_use = "deny"
 dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
+# Allow-by-default lints this codebase earns value from: they catch the shapes
+# review misses (a clone that exists only to dodge a borrow, a wrapper that adds
+# nothing, a loop that should be an expression).
+redundant_clone = "warn"
+unnecessary_wraps = "warn"
+unused_self = "warn"
+trivially_copy_pass_by_ref = "warn"
+items_after_statements = "warn"
+map_unwrap_or = "warn"
+format_push_string = "warn"
+redundant_closure_for_method_calls = "warn"
+useless_let_if_seq = "warn"
 
 [profile.release]
 debug = 1

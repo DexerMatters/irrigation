@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use reactive_core::descriptor::{UnitKey, UnitKind};
-use reactive_core::error::Result;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{Revision, ViewId};
 use reactive_core::value::{Value, value_of};
@@ -144,7 +143,7 @@ impl Edit {
     }
 
     /// Applies the transaction, returning whether a new revision was published.
-    pub(crate) fn commit(&mut self) -> Result<bool> {
+    pub(crate) fn commit(&mut self) -> bool {
         // Only the observer uses these; the commit path never branches on them.
         #[cfg(feature = "observe")]
         let started = std::time::Instant::now();
@@ -251,7 +250,7 @@ impl Edit {
                     views: smallvec::SmallVec::new(),
                     duration_ns: started.elapsed().as_nanos() as u64,
                 });
-            return Ok(false);
+            return false;
         }
         state.revision = revision;
         // Conflicts belong to the revision that produced them.
@@ -299,7 +298,7 @@ impl Edit {
         {
             let _ = (seeds, invalidated);
         }
-        Ok(true)
+        true
     }
 }
 

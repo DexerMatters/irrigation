@@ -112,7 +112,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         }
     }
     for item in ordered {
-        let spec = enum_spec(item, &names, type_index)?;
+        let spec = enum_spec(item, &names, type_index);
         type_index += 1;
         specs.push(spec);
     }
@@ -134,7 +134,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     }
     let label_fn = format_ident!("__{}_variant_label", parsed.view.to_string().to_lowercase());
 
-    let view_ident = parsed.view.clone();
+    let view_ident = parsed.view;
     let view_name = view_ident.to_string();
     let prefix = view_name.to_lowercase();
     let view_const = format_ident!("__{}_view_id", prefix);
@@ -828,7 +828,7 @@ impl syn::parse::Parse for TreeArgs {
 
 type ItemEnum = syn::ItemEnum;
 
-fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Result<EnumSpec> {
+fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> EnumSpec {
     let tuple_methods: HashSet<String> = item
         .variants
         .iter()
@@ -903,11 +903,11 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
             fields,
         });
     }
-    Ok(EnumSpec {
+    EnumSpec {
         ident: item.ident.clone(),
         type_index,
         variants,
-    })
+    }
 }
 
 fn leaf_slot_for(fields: &[FieldSpec]) -> u16 {

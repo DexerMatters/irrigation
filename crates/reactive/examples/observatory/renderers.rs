@@ -168,7 +168,7 @@ pub fn weights_preview(snapshot: &Snapshot) -> ValuePreview {
         detail: Some(
             values
                 .iter()
-                .map(|value| value.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", "),
         ),

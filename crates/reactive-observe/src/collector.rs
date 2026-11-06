@@ -210,7 +210,7 @@ impl Collector {
     fn journal(&self) -> std::sync::MutexGuard<'_, Journal> {
         self.journal
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The first frame of a session.

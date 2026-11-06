@@ -541,8 +541,7 @@ pub fn unit_version(state: &State, unit: &UnitKey) -> Version {
                 .and_then(|region| region.units.get(unit))
                 .map(|slot| slot.node)
         })
-        .map(|node| state.node(node).changed_at)
-        .unwrap_or(0)
+        .map_or(0, |node| state.node(node).changed_at)
 }
 
 impl std::fmt::Debug for SubscriptionRecord {

@@ -156,7 +156,9 @@ mod yielding {
 }
 
 fn serial() -> MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn reset_probes() {

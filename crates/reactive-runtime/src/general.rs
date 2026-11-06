@@ -316,7 +316,7 @@ impl GeneralCx {
             self.unit_scopes.insert(unit.clone(), scope);
         }
         self.runtime.ensure_unit(&unit)?;
-        let node = self.runtime.unit_node(unit.view, Arc::new(unit.clone()));
+        let node = self.runtime.unit_node(unit.view, Arc::new(unit));
         self.runtime.read_unit(node)
     }
 

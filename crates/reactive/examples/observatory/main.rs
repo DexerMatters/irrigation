@@ -62,7 +62,7 @@ fn main() -> std::io::Result<()> {
     }
 
     let observatory = Observatory::builder(runtime.clone(), recorder)
-        .bind(bind.clone())
+        .bind(bind)
         .static_dir(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../web/observatory/dist"
@@ -109,13 +109,13 @@ fn main() -> std::io::Result<()> {
                         .lock()
                         .expect("weights")
                         .iter()
-                        .map(|value| value.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect::<Vec<_>>()
                         .join("\n")
                 }
             },
             {
-                let runtime = runtime.clone();
+                let runtime = runtime;
                 let weights = Arc::clone(&weights);
                 // One number per line. The diff is minimal: only the positions
                 // whose value differs are staged, so only those units blink.

@@ -268,9 +268,10 @@ impl Lexer {
                     position,
                     &state,
                     TokenId(next_id),
-                    guard_error
-                        .map(|error| format!("lexical guard failed: {error}"))
-                        .unwrap_or_else(|| "no lexer rule matched".to_string()),
+                    guard_error.map_or_else(
+                        || "no lexer rule matched".to_string(),
+                        |error| format!("lexical guard failed: {error}"),
+                    ),
                 );
                 next_id = next_id.saturating_add(1);
                 produced.push(Arc::new(token));
@@ -307,7 +308,7 @@ impl Lexer {
                         if let Some(mode) = end_state.mode_stack.pop() {
                             end_state.mode = mode;
                         } else {
-                            diagnostics.push(self.diagnostic(
+                            diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.mode.pop",
@@ -322,13 +323,13 @@ impl Lexer {
                             Ok(value) if end_state.values.len() < self.options.max_value_depth => {
                                 end_state.values.push(value);
                             }
-                            Ok(_) => diagnostics.push(self.diagnostic(
+                            Ok(_) => diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.value.depth",
                                 "value-stack depth limit exceeded",
                             )),
-                            Err(error) => diagnostics.push(self.diagnostic(
+                            Err(error) => diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.guard",
@@ -343,13 +344,13 @@ impl Lexer {
                             Ok(value) if !end_state.values.is_empty() => {
                                 *end_state.values.last_mut().expect("checked non-empty") = value;
                             }
-                            Ok(_) => diagnostics.push(self.diagnostic(
+                            Ok(_) => diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.value.underflow",
                                 "`set_value` on an empty value stack",
                             )),
-                            Err(error) => diagnostics.push(self.diagnostic(
+                            Err(error) => diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.guard",
@@ -359,7 +360,7 @@ impl Lexer {
                     }
                     CompiledAction::PopValue => {
                         if end_state.values.pop().is_none() {
-                            diagnostics.push(self.diagnostic(
+                            diagnostics.push(diagnostic(
                                 current,
                                 start_pos..end_pos,
                                 "lex.value.underflow",
@@ -375,7 +376,7 @@ impl Lexer {
 
             if rule.error {
                 diagnostics.push(
-                    self.diagnostic(
+                    diagnostic(
                         current,
                         start_pos..end_pos,
                         "lex.error",
@@ -582,9 +583,10 @@ impl Lexer {
                     position,
                     &state,
                     TokenId(next_id),
-                    guard_error
-                        .map(|error| format!("lexical guard failed: {error}"))
-                        .unwrap_or_else(|| "no lexer rule matched".to_string()),
+                    guard_error.map_or_else(
+                        || "no lexer rule matched".to_string(),
+                        |error| format!("lexical guard failed: {error}"),
+                    ),
                 );
                 next_id = next_id.saturating_add(1);
                 tokens.push(Arc::new(token));
@@ -618,7 +620,7 @@ impl Lexer {
                         if let Some(mode) = end_state.mode_stack.pop() {
                             end_state.mode = mode;
                         } else {
-                            diagnostics.push(self.diagnostic(
+                            diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.mode.pop",
@@ -633,13 +635,13 @@ impl Lexer {
                             Ok(value) if end_state.values.len() < self.options.max_value_depth => {
                                 end_state.values.push(value);
                             }
-                            Ok(_) => diagnostics.push(self.diagnostic(
+                            Ok(_) => diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.value.depth",
                                 "value-stack depth limit exceeded",
                             )),
-                            Err(error) => diagnostics.push(self.diagnostic(
+                            Err(error) => diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.guard",
@@ -654,13 +656,13 @@ impl Lexer {
                             Ok(value) if !end_state.values.is_empty() => {
                                 *end_state.values.last_mut().expect("checked non-empty") = value;
                             }
-                            Ok(_) => diagnostics.push(self.diagnostic(
+                            Ok(_) => diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.value.underflow",
                                 "`set_value` on an empty value stack",
                             )),
-                            Err(error) => diagnostics.push(self.diagnostic(
+                            Err(error) => diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.guard",
@@ -670,7 +672,7 @@ impl Lexer {
                     }
                     CompiledAction::PopValue => {
                         if end_state.values.pop().is_none() {
-                            diagnostics.push(self.diagnostic(
+                            diagnostics.push(diagnostic(
                                 &snapshot,
                                 start_pos..end_pos,
                                 "lex.value.underflow",
@@ -686,7 +688,7 @@ impl Lexer {
 
             if rule.error {
                 diagnostics.push(
-                    self.diagnostic(
+                    diagnostic(
                         &snapshot,
                         start_pos..end_pos,
                         "lex.error",
@@ -879,31 +881,29 @@ impl Lexer {
             flags: TokenFlags::ERROR,
             error: Some(Arc::from(message.clone())),
         };
-        let diagnostic = self
-            .diagnostic(snapshot, position..end, "lex.error", message)
+        let diagnostic = diagnostic(snapshot, position..end, "lex.error", message)
             .with_token_kind(self.spec.error_kind);
         (token, diagnostic, end)
     }
+}
 
-    fn diagnostic(
-        &self,
-        snapshot: &TextSnapshot,
-        range: std::ops::Range<usize>,
-        code: &str,
-        message: impl Into<String>,
-    ) -> Diagnostic {
-        let range = snapshot
-            .range(range.clone())
-            .or_else(|| snapshot.range(range.start..range.start))
-            .unwrap_or_else(|| {
-                TextRange::empty(
-                    snapshot
-                        .anchor(0)
-                        .unwrap_or(crate::text::TextAnchor::new(snapshot.version(), 0)),
-                )
-            });
-        Diagnostic::error(code, message, range)
-    }
+fn diagnostic(
+    snapshot: &TextSnapshot,
+    range: std::ops::Range<usize>,
+    code: &str,
+    message: impl Into<String>,
+) -> Diagnostic {
+    let range = snapshot
+        .range(range.clone())
+        .or_else(|| snapshot.range(range.start..range.start))
+        .unwrap_or_else(|| {
+            TextRange::empty(
+                snapshot
+                    .anchor(0)
+                    .unwrap_or(crate::text::TextAnchor::new(snapshot.version(), 0)),
+            )
+        });
+    Diagnostic::error(code, message, range)
 }
 
 struct Choice {

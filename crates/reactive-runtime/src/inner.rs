@@ -389,11 +389,10 @@ impl Inner {
         if let Some(node) = state.units.get(key.as_ref()) {
             return *node;
         }
-        let content = state
-            .regions
-            .get(&view)
-            .map(|region| Arc::clone(&region.content) as Arc<dyn Any + Send + Sync>)
-            .unwrap_or_else(|| Arc::new(()));
+        let content = state.regions.get(&view).map_or_else(
+            || Arc::new(()) as Arc<dyn Any + Send + Sync>,
+            |region| Arc::clone(&region.content) as Arc<dyn Any + Send + Sync>,
+        );
         let initial = init(content.as_ref());
         let typed = match key.as_any().downcast_ref::<UnitKey>() {
             Some(unit) => unit.clone(),
@@ -414,7 +413,7 @@ impl Inner {
             record.state = NodeState::Ready;
         }
         let node = state.alloc(record);
-        state.units.insert(Arc::new(key.clone()), node);
+        state.units.insert(Arc::new(key), node);
         node
     }
 
@@ -823,7 +822,7 @@ impl Inner {
         // longer decides what update sees.
         let changes = {
             let weak = Arc::downgrade(&self.arc());
-            let trace = old_trace.clone();
+            let trace = old_trace;
             crate::general::ChangeBatch::lazy(move || {
                 let Some(inner) = weak.upgrade() else {
                     return Vec::new();
@@ -1172,8 +1171,7 @@ impl Inner {
                     .and_then(|region| region.units.get(unit))
                     .map(|slot| slot.node)
             })
-            .map(|node| state.node(node).routing_at)
-            .unwrap_or(0)
+            .map_or(0, |node| state.node(node).routing_at)
     }
 
     /// Returns the revision at which a node's value last changed.
@@ -1281,7 +1279,7 @@ impl Inner {
         }
         state.node_mut(node).content_writes = content_views;
         let mut changed_nodes = Vec::new();
-        if let Err(error) = self.install_definitions(
+        if let Err(error) = Self::install_definitions(
             &mut state,
             node,
             definitions,
@@ -1395,7 +1393,7 @@ impl Inner {
         for definition in definitions {
             let view = definition.unit.view;
             if let Some(mut region) = state.regions.remove(&view) {
-                let _ = self.retract_unit(
+                Self::retract_unit(
                     state,
                     &mut region,
                     node,
@@ -1458,7 +1456,6 @@ impl Inner {
 
     #[allow(clippy::too_many_arguments)]
     fn install_definitions(
-        &self,
         state: &mut State,
         provider: NodeId,
         drafts: Vec<DefinitionDraft>,
@@ -1540,7 +1537,7 @@ impl Inner {
             let Some(mut region) = state.regions.remove(&view) else {
                 continue;
             };
-            let outcome = self.retract_unit(
+            Self::retract_unit(
                 state,
                 &mut region,
                 provider,
@@ -1549,7 +1546,6 @@ impl Inner {
                 changed_nodes,
             );
             state.regions.insert(view, region);
-            outcome?;
         }
 
         let mut by_view: FxHashMap<ViewId, Vec<DefinitionDraft>> = FxHashMap::default();
@@ -1571,7 +1567,7 @@ impl Inner {
                     reason: String::from("view is not registered"),
                 });
             };
-            let outcome = self.apply_definitions(
+            Self::apply_definitions(
                 state,
                 &mut region,
                 provider,
@@ -1582,7 +1578,6 @@ impl Inner {
                 &mut installed,
             );
             state.regions.insert(view, region);
-            outcome?;
         }
         // Retained definitions are still this provider's output for the
         // revision: certify them so readers and reuse checks see them as final.
@@ -1653,7 +1648,6 @@ impl Inner {
 
     #[allow(clippy::too_many_arguments)]
     fn apply_definitions(
-        &self,
         state: &mut State,
         region: &mut Region,
         provider: NodeId,
@@ -1662,7 +1656,7 @@ impl Inner {
         selector: Option<&Arc<dyn crate::runtime::RouteSelector>>,
         changed_nodes: &mut Vec<NodeId>,
         installed: &mut Vec<DefinitionRecord>,
-    ) -> Result<()> {
+    ) {
         let descriptor = region.descriptor;
         let mut content = Arc::clone(&region.content);
         let mut dirty_fields: Vec<FieldId> = Vec::new();
@@ -1832,24 +1826,22 @@ impl Inner {
         for field in dirty_fields {
             Self::refresh_structure(state, region, field, revision, changed_nodes);
         }
-        Ok(())
     }
 
     fn retract_unit(
-        &self,
         state: &mut State,
         region: &mut Region,
         provider: NodeId,
         unit: &UnitKey,
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
-    ) -> Result<()> {
+    ) {
         let descriptor = region.descriptor;
         let owner = owner_key(unit);
 
         if let Some(existing) = region.owners.get(&owner) {
             if existing.node != provider {
-                return Ok(());
+                return;
             }
         }
         if region.owners.get(&owner).is_some() {
@@ -1943,7 +1935,6 @@ impl Inner {
         {
             Self::refresh_structure(state, region, unit.field, revision, changed_nodes);
         }
-        Ok(())
     }
 
     /// Records a wait on `node`, or parks when the task cannot yield.
@@ -1966,7 +1957,7 @@ impl Inner {
                 )],
             });
         }
-        if self.would_cycle(&state, owner, me) {
+        if Self::would_cycle(&state, owner, me) {
             return Err(ComputeError::Cycle {
                 path: cycle_path(&state, me, node),
             });
@@ -2041,7 +2032,7 @@ impl Inner {
         wait_cycles(&self.lock())
     }
 
-    fn would_cycle(&self, state: &State, from: TaskId, target: TaskId) -> bool {
+    fn would_cycle(state: &State, from: TaskId, target: TaskId) -> bool {
         let mut current = from;
         let mut visited = HashSet::new();
         while visited.insert(current) {
@@ -2116,7 +2107,7 @@ impl Inner {
                     .cloned();
                 if let Some(mut region) = state.regions.remove(&view) {
                     let mut changed = Vec::new();
-                    let _ = self.retract_unit(
+                    Self::retract_unit(
                         &mut state,
                         &mut region,
                         conflict.second,
@@ -2144,8 +2135,7 @@ impl Inner {
                             region
                                 .units
                                 .get(&conflict.unit)
-                                .map(|slot| slot.node)
-                                .unwrap_or(conflict.first),
+                                .map_or(conflict.first, |slot| slot.node),
                         );
                     }
                     state.regions.insert(view, region);
@@ -2165,7 +2155,7 @@ impl Inner {
             let view = conflict.unit.view;
             if let Some(mut region) = state.regions.remove(&view) {
                 let mut changed = Vec::new();
-                let _ = self.retract_unit(
+                Self::retract_unit(
                     &mut state,
                     &mut region,
                     conflict.second,
@@ -2722,8 +2712,7 @@ impl Inner {
                             .owners
                             .iter()
                             .next()
-                            .map(|(_, provider)| provider.node)
-                            .unwrap_or(region.content_node);
+                            .map_or(region.content_node, |(_, provider)| provider.node);
                         let record = state.node(owner);
                         record.suspect_at > record.verified_at
                     },

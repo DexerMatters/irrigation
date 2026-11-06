@@ -274,10 +274,10 @@ impl LexerComponent {
         let old_middle = prefix..old.len() - suffix;
         let new_middle = prefix..new.len() - suffix;
         let mut edits = Vec::with_capacity(old_middle.len() + new_middle.len());
-        for _ in old_middle.clone() {
+        for _ in old_middle {
             edits.push(ListEdit::Remove { index: prefix });
         }
-        for (offset, token) in new[new_middle.clone()].iter().enumerate() {
+        for (offset, token) in new[new_middle].iter().enumerate() {
             edits.push(ListEdit::Insert {
                 index: prefix + offset,
                 value: token.id,

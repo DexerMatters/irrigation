@@ -123,6 +123,10 @@ mod sink {
     }
 
     /// Every scalar in the document, in order, under its path.
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "the View API hands these zero-sized handles out by reference"
+    )]
     fn leaves(ast: &AstTree, meta: &AstMeta, tokens: &Tokens) -> Vec<JsonPath> {
         let Some(root) = ast.root() else {
             return Vec::new();
@@ -152,7 +156,7 @@ mod sink {
             if let Some(token) = node.token_id() {
                 let raw = payloads
                     .get(&token)
-                    .map_or_else(String::new, |text| text.to_string());
+                    .map_or_else(String::new, std::string::ToString::to_string);
                 out.push(JsonPath {
                     kind: token_kind(&raw).to_owned(),
                     value: unquote(&raw),
@@ -164,7 +168,7 @@ mod sink {
         let rule = node
             .rule()
             .and_then(|rule| rules.get(&rule))
-            .map(|name| name.as_ref());
+            .map(std::convert::AsRef::as_ref);
         match rule {
             // An object is a run of pairs between the braces; a pair is a key
             // token, a colon, and a value.
@@ -306,9 +310,10 @@ fn push_ast(
     } else if let Some(rule) = node.rule() {
         (
             String::from("rule"),
-            rules
-                .get(&rule)
-                .map_or_else(|| format!("rule {rule:#x}"), |name| name.to_string()),
+            rules.get(&rule).map_or_else(
+                || format!("rule {rule:#x}"),
+                std::string::ToString::to_string,
+            ),
             tree_units::tag(AstTree::view_id(), node.raw()),
         )
     } else {
@@ -381,7 +386,7 @@ fn meta_fields(snapshot: &reactive::Snapshot) -> Vec<FieldRender> {
                 AstMeta::view_id(),
                 AstMetaField::DIAGNOSTICS,
                 UnitKind::Value,
-                id.clone(),
+                id,
             )),
         })
         .collect();
@@ -527,7 +532,7 @@ fn main() -> std::io::Result<()> {
                 move || document.lock().expect("document").text().to_owned()
             },
             {
-                let runtime = runtime.clone();
+                let runtime = runtime;
                 let document = Arc::clone(&document);
                 move |text: &str| {
                     let next = {

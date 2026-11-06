@@ -174,7 +174,7 @@ static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn serial() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 static BODY_RUNS: AtomicU64 = AtomicU64::new(0);

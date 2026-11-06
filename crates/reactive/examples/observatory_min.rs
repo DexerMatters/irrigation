@@ -58,7 +58,7 @@ fn main() -> std::io::Result<()> {
                 move || runtime.snapshot().view::<Counter>().value().to_string()
             },
             {
-                let runtime = runtime.clone();
+                let runtime = runtime;
                 move |text: &str| {
                     let value: u64 = text
                         .trim()

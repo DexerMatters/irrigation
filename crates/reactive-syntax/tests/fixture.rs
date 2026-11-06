@@ -77,7 +77,7 @@ fn load_scripts() -> Vec<Script> {
     let dir = fixture_root().join("scripts");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
         .collect();

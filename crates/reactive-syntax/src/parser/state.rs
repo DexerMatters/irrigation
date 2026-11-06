@@ -513,7 +513,7 @@ impl AstParser {
             let checkpoints = merge_checkpoints(
                 state,
                 &checkpoints,
-                window.clone(),
+                window,
                 delta,
                 first_diff,
                 self.options().max_checkpoints,

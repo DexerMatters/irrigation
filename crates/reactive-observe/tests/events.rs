@@ -334,18 +334,17 @@ pub mod general_root {
 fn facts(runtime: &Runtime) -> Vec<(String, String, Vec<String>, Vec<String>)> {
     let views = runtime.view_facts();
     let name = |view: &reactive_core::ids::ViewId| {
-        views
-            .iter()
-            .find(|facts| facts.view == *view)
-            .map(|facts| {
+        views.iter().find(|facts| facts.view == *view).map_or_else(
+            || format!("{view:?}"),
+            |facts| {
                 facts
                     .name
                     .rsplit("::")
                     .next()
                     .unwrap_or(facts.name)
                     .to_owned()
-            })
-            .unwrap_or_else(|| format!("{view:?}"))
+            },
+        )
     };
     runtime
         .component_facts()

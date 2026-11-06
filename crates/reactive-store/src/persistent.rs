@@ -55,6 +55,10 @@ fn entry_size<K, V>(link: &Option<Arc<Entry<K, V>>>) -> usize {
     link.as_ref().map_or(0, |entry| entry.size)
 }
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "`Link` is the option-typed child pointer every caller expects"
+)]
 fn entry_wrap<K, V>(
     key: K,
     value: V,
@@ -461,6 +465,10 @@ fn seq_size<T>(link: &Link<SeqNode<T>>) -> usize {
     link.as_ref().map_or(0, |node| node.size)
 }
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "`Link` is the option-typed child pointer every caller expects"
+)]
 fn seq_wrap<T>(value: T, left: Link<SeqNode<T>>, right: Link<SeqNode<T>>) -> Link<SeqNode<T>> {
     Some(Arc::new(SeqNode::new(value, left, right)))
 }

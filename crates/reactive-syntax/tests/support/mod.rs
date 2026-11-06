@@ -94,6 +94,54 @@ impl Row {
     }
 }
 
+/// A stable textual signature of one AST node and its children.
+fn walk_signature(node: &reactive_syntax::AstNodeRef, out: &mut String) {
+    use std::fmt::Write as _;
+    out.push('(');
+    if let Some(token) = node.token_id() {
+        let _ = write!(out, "t{token}");
+    } else if let Some(rule) = node.rule() {
+        let _ = write!(out, "r{rule}");
+    } else {
+        out.push('$');
+    }
+    for child in node.children() {
+        walk_signature(&child, out);
+    }
+    for child in node.recovered() {
+        walk_signature(&child, out);
+    }
+    out.push(')');
+}
+
+/// The same signature with token texts in place of identities.
+fn walk_text_signature(
+    node: &reactive_syntax::AstNodeRef,
+    payloads: &std::collections::HashMap<u64, Arc<str>>,
+    out: &mut String,
+) {
+    use std::fmt::Write as _;
+    out.push('(');
+    if let Some(token) = node.token_id() {
+        out.push_str(
+            payloads
+                .get(&token)
+                .map_or("<missing>", |text| text.as_ref()),
+        );
+    } else if let Some(rule) = node.rule() {
+        let _ = write!(out, "r{rule}");
+    } else {
+        out.push('$');
+    }
+    for child in node.children() {
+        walk_text_signature(&child, payloads, out);
+    }
+    for child in node.recovered() {
+        walk_text_signature(&child, payloads, out);
+    }
+    out.push(')');
+}
+
 /// A running JSON pipeline.
 pub struct Session {
     /// The runtime under test.
@@ -146,13 +194,11 @@ impl Session {
         self.runtime
             .edit(|e| e.view::<SourceFile>().set_document(next.clone()))
             .expect("runtime edit");
-        let mut failure = None;
-        if let Err(error) = self
+        let failure = self
             .runtime
             .read_outputs_general::<reactive_syntax::AstConsumer>()
-        {
-            failure = Some(format!("{error}"));
-        }
+            .err()
+            .map(|error| format!("{error}"));
         let micros = started.elapsed().as_secs_f64() * 1e6;
         let after = self.runtime.stats();
         self.document = next;
@@ -215,29 +261,11 @@ impl Session {
     /// A stable textual signature of the published AST.
     #[must_use]
     pub fn signature(&self) -> String {
-        use reactive_syntax::AstNodeRef;
-        fn walk(node: &AstNodeRef, out: &mut String) {
-            out.push('(');
-            if let Some(token) = node.token_id() {
-                out.push_str(&format!("t{token}"));
-            } else if let Some(rule) = node.rule() {
-                out.push_str(&format!("r{rule}"));
-            } else {
-                out.push('$');
-            }
-            for child in node.children() {
-                walk(&child, out);
-            }
-            for child in node.recovered() {
-                walk(&child, out);
-            }
-            out.push(')');
-        }
         let snapshot = self.runtime.snapshot();
         let tree = snapshot.view::<reactive_syntax::AstTree>();
         let mut out = String::new();
         if let Some(root) = tree.root() {
-            walk(&root, &mut out);
+            walk_signature(&root, &mut out);
         }
         out
     }
@@ -253,32 +281,10 @@ impl Session {
             .into_iter()
             .map(|(id, payload)| (id.0, Arc::clone(&payload.text)))
             .collect();
-        use reactive_syntax::AstNodeRef;
-        fn walk(node: &AstNodeRef, payloads: &HashMap<u64, Arc<str>>, out: &mut String) {
-            out.push('(');
-            if let Some(token) = node.token_id() {
-                out.push_str(
-                    payloads
-                        .get(&token)
-                        .map_or("<missing>", |text| text.as_ref()),
-                );
-            } else if let Some(rule) = node.rule() {
-                out.push_str(&format!("r{rule}"));
-            } else {
-                out.push('$');
-            }
-            for child in node.children() {
-                walk(&child, payloads, out);
-            }
-            for child in node.recovered() {
-                walk(&child, payloads, out);
-            }
-            out.push(')');
-        }
         let tree = snapshot.view::<reactive_syntax::AstTree>();
         let mut out = String::new();
         if let Some(root) = tree.root() {
-            walk(&root, &payloads, &mut out);
+            walk_text_signature(&root, &payloads, &mut out);
         }
         out
     }

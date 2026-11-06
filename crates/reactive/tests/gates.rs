@@ -2259,6 +2259,7 @@ fn a_diamond_tuple_never_mixes_revisions() {
 
 #[test]
 fn a_provider_handover_updates_its_observer() {
+    type Observed = Vec<Vec<(u32, u32)>>;
     use std::sync::{Arc, Mutex};
     let runtime = Runtime::new();
     runtime.install(handover::Root).expect("install");
@@ -2271,7 +2272,6 @@ fn a_provider_handover_updates_its_observer() {
         .read_outputs::<handover::Root>()
         .expect("initial demand");
 
-    type Observed = Vec<Vec<(u32, u32)>>;
     let seen: Arc<Mutex<Observed>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     let subscription = runtime
@@ -5107,6 +5107,10 @@ pub mod flatten_tree {
 #[view(derived)]
 pub struct FlatTags(Map<u64, u32>);
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "`flatten_map` takes `fn(&Node) -> Option<u32>`; this grammar maps every node"
+)]
 fn flatten_tag(node: &flatten_tree::FlattenTreeNode) -> Option<u32> {
     match node {
         flatten_tree::FlattenTreeNode::FlattenDoc(_) => Some(0),
@@ -5322,7 +5326,7 @@ fn routing_subscriptions_fire_only_on_provider_changes() {
     let fired = std::sync::Arc::new(AtomicUsize::new(0));
     let counter = std::sync::Arc::clone(&fired);
     let _routing_subscription = runtime
-        .observe_routing::<RouteSlot>(unit.clone(), move |_snapshot| {
+        .observe_routing::<RouteSlot>(unit, move |_snapshot| {
             counter.fetch_add(1, Ordering::SeqCst);
         })
         .expect("observe routing");
@@ -5892,7 +5896,7 @@ impl reactive::RouteSelector for StickySelector {
         let mut winner = self
             .winner
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *winner.get_or_insert(if self.prefer_second { second } else { first })
     }
 }

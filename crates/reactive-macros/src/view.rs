@@ -66,12 +66,12 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     match &data.fields {
         Fields::Named(named) => {
             for (index, field) in named.named.iter().enumerate() {
-                fields.push(parse_field(field, index, true)?);
+                fields.push(parse_field(field, index, true));
             }
         }
         Fields::Unnamed(unnamed) => {
             for (index, field) in unnamed.unnamed.iter().enumerate() {
-                fields.push(parse_field(field, index, false)?);
+                fields.push(parse_field(field, index, false));
             }
         }
         Fields::Unit => {}
@@ -735,31 +735,31 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     })
 }
 
-fn parse_field(field: &Field, index: usize, named: bool) -> Result<FieldSpec> {
+fn parse_field(field: &Field, index: usize, named: bool) -> FieldSpec {
     let ident = field
         .ident
         .clone()
         .unwrap_or_else(|| format_ident!("field{}", index, span = Span::call_site()));
-    let shape = shape_of(&field.ty)?;
-    Ok(FieldSpec {
+    let shape = shape_of(&field.ty);
+    FieldSpec {
         ident,
         ty: field.ty.clone(),
         shape,
         index: index as u16,
         named,
         vis: field.vis.clone(),
-    })
+    }
 }
 
-fn shape_of(ty: &Type) -> Result<FieldShape> {
+fn shape_of(ty: &Type) -> FieldShape {
     let Type::Path(path) = ty else {
-        return Ok(FieldShape::Scalar(ty.clone()));
+        return FieldShape::Scalar(ty.clone());
     };
     let Some(segment) = path.path.segments.last() else {
-        return Ok(FieldShape::Scalar(ty.clone()));
+        return FieldShape::Scalar(ty.clone());
     };
     let PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return Ok(FieldShape::Scalar(ty.clone()));
+        return FieldShape::Scalar(ty.clone());
     };
     let types: Vec<Type> = args
         .args
@@ -769,7 +769,7 @@ fn shape_of(ty: &Type) -> Result<FieldShape> {
             _ => None,
         })
         .collect();
-    Ok(match (segment.ident.to_string().as_str(), types.len()) {
+    match (segment.ident.to_string().as_str(), types.len()) {
         ("Map", 2) => FieldShape::Map(types[0].clone(), types[1].clone()),
         ("List", 1) => FieldShape::List(types[0].clone()),
         ("Set", 1) => FieldShape::Set(types[0].clone()),
@@ -777,7 +777,7 @@ fn shape_of(ty: &Type) -> Result<FieldShape> {
         ("Graph", 2) => FieldShape::Graph(types[0].clone(), types[1].clone()),
         ("Tree", 1) => FieldShape::Tree(types[0].clone()),
         _ => FieldShape::Scalar(ty.clone()),
-    })
+    }
 }
 
 fn marker_for(shape: &FieldShape, derived: bool) -> TokenStream {

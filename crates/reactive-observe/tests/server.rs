@@ -240,7 +240,7 @@ fn a_view_text_channel_round_trips_through_http() {
     let harness_runtime = runtime.clone();
     let runtime_for_write = runtime.clone();
     let document_for_write = Arc::clone(&document);
-    let observatory = Observatory::builder(runtime.clone(), recorder)
+    let observatory = Observatory::builder(runtime, recorder)
         .bind("127.0.0.1:0")
         .text_view::<Numbers>(
             move || stored.lock().expect("document").clone(),

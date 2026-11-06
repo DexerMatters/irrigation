@@ -344,7 +344,7 @@ fn main() -> std::io::Result<()> {
         .expect("seed");
     let _ = runtime.read_outputs::<derive::All>();
 
-    Observatory::builder(runtime.clone(), recorder)
+    Observatory::builder(runtime, recorder)
         .bind("127.0.0.1:7780")
         .bind_from_args()
         .renderer::<Lines>(lines)

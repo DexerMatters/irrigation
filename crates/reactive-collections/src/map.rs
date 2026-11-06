@@ -349,8 +349,7 @@ where
         if !was_present {
             self.edit.set(membership, true);
         }
-        let value_key =
-            UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(key.clone()));
+        let value_key = UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(key));
         self.edit.set(value_key, value);
     }
 

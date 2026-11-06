@@ -381,12 +381,13 @@ fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
         .and_then(|(_, value)| value.parse::<usize>().ok())
         .unwrap_or(0)
         .min(MAX_BODY);
-    let mut body = String::new();
-    if length > 0 {
+    let body = if length > 0 {
         let mut buffer = vec![0u8; length];
         reader.read_exact(&mut buffer)?;
-        body = String::from_utf8_lossy(&buffer).into_owned();
-    }
+        String::from_utf8_lossy(&buffer).into_owned()
+    } else {
+        String::new()
+    };
     Ok(Request {
         method,
         path,
@@ -538,11 +539,14 @@ fn stream_events(stream: &mut TcpStream, collector: &Arc<Collector>, window: usi
     }
     let subscription = collector.subscribe();
     let send = |stream: &mut TcpStream, name: &str, id: Option<u64>, data: &str| -> bool {
+        use std::fmt::Write as _;
         let mut frame = String::new();
         if let Some(id) = id {
-            frame.push_str(&format!("id: {id}\n"));
+            // Writing to a `String` cannot fail.
+            let _ = writeln!(frame, "id: {id}");
         }
-        frame.push_str(&format!("event: {name}\ndata: {data}\n\n"));
+        let _ = writeln!(frame, "event: {name}\ndata: {data}");
+        let _ = writeln!(frame);
         stream.write_all(frame.as_bytes()).is_ok() && stream.flush().is_ok()
     };
 

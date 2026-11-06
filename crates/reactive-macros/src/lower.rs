@@ -103,13 +103,6 @@ impl Lowerer {
     }
 
     fn is_declared_primitive(&self, name: &str) -> bool {
-        if self
-            .allowed
-            .iter()
-            .any(|allowed| name == allowed || name.ends_with(&format!("::{allowed}")))
-        {
-            return true;
-        }
         const PURE: &[&str] = &[
             "Some",
             "None",
@@ -135,11 +128,14 @@ impl Lowerer {
             "std::mem::take",
             "std::mem::replace",
         ];
+        if self
+            .allowed
+            .iter()
+            .any(|allowed| name == allowed || name.ends_with(&format!("::{allowed}")))
+        {
+            return true;
+        }
         PURE.contains(&name)
-    }
-
-    fn error<T: ToTokens>(&self, tokens: T, message: &str) -> Lowered {
-        Lowered::plain(syn::Error::new_spanned(tokens, message).to_compile_error())
     }
 
     fn lookup(&self, name: &str) -> Option<TokenStream> {
@@ -176,13 +172,12 @@ impl Lowerer {
             Stmt::Local(local) => {
                 if let syn::Pat::Ident(binding) = &local.pat {
                     if binding.mutability.is_some() {
-                        return self
-                            .error(
-                                &local.pat,
-                                "`let mut` is not supported in a component body; build the value \
+                        return error(
+                            &local.pat,
+                            "`let mut` is not supported in a component body; build the value \
                                  functionally instead",
-                            )
-                            .tokens;
+                        )
+                        .tokens;
                     }
                 }
                 let pat = &local.pat;
@@ -190,12 +185,11 @@ impl Lowerer {
                     return quote!(let #pat;);
                 };
                 if init.diverge.is_some() {
-                    return self
-                        .error(
-                            &init.expr,
-                            "`let ... else` is not supported in a component body",
-                        )
-                        .tokens;
+                    return error(
+                        &init.expr,
+                        "`let ... else` is not supported in a component body",
+                    )
+                    .tokens;
                 }
                 let lowered = self.expr_node(&init.expr);
                 if self.inline_depth > 0 {
@@ -266,8 +260,7 @@ impl Lowerer {
                 quote!(#lowered;)
             }
             Stmt::Item(item) => {
-                self.error(item, "nested items are not supported in a component body")
-                    .tokens
+                error(item, "nested items are not supported in a component body").tokens
             }
         }
     }
@@ -347,7 +340,7 @@ impl Lowerer {
                 if self.strict
                     && !self.is_declared_primitive(&call.func.to_token_stream().to_string())
                 {
-                    return self.error(
+                    return error(
                         &call.func,
                         "opaque call in a strict component; declare it with \
                          `#[component(strict, allows = [path])]`, or move the work into a \
@@ -454,7 +447,7 @@ impl Lowerer {
             Expr::Assign(assign) => {
                 let left = &assign.left;
                 if !matches!(**left, Expr::Path(_) | Expr::Field(_)) {
-                    return self.error(
+                    return error(
                         left,
                         "only local variables can be assigned inside a component",
                     );
@@ -463,7 +456,7 @@ impl Lowerer {
                     if path.qself.is_none() && path.path.segments.len() == 1 {
                         let name = path.path.segments[0].ident.to_string();
                         if self.lookup(&name).is_some() {
-                            return self.error(
+                            return error(
                                 left,
                                 "assignment to a tracked local is not supported; \
                                  build a new value instead",
@@ -481,51 +474,47 @@ impl Lowerer {
                 self.node_or_inline(quote!(#start #limits #end))
             }
             Expr::Macro(mac) => self.macro_expr(mac),
-            Expr::Closure(closure) => self.error(
+            Expr::Closure(closure) => error(
                 closure,
                 "closures are only supported as arguments to collection operators \
                  (`map`, `filter`, `flat_map`)",
             ),
             Expr::Await(await_expr) => {
-                self.error(await_expr, "`.await` is not supported inside a component")
+                error(await_expr, "`.await` is not supported inside a component")
             }
-            Expr::Async(async_expr) => self.error(
+            Expr::Async(async_expr) => error(
                 async_expr,
                 "async blocks are not supported inside a component",
             ),
             Expr::Unsafe(unsafe_expr) => {
-                self.error(unsafe_expr, "`unsafe` is not supported inside a component")
+                error(unsafe_expr, "`unsafe` is not supported inside a component")
             }
-            Expr::Return(return_expr) => self.error(
+            Expr::Return(return_expr) => error(
                 return_expr,
                 "`return` is not supported inside a component body; \
                  use the final expression of a block",
             ),
-            Expr::Break(break_expr) => self.error(break_expr, "`break` is not supported"),
-            Expr::Continue(continue_expr) => {
-                self.error(continue_expr, "`continue` is not supported")
-            }
-            Expr::While(while_expr) => self.error(
+            Expr::Break(break_expr) => error(break_expr, "`break` is not supported"),
+            Expr::Continue(continue_expr) => error(continue_expr, "`continue` is not supported"),
+            Expr::While(while_expr) => error(
                 while_expr,
                 "`while` loops are not supported; use a collection operator",
             ),
-            Expr::Loop(loop_expr) => self.error(
+            Expr::Loop(loop_expr) => error(
                 loop_expr,
                 "`loop` is not supported; use a collection operator",
             ),
-            Expr::ForLoop(for_expr) => self.error(
+            Expr::ForLoop(for_expr) => error(
                 for_expr,
                 "`for` loops are not supported; use `map`, `filter`, or `flat_map`",
             ),
-            Expr::Let(let_expr) => self.error(let_expr, "`let` expressions are not supported"),
-            Expr::Infer(infer) => {
-                self.error(infer, "type inference placeholders are not supported")
-            }
-            Expr::Const(const_block) => self.error(
+            Expr::Let(let_expr) => error(let_expr, "`let` expressions are not supported"),
+            Expr::Infer(infer) => error(infer, "type inference placeholders are not supported"),
+            Expr::Const(const_block) => error(
                 const_block,
                 "const blocks are not supported inside a component",
             ),
-            other => self.error(other, "unsupported expression in a component body"),
+            other => error(other, "unsupported expression in a component body"),
         }
     }
 
@@ -583,7 +572,7 @@ impl Lowerer {
             "vec" | "format" | "matches" | "concat" | "stringify" | "assert" | "debug_assert"
         );
         if !allowed {
-            return self.error(
+            return error(
                 mac,
                 "this macro is not supported inside a component; \
                  effects belong in observers, not computations",
@@ -592,6 +581,10 @@ impl Lowerer {
         let tokens = mac.to_token_stream();
         self.node_or_inline(tokens)
     }
+}
+
+fn error<T: ToTokens>(tokens: T, message: &str) -> Lowered {
+    Lowered::plain(syn::Error::new_spanned(tokens, message).to_compile_error())
 }
 
 fn is_trivial(expr: &Expr) -> bool {

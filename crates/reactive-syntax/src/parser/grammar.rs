@@ -1057,34 +1057,35 @@ fn reject_nullable_cycles(
             }
         }
     }
-    /// Depth-first walk of the nullable graph.
-    fn visit(
-        node: usize,
-        edges: &[Vec<NonterminalId>],
-        state: &mut [u8],
-        nonterminals: &[Nonterminal],
-    ) -> Result<(), GrammarError> {
-        state[node] = 1;
-        for next in &edges[node] {
-            if state[*next] == 1 {
-                return Err(GrammarError::spec(
-                    format!("nullable cycle involving `{}`", nonterminals[*next].name),
-                    0,
-                ));
-            }
-            if state[*next] == 0 {
-                visit(*next, edges, state, nonterminals)?;
-            }
-        }
-        state[node] = 2;
-        Ok(())
-    }
     let mut state = vec![0u8; nonterminals.len()];
     for node in 0..nonterminals.len() {
         if state[node] == 0 {
             visit(node, &edges, &mut state, nonterminals)?;
         }
     }
+    Ok(())
+}
+
+/// Depth-first walk of the nullable graph.
+fn visit(
+    node: usize,
+    edges: &[Vec<NonterminalId>],
+    state: &mut [u8],
+    nonterminals: &[Nonterminal],
+) -> Result<(), GrammarError> {
+    state[node] = 1;
+    for next in &edges[node] {
+        if state[*next] == 1 {
+            return Err(GrammarError::spec(
+                format!("nullable cycle involving `{}`", nonterminals[*next].name),
+                0,
+            ));
+        }
+        if state[*next] == 0 {
+            visit(*next, edges, state, nonterminals)?;
+        }
+    }
+    state[node] = 2;
     Ok(())
 }
 

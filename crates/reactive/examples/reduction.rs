@@ -11,10 +11,18 @@ use reactive::AggSeq;
 
 static COMBINES: AtomicU64 = AtomicU64::new(0);
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "`AggSeq::new` takes `fn(&T) -> A` and `fn(&A, &A) -> A`"
+)]
 fn leaf(value: &u64) -> u64 {
     *value
 }
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "`AggSeq::new` takes `fn(&A, &A) -> A`"
+)]
 fn add(left: &u64, right: &u64) -> u64 {
     COMBINES.fetch_add(1, Ordering::Relaxed);
     left + right

@@ -629,7 +629,7 @@ impl Runtime {
             let _gate = self.inner.gate.write();
             let mut edit = Edit::new(Arc::clone(&self.inner));
             let value = f(&mut edit);
-            let changed = edit.commit()?;
+            let changed = edit.commit();
             (value, changed)
         };
         if changed {

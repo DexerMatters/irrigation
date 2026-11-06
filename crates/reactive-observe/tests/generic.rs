@@ -103,7 +103,7 @@ fn start() -> Harness {
         .expect("seed");
     let _ = runtime.read_outputs::<analysis::PublishSizes>();
 
-    let observatory = Observatory::builder(runtime.clone(), recorder)
+    let observatory = Observatory::builder(runtime, recorder)
         .bind("127.0.0.1:0")
         .history(16)
         .start()
