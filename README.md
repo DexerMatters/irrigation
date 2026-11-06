@@ -208,6 +208,18 @@ cargo run --release --example parallel -p reactive
 cargo run --example name_resolver -p reactive   # AST tree view -> symbols + diagnostics
 ```
 
+The gates CI holds, and the ones to run before a change lands:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo check -p reactive-runtime --no-default-features   # observation stays optional
+cargo check -p reactive --all-targets                   # and absent from the facade
+cargo build -p reactive --examples --features observatory
+python3 scripts/check-md-links.py                        # every link in docs/plans resolves
+```
+
 Measured on this machine (release, one worker, one point edit at the middle of
 a mapped list followed by an observer read):
 
