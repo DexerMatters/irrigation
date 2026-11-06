@@ -1,0 +1,90 @@
+@font-face {
+  font-family: "Recursive";
+  src: url("/recursive.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* One dark room: the board is a night-shift instrument, and a single ground
+     lets the accent carry the data instead of the frame carrying it. */
+  --paper: #0c100f;
+  --field: #121816;
+  --panel: #0f1413;
+  --tape: #0a0e0d;
+  --ink: #e8eeea;
+  --muted: #a9b6af;
+  --faint: #8c9a93;
+  --line: #26312d;
+  --line-soft: #1b2320;
+  --edge: #5f7a70;
+  --signal: #5fd0b2;
+  --signal-soft: #15302a;
+  --amber: #d8a84e;
+  --suspect: #d79a6b;
+  --error: #e7897f;
+  /* Surfaces that sit above the ground: a step in tone, never a shadow. */
+  --raised: #17201d;
+  --hover: #1b2522;
+  --grid: #1e2825;
+  --selection: #23423a;
+
+  --mono: 1;
+  --sans: 0;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--selection);
+  color: var(--ink);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Recursive", system-ui, sans-serif;
+  font-variation-settings: var(--sans), "wght" 420, "CASL" 0, "slnt" 0;
+  font-size: 13px;
+  line-height: 1.4;
+  /* Figures line up: every number on the board is tabular. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-variation-settings: var(--mono), "wght" 470, "CASL" 0, "slnt" 0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

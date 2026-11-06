@@ -1,0 +1,526 @@
+.app {
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr) 156px;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ header */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.wordmark {
+  font-size: 15px;
+  font-variation-settings: var(--sans), "wght" 640, "CASL" 0.35, "slnt" 0;
+  letter-spacing: -0.015em;
+}
+
+.runtime {
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.dot.live {
+  background: var(--signal);
+}
+
+.rev {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.rev span:first-child {
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.btn {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 3px;
+  height: 27px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--raised);
+}
+
+.btn.quiet {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.btn.quiet:hover {
+  border-color: var(--line);
+}
+
+.btn[aria-pressed="true"] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* --------------------------------------------------------------- renderers */
+
+.tree,
+.list,
+.map,
+.scalar {
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.tree:focus-visible,
+.list:focus-visible {
+  outline-offset: -2px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 10px;
+  height: 22px;
+  white-space: nowrap;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: default;
+}
+
+.row.interactive {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.selected {
+  background: var(--ink);
+  color: var(--ink);
+}
+
+.row.selected .row-meta,
+.row.selected .row-kind {
+  color: var(--muted);
+}
+
+.tree .row {
+  position: relative;
+}
+
+.row-meta {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.row-kind {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.row-label {
+  font-variation-settings: var(--mono), "wght" 470;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-value {
+  color: var(--ink);
+  font-variation-settings: var(--mono), "wght" 430;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-index {
+  width: 24px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: right;
+  flex: none;
+}
+
+.tree-depth {
+  display: inline-block;
+  flex: none;
+}
+
+.map-key {
+  min-width: 80px;
+  flex: 0 1 auto;
+  color: var(--muted);
+  font-variation-settings: var(--mono), "wght" 470;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.absent {
+  color: var(--faint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  padding: 0 6px;
+  height: 20px;
+  margin: 2px 4px 2px 0;
+  font-size: 12px;
+}
+
+.chip.present {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.graph-wrap {
+  padding: 6px 10px 8px;
+  overflow: auto;
+}
+
+.graph-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.adjacency {
+  font-size: 10.5px;
+  line-height: 20px;
+  padding: 4px 10px;
+}
+
+.empty {
+  padding: 10px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- inspector */
+
+.inspector {
+  overflow: auto;
+  background: var(--panel);
+  padding: 18px 22px 22px;
+  min-height: 0;
+}
+
+.eyebrow {
+  color: var(--faint);
+  font-size: 10.5px;
+  margin-bottom: 5px;
+}
+
+.inspector h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  font-variation-settings: var(--sans), "wght" 590, "CASL" 0.12;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.key {
+  margin-top: 5px;
+  color: var(--faint);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.state-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 13px;
+  font-size: 11.5px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px 16px;
+  margin: 15px 0 0;
+  padding: 13px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.facts div {
+  min-width: 0;
+}
+
+.facts dt {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.facts dd {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.section {
+  margin-top: 18px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 11.5px;
+  font-variation-settings: var(--sans), "wght" 600;
+}
+
+.section-head span {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.deps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line-soft);
+}
+
+.dep {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11px;
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dep:hover {
+  background: var(--raised);
+}
+
+.dep .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep .versions {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.dep .moved {
+  color: var(--signal);
+}
+
+.kv {
+  border-top: 1px solid var(--line-soft);
+}
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+
+.kv-row .label {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.kv-row .value {
+  text-align: right;
+  overflow-wrap: anywhere;
+}/* -------------------------------------------------------------------- tape */
+
+.tape-dock {
+  grid-column: 1 / -1;
+  background: var(--tape);
+  border-top: 1px solid var(--line);
+  padding: 10px 20px 8px;
+  min-height: 0;
+}
+
+.tape-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tape-head strong {
+  font-size: 11px;
+  font-variation-settings: var(--sans), "wght" 600;
+}
+
+.tape-head .meta {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.tape {
+  position: relative;
+  height: 58px;
+  margin-top: 6px;
+}
+
+.tape-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 20px;
+  height: 1px;
+  background: var(--line);
+}
+
+.tick {
+  position: absolute;
+  bottom: 20px;
+  min-width: 1px;
+  width: 1px;
+  background: var(--faint);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.tick::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -8px;
+  width: 7px;
+  height: 14px;
+  background: transparent;
+}
+
+.tick.demand::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: -7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+.tick:hover {
+  background: var(--ink);
+}
+
+.tick.selected {
+  background: var(--signal);
+  width: 2px;
+}.reaction {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 30px;
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10.5px;
+  flex-wrap: wrap;
+}
+
+.reaction .fact {
+  white-space: nowrap;
+}
+
+.reaction .fact strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-variation-settings: var(--sans), "wght" 580;
+  margin-right: 3px;
+}
+
+.reaction .fact.changed strong {
+  color: var(--signal);
+}
+
+.reaction .cause {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.reaction.notice {
+  color: var(--suspect);
+}
+
+/* The state dot and the mark share these two shapes. */
+.glyph {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  flex: none;
+}
+
+.glyph.hollow {
+  background: transparent;
+  border: 1px solid currentColor;
+}
