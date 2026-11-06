@@ -158,8 +158,6 @@ impl ComputeError {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

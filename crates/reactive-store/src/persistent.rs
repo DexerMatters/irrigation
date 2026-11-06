@@ -28,7 +28,12 @@ struct Entry<K, V> {
 }
 
 impl<K, V> Entry<K, V> {
-    fn new(key: K, value: V, left: Option<Arc<Entry<K, V>>>, right: Option<Arc<Entry<K, V>>>) -> Self {
+    fn new(
+        key: K,
+        value: V,
+        left: Option<Arc<Entry<K, V>>>,
+        right: Option<Arc<Entry<K, V>>>,
+    ) -> Self {
         let height = 1 + entry_height(&left).max(entry_height(&right));
         let size = 1 + entry_size(&left) + entry_size(&right);
         Self {
@@ -149,7 +154,12 @@ fn entry_insert<K: Ord + Clone, V: Clone>(
                 (Some(entry_rebalance(rebuilt)), inserted)
             }
             std::cmp::Ordering::Equal => {
-                let rebuilt = Arc::new(Entry::new(key, value, entry.left.clone(), entry.right.clone()));
+                let rebuilt = Arc::new(Entry::new(
+                    key,
+                    value,
+                    entry.left.clone(),
+                    entry.right.clone(),
+                ));
                 (Some(rebuilt), false)
             }
         },
@@ -359,7 +369,11 @@ impl<K: Ord + Clone, V: Clone> IntoIterator for PMap<K, V> {
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
-            inner: self.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>().into_iter(),
+            inner: self
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>()
+                .into_iter(),
         }
     }
 }
@@ -470,11 +484,7 @@ fn seq_rotate_right<T: Clone>(node: Arc<SeqNode<T>>) -> Arc<SeqNode<T>> {
     Arc::new(SeqNode::new(
         left.value.clone(),
         left.left.clone(),
-        seq_wrap(
-            node.value.clone(),
-            left.right.clone(),
-            node.right.clone(),
-        ),
+        seq_wrap(node.value.clone(), left.right.clone(), node.right.clone()),
     ))
 }
 
@@ -482,11 +492,7 @@ fn seq_rotate_left<T: Clone>(node: Arc<SeqNode<T>>) -> Arc<SeqNode<T>> {
     let right = node.right.as_ref().expect("right child");
     Arc::new(SeqNode::new(
         right.value.clone(),
-        seq_wrap(
-            node.value.clone(),
-            node.left.clone(),
-            right.left.clone(),
-        ),
+        seq_wrap(node.value.clone(), node.left.clone(), right.left.clone()),
         right.right.clone(),
     ))
 }
@@ -520,11 +526,7 @@ fn seq_rebalance<T: Clone>(node: Arc<SeqNode<T>>) -> Arc<SeqNode<T>> {
     }
 }
 
-fn seq_insert_at<T: Clone>(
-    link: Link<SeqNode<T>>,
-    index: usize,
-    value: T,
-) -> Link<SeqNode<T>> {
+fn seq_insert_at<T: Clone>(link: Link<SeqNode<T>>, index: usize, value: T) -> Link<SeqNode<T>> {
     match link {
         None => seq_wrap(value, None, None),
         Some(node) => {
@@ -567,11 +569,8 @@ fn seq_remove_at<T: Clone>(link: Link<SeqNode<T>>, index: usize) -> (Link<SeqNod
                         (left, None) => (left, Some(removed)),
                         (left, Some(right)) => {
                             let (new_right, successor) = seq_remove_first(right);
-                            let rebuilt = Arc::new(SeqNode::new(
-                                successor.value.clone(),
-                                left,
-                                new_right,
-                            ));
+                            let rebuilt =
+                                Arc::new(SeqNode::new(successor.value.clone(), left, new_right));
                             (Some(seq_rebalance(rebuilt)), Some(removed))
                         }
                     }
@@ -586,7 +585,11 @@ fn seq_remove_first<T: Clone>(node: Arc<SeqNode<T>>) -> (Link<SeqNode<T>>, Arc<S
         None => (node.right.clone(), node),
         Some(left) => {
             let (new_left, first) = seq_remove_first(left);
-            let rebuilt = Arc::new(SeqNode::new(node.value.clone(), new_left, node.right.clone()));
+            let rebuilt = Arc::new(SeqNode::new(
+                node.value.clone(),
+                new_left,
+                node.right.clone(),
+            ));
             (Some(seq_rebalance(rebuilt)), first)
         }
     }
@@ -629,10 +632,7 @@ impl<T> PSeq<T> {
     /// The empty sequence.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            root: None,
-            len: 0,
-        }
+        Self { root: None, len: 0 }
     }
 
     /// Number of elements.

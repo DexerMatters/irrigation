@@ -8,7 +8,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::error::{ComputeError, Result};
-use crate::frame::{self, current_or_engine_panic, Frame};
+use crate::frame::{self, Frame, current_or_engine_panic};
 use crate::ids::{ComponentId, NodeId, Revision, ScopeId, SiteId, Version, ViewId};
 use crate::key::AnyKey;
 
@@ -34,6 +34,13 @@ pub trait RuntimeOps: Send + Sync + 'static {
     /// Returns (creating on first use) the node for one expression site in a
     /// scope. Identity is `(scope, site)`; it never depends on evaluation order.
     fn site_node(&self, scope: ScopeId, site: SiteId) -> NodeId;
+
+    /// Returns one expression site, attributing it to the executing node.
+    ///
+    /// The default ignores the node, which keeps existing implementors working.
+    fn site_node_in(&self, _node: Option<NodeId>, scope: ScopeId, site: SiteId) -> NodeId {
+        self.site_node(scope, site)
+    }
 
     /// Returns (creating on first use) the node for a logical View unit.
     fn unit_node(&self, view: ViewId, key: Arc<dyn AnyKey>) -> NodeId;
@@ -246,13 +253,11 @@ where
             Ok(value_of(f()))
         }
     };
-    let eq = |left: &Value, right: &Value| match (
-        left.downcast_ref::<T>(),
-        right.downcast_ref::<T>(),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    };
+    let eq =
+        |left: &Value, right: &Value| match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        };
     match runtime.eval(node, &mut compute, &eq) {
         Ok(value) => match value.downcast_ref::<T>() {
             Some(value) => value.clone(),
@@ -280,13 +285,11 @@ where
             Ok(value_of(f()))
         }
     };
-    let eq = |left: &Value, right: &Value| match (
-        left.downcast_ref::<T>(),
-        right.downcast_ref::<T>(),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    };
+    let eq =
+        |left: &Value, right: &Value| match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        };
     match frame.runtime().eval(node, &mut compute, &eq) {
         Ok(value) => match value.downcast_ref::<T>() {
             Some(value) => value.clone(),
@@ -368,7 +371,9 @@ mod tests {
     #[test]
     fn user_panic_is_reported_as_panic() {
         let error = catch_engine(|| panic!("bad input")).unwrap_err();
-        assert!(matches!(error, ComputeError::Panicked { message } if message.contains("bad input")));
+        assert!(
+            matches!(error, ComputeError::Panicked { message } if message.contains("bad input"))
+        );
     }
 
     #[test]

@@ -43,6 +43,14 @@ pub trait ViewField: 'static {
     fn structure(_storage: &Self::Storage) -> Option<reactive_core::descriptor::Structure> {
         None
     }
+
+    /// Number of display elements, when the family can answer cheaply.
+    ///
+    /// This is a count of what a person would see (tokens, map keys, tree
+    /// nodes), not a count of logical units. Scalar fields have no elements.
+    fn len(_storage: &Self::Storage) -> Option<usize> {
+        None
+    }
 }
 
 /// A single-valued field.

@@ -125,10 +125,7 @@ impl<N> TreeStore<N> {
         if let Some(root) = self.root {
             stack.push(root);
         }
-        Preorder {
-            tree: self,
-            stack,
-        }
+        Preorder { tree: self, stack }
     }
 
     /// Depth-first traversal rooted at `id`.
@@ -208,9 +205,7 @@ impl<N: Clone> TreeStore<N> {
     /// Appends a child, returning the new tree and the new identity.
     #[must_use]
     pub fn append_child(&self, parent: TreeNodeId, value: N) -> (Self, TreeNodeId) {
-        let index = self
-            .children(parent)
-            .map_or(0, <[TreeNodeId]>::len);
+        let index = self.children(parent).map_or(0, <[TreeNodeId]>::len);
         self.insert_child(parent, index, value)
     }
 
@@ -242,13 +237,7 @@ impl<N: Clone> TreeStore<N> {
         let Some(node) = self.nodes.get(&id).cloned() else {
             return self.clone();
         };
-        let (nodes, _) = self.nodes.insert(
-            id,
-            TreeNode {
-                value,
-                ..node
-            },
-        );
+        let (nodes, _) = self.nodes.insert(id, TreeNode { value, ..node });
         Self {
             nodes,
             root: self.root,

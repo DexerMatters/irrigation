@@ -8,13 +8,13 @@ use std::any::Any;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::key::any_key;
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
-use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::persistent::PSet;
 
@@ -37,6 +37,10 @@ where
 
     fn empty() -> Self::Storage {
         PSet::new()
+    }
+
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
     }
 
     fn define(
@@ -151,9 +155,10 @@ where
     /// Reads every member.
     /// Reads every member in order.
     pub fn to_vec(&self) -> Vec<T> {
-        let structure: PSet<T> = read_unit_value(structure_unit(self.view, self.field), |content| {
-            Some((self.content)(content))
-        });
+        let structure: PSet<T> =
+            read_unit_value(structure_unit(self.view, self.field), |content| {
+                Some((self.content)(content))
+            });
         structure.iter().cloned().collect()
     }
 }
@@ -196,7 +201,9 @@ pub struct SourceSetEditor<'a, T: Ord + Hash + Clone + Send + Sync + std::fmt::D
     storage: &'a mut PSet<T>,
 }
 
-impl<T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static> std::fmt::Debug for SourceSetEditor<'_, T> {
+impl<T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static> std::fmt::Debug
+    for SourceSetEditor<'_, T>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SourceSetEditor").finish_non_exhaustive()
     }
@@ -214,12 +221,7 @@ where
         }
         *self.storage = next;
         self.edit.set(
-            UnitKey::entity(
-                self.view,
-                self.field,
-                UnitKind::Membership,
-                any_key(value),
-            ),
+            UnitKey::entity(self.view, self.field, UnitKind::Membership, any_key(value)),
             true,
         );
         true
@@ -284,8 +286,9 @@ where
 impl<T: Ord> PartialEq for DerivedSetStorage<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Whole(left), Self::Whole(right))
-            | (Self::Keyed(left), Self::Keyed(right)) => left == right,
+            (Self::Whole(left), Self::Whole(right)) | (Self::Keyed(left), Self::Keyed(right)) => {
+                left == right
+            }
             _ => false,
         }
     }
@@ -368,6 +371,10 @@ where
 
     fn empty() -> Self::Storage {
         DerivedSetStorage::Whole(PSet::new())
+    }
+
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
     }
 
     fn define(

@@ -80,6 +80,7 @@ pub struct Frame {
     depth: u32,
     cancel: CancelToken,
     recorder: Option<RefCell<Vec<Dep>>>,
+    providers: Option<RefCell<crate::hash::FxHashSet<NodeId>>>,
     definitions: Option<RefCell<Vec<Box<dyn Any + Send + Sync>>>>,
 }
 
@@ -110,6 +111,7 @@ impl Frame {
             depth,
             cancel,
             recorder: Some(RefCell::new(Vec::new())),
+            providers: Some(RefCell::new(crate::hash::FxHashSet::default())),
             definitions: Some(RefCell::new(Vec::new())),
         }
     }
@@ -132,6 +134,7 @@ impl Frame {
             depth,
             cancel,
             recorder: None,
+            providers: None,
             definitions: None,
         }
     }
@@ -173,6 +176,24 @@ impl Frame {
         }
         if let Some(recorder) = &self.recorder {
             recorder.borrow_mut().push(dep);
+        }
+    }
+
+    /// Records a provider observation at most once per run.
+    ///
+    /// Provider observations exist for handover detection, not for the value a
+    /// read returns: one per provider is enough, and repeating them per unit
+    /// read would make traces grow with the number of reads instead of the
+    /// number of producers observed.
+    pub fn record_provider(&self, dep: Dep) {
+        if dep.node == self.node {
+            return;
+        }
+        let Some(providers) = &self.providers else {
+            return;
+        };
+        if providers.borrow_mut().insert(dep.node) {
+            self.record(dep);
         }
     }
 
@@ -241,7 +262,9 @@ impl Drop for FrameGuard {
             let mut frames = frames.borrow_mut();
             let popped = frames.pop();
             debug_assert!(
-                popped.as_ref().is_some_and(|frame| Arc::ptr_eq(frame, &self.frame)),
+                popped
+                    .as_ref()
+                    .is_some_and(|frame| Arc::ptr_eq(frame, &self.frame)),
                 "frame stack corrupted: nested guard dropped out of order"
             );
         });
@@ -262,9 +285,9 @@ pub fn current() -> Option<Arc<Frame>> {
 pub fn current_or_engine_panic(operation: &'static str) -> Arc<Frame> {
     match current() {
         Some(frame) => frame,
-        None => crate::ops::panic_engine(crate::error::ComputeError::OutsideComputation {
-            operation,
-        }),
+        None => {
+            crate::ops::panic_engine(crate::error::ComputeError::OutsideComputation { operation })
+        }
     }
 }
 
@@ -279,6 +302,24 @@ pub fn record_dep(dep: Dep) {
             }
             if frame.recorder.is_some() {
                 frame.record(dep);
+                return;
+            }
+        }
+    });
+}
+
+/// Records a provider observation in the innermost frame that owns a recorder.
+///
+/// Repeated observations of the same provider collapse to one, so a trace
+/// lists each producer once no matter how many of its units were read.
+pub fn record_provider_dep(dep: Dep) {
+    FRAMES.with(|frames| {
+        for frame in frames.borrow().iter().rev() {
+            if frame.node() == dep.node {
+                return;
+            }
+            if frame.recorder.is_some() {
+                frame.record_provider(dep);
                 return;
             }
         }

@@ -103,7 +103,9 @@ impl StatsProbe {
         let current = runtime.stats();
         StatsDelta {
             executions: current.executions.saturating_sub(self.baseline.executions),
-            validations: current.validations.saturating_sub(self.baseline.validations),
+            validations: current
+                .validations
+                .saturating_sub(self.baseline.validations),
             revisions: current.revisions.saturating_sub(self.baseline.revisions),
         }
     }

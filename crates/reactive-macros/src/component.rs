@@ -88,7 +88,11 @@ fn expand_fn(item: ItemFn, config: &ComponentConfig) -> syn::Result<TokenStream>
 
     let params = collect_params(&item)?;
     let root_style = params.iter().all(|(_, ty)| is_view_reference(ty));
-    if !root_style && params.iter().any(|(_, ty)| matches!(ty, Type::Reference(_))) {
+    if !root_style
+        && params
+            .iter()
+            .any(|(_, ty)| matches!(ty, Type::Reference(_)))
+    {
         return Err(syn::Error::new_spanned(
             &item.sig,
             "component parameters must be owned values; a component that takes only \
@@ -231,8 +235,10 @@ fn expand_fn(item: ItemFn, config: &ComponentConfig) -> syn::Result<TokenStream>
             .enumerate()
             .map(|(index, _)| format_ident!("__arg{}", index))
             .collect();
-        let root_call_args: Vec<TokenStream> =
-            arg_bindings.iter().map(|binding| quote!(&#binding)).collect();
+        let root_call_args: Vec<TokenStream> = arg_bindings
+            .iter()
+            .map(|binding| quote!(&#binding))
+            .collect();
         Ok(quote! {
             #impl_fn
 
@@ -393,8 +399,6 @@ fn output_types(output: &ReturnType) -> Vec<Type> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,7 +408,11 @@ mod tests {
     fn strict_components_reject_undeclared_calls() {
         let tokens = expand_component(
             quote!(strict),
-            quote!(fn c(x: u64) -> u64 { helper(x) }),
+            quote!(
+                fn c(x: u64) -> u64 {
+                    helper(x)
+                }
+            ),
         );
         assert!(
             tokens.to_string().contains("opaque call"),
@@ -416,7 +424,11 @@ mod tests {
     fn strict_components_allow_declared_primitives() {
         let tokens = expand_component(
             quote!(strict, allows = [helper]),
-            quote!(fn c(x: u64) -> u64 { helper(x) }),
+            quote!(
+                fn c(x: u64) -> u64 {
+                    helper(x)
+                }
+            ),
         );
         assert!(!tokens.to_string().contains("opaque call"));
     }
@@ -425,11 +437,13 @@ mod tests {
     fn mutable_locals_are_rejected() {
         let tokens = expand_component(
             quote!(),
-            quote!(fn c(x: u64) -> u64 {
-                let mut out = Vec::new();
-                out.push(x);
-                out.len() as u64
-            }),
+            quote!(
+                fn c(x: u64) -> u64 {
+                    let mut out = Vec::new();
+                    out.push(x);
+                    out.len() as u64
+                }
+            ),
         );
         assert!(
             tokens.to_string().contains("let mut"),
@@ -439,7 +453,14 @@ mod tests {
 
     #[test]
     fn components_are_permissive_by_default() {
-        let tokens = expand_component(quote!(), quote!(fn c(x: u64) -> u64 { helper(x) }));
+        let tokens = expand_component(
+            quote!(),
+            quote!(
+                fn c(x: u64) -> u64 {
+                    helper(x)
+                }
+            ),
+        );
         assert!(!tokens.to_string().contains("opaque call"));
     }
 }

@@ -183,10 +183,7 @@ pub fn solve_with_budget<P: FixedPointProblem>(
     let mut edges: Vec<(P::Key, P::Key)> = Vec::new();
     while let Some(key) = queue.pop_front() {
         iterations += 1;
-        let value = values
-            .get(&key)
-            .cloned()
-            .unwrap_or_else(P::Value::bottom);
+        let value = values.get(&key).cloned().unwrap_or_else(P::Value::bottom);
         for (target, contribution) in problem.transfer(&key, &value) {
             work += 1;
             edges.push((key.clone(), target.clone()));
@@ -227,7 +224,10 @@ fn strongly_connected<K: Ord + Clone, V>(
     }
     let mut self_loops: BTreeSet<K> = BTreeSet::new();
     for (from, to) in edges {
-        adjacency.entry(from.clone()).or_default().insert(to.clone());
+        adjacency
+            .entry(from.clone())
+            .or_default()
+            .insert(to.clone());
         reverse.entry(to.clone()).or_default().insert(from.clone());
         if from == to {
             self_loops.insert(from.clone());
@@ -330,7 +330,10 @@ mod tests {
         };
         let fixed = solve(&problem).expect("converges");
         let reached: BTreeSet<u32> = fixed.non_bottom().into_iter().collect();
-        assert_eq!(reached, reachable_from_scratch(&problem.edges, &problem.seeds));
+        assert_eq!(
+            reached,
+            reachable_from_scratch(&problem.edges, &problem.seeds)
+        );
         assert_eq!(reached, [0, 1, 2, 3].into_iter().collect());
         assert!(fixed.contributions() >= fixed.iterations());
     }
@@ -374,9 +377,7 @@ mod tests {
                 .map(|_| (rng.below(8) as u32, rng.below(8) as u32))
                 .collect();
             let seed_count = rng.below(3);
-            let seeds: Vec<u32> = (0..seed_count)
-                .map(|_| rng.below(8) as u32)
-                .collect();
+            let seeds: Vec<u32> = (0..seed_count).map(|_| rng.below(8) as u32).collect();
             let problem = Reachability {
                 edges: edges.clone(),
                 seeds: seeds.clone(),

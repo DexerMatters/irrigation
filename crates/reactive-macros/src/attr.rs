@@ -3,6 +3,7 @@
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::parse::Parser;
+use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Result};
 
 /// Which kind of View an attribute declares.
@@ -14,15 +15,40 @@ pub enum ViewKindArg {
     Derived,
 }
 
-/// Parses `#[view(source)]` or `#[view(derived)]`.
-pub fn parse_view_kind(attr: &Attribute) -> Result<ViewKindArg> {
-    let ident: Ident = attr.parse_args()?;
-    match ident.to_string().as_str() {
-        "source" => Ok(ViewKindArg::Source),
-        "derived" => Ok(ViewKindArg::Derived),
-        other => Err(syn::Error::new(
-            ident.span(),
-            format!("expected `source` or `derived`, found `{other}`"),
+/// What `#[view(...)]` declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewArgs {
+    /// Source or derived.
+    pub kind: ViewKindArg,
+    /// The View declined to spell its values, so a generic drawing shows
+    /// identity only. The escape hatch for an element type that cannot be
+    /// `Debug`.
+    pub hide: bool,
+}
+
+/// Parses `#[view(source)]`, `#[view(derived)]`, plus the optional `hide`.
+pub fn parse_view_args(attr: &Attribute) -> Result<ViewArgs> {
+    let parser = syn::punctuated::Punctuated::<Ident, syn::Token![,]>::parse_terminated;
+    let mut kind = None;
+    let mut hide = false;
+    for ident in parser.parse2(attr.meta.require_list()?.tokens.clone())? {
+        match ident.to_string().as_str() {
+            "source" => kind = Some(ViewKindArg::Source),
+            "derived" => kind = Some(ViewKindArg::Derived),
+            "hide" => hide = true,
+            other => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!("expected `source`, `derived` or `hide`, found `{other}`"),
+                ));
+            }
+        }
+    }
+    match (kind, hide) {
+        (Some(kind), hide) => Ok(ViewArgs { kind, hide }),
+        (None, _) => Err(syn::Error::new(
+            attr.span(),
+            "expected `source` or `derived`",
         )),
     }
 }

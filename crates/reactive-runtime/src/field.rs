@@ -7,9 +7,9 @@
 
 use std::any::Any;
 
+use reactive_core::descriptor::{UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::key::any_key;
-use reactive_core::descriptor::{UnitKey, UnitKind};
 use reactive_store::field::{Scalar, ViewField};
 
 use crate::edit::Edit;
@@ -23,11 +23,8 @@ pub trait ViewFieldHandle: ViewField {
     type Editor<'a>;
 
     /// Builds the read handle from a View field and content accessor.
-    fn handle(
-        view: ViewId,
-        field: FieldId,
-        content: fn(&dyn Any) -> Self::Storage,
-    ) -> Self::Handle;
+    fn handle(view: ViewId, field: FieldId, content: fn(&dyn Any) -> Self::Storage)
+    -> Self::Handle;
 
     /// Builds the editor handle over the transaction and mutable storage.
     fn editor<'a>(
@@ -165,7 +162,9 @@ pub struct EntityKey(std::sync::Arc<dyn reactive_core::key::AnyKey>);
 
 impl std::fmt::Debug for EntityKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("EntityKey").field(&self.0.key_display()).finish()
+        f.debug_tuple("EntityKey")
+            .field(&self.0.key_display())
+            .finish()
     }
 }
 

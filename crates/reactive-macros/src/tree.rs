@@ -52,6 +52,16 @@ pub fn expand(args: TokenStream, input: TokenStream) -> TokenStream {
 
 fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let parsed: TreeArgs = syn::parse2(args)?;
+    let view_kind = match parsed.kind.as_ref().map(ToString::to_string).as_deref() {
+        Some("source") | None => quote!(reactive::ViewKind::Source),
+        Some("derived") => quote!(reactive::ViewKind::Derived),
+        Some(other) => {
+            return Err(syn::Error::new(
+                parsed.kind.as_ref().expect("checked").span(),
+                format!("unknown tree view kind `{other}`"),
+            ));
+        }
+    };
     let module: ItemMod = syn::parse2(input)?;
     let Some((_, items)) = module.content.clone() else {
         return Err(syn::Error::new_spanned(
@@ -106,6 +116,23 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         type_index += 1;
         specs.push(spec);
     }
+
+    // A generic drawing has no renderer to name a node, so the descriptor
+    // carries the declared names: `Rule` instead of `variant 3`.
+    let mut label_arms = Vec::new();
+    for spec in &specs {
+        let type_index = spec.type_index;
+        for (variant_index, variant) in spec.variants.iter().enumerate() {
+            let name = variant.ident.to_string();
+            let type_index = u32::from(type_index);
+            let variant_index = variant_index as u16;
+            label_arms.push(quote! {
+                (#type_index, #variant_index) => Some(#name),
+            });
+            let _ = type_index;
+        }
+    }
+    let label_fn = format_ident!("__{}_variant_label", parsed.view.to_string().to_lowercase());
 
     let view_ident = parsed.view.clone();
     let view_name = view_ident.to_string();
@@ -267,6 +294,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             };
             build_arms.push(quote! {
                 #name::#variant_ident #pattern => reactive::TreeBuild {
+                    id: None,
                     type_index: #type_index,
                     variant: #variant_index as u16,
                     fields: vec![#(#field_exprs),*],
@@ -503,10 +531,22 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         static #descriptor: reactive::ViewDescriptor = reactive::ViewDescriptor {
             id: #view_const,
             name: concat!(module_path!(), "::", #view_name),
-            kind: reactive::ViewKind::Source,
+            kind: #view_kind,
             fields: reactive::tree_fields(),
-            content: reactive::tree_content_vtable(),
+            content: reactive::ContentVtable {
+                variant_label: #label_fn,
+                ..reactive::tree_content_vtable()
+            },
         };
+    };
+
+    let label_def = quote! {
+        fn #label_fn(type_index: u32, variant: u16) -> Option<&'static str> {
+            match (type_index, variant) {
+                #( #label_arms )*
+                _ => None,
+            }
+        }
     };
 
     let view_def = quote! {
@@ -741,6 +781,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             #node_def
             #( #flatten_impls )*
             #( #build_fns )*
+            #label_def
             #view_def
             #editor_def
         }
@@ -750,12 +791,14 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
 struct TreeArgs {
     root: Ident,
     view: Ident,
+    kind: Option<Ident>,
 }
 
 impl syn::parse::Parse for TreeArgs {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
         let mut root = None;
         let mut view = None;
+        let mut kind = None;
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<syn::Token![=]>()?;
@@ -763,11 +806,12 @@ impl syn::parse::Parse for TreeArgs {
             match key.to_string().as_str() {
                 "root" => root = Some(value),
                 "view" => view = Some(value),
+                "kind" => kind = Some(value),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!("unknown `#[tree_view]` argument `{other}`"),
-                    ))
+                    ));
                 }
             }
             if input.peek(syn::Token![,]) {
@@ -777,6 +821,7 @@ impl syn::parse::Parse for TreeArgs {
         Ok(Self {
             root: root.ok_or_else(|| syn::Error::new(input.span(), "missing `root = ...`"))?,
             view: view.ok_or_else(|| syn::Error::new(input.span(), "missing `view = ...`"))?,
+            kind,
         })
     }
 }
@@ -788,8 +833,7 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
         .variants
         .iter()
         .filter(|variant| {
-            matches!(variant.fields, Fields::Unnamed(_))
-                && variant.fields.iter().count() == 1
+            matches!(variant.fields, Fields::Unnamed(_)) && variant.fields.iter().count() == 1
         })
         .map(|variant| snake_case(&variant.ident.to_string()))
         .collect();
@@ -907,12 +951,10 @@ fn classify(ty: &Type, names: &HashSet<String>) -> FieldShape {
                             .last()
                             .is_some_and(|segment| segment.ident == "Box")
                         {
-                            generic_types(
-                                inner_path.path.segments.last().expect("box segment"),
-                            )
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| args[0].clone())
+                            generic_types(inner_path.path.segments.last().expect("box segment"))
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| args[0].clone())
                         } else {
                             args[0].clone()
                         }
@@ -956,7 +998,6 @@ fn build_fn_for(enum_name: &str) -> Ident {
     format_ident!("build_{}", snake_case(enum_name))
 }
 
-
 fn snake_case(name: &str) -> String {
     let mut out = String::new();
     for (index, ch) in name.chars().enumerate() {
@@ -984,7 +1025,7 @@ fn leaf_build(ty: &Type, value: &TokenStream) -> Result<TokenStream> {
             return Err(syn::Error::new_spanned(
                 ty,
                 format!("unsupported leaf type `{other}` in a tree View"),
-            ))
+            ));
         }
     })
 }
@@ -1003,7 +1044,7 @@ fn leaf_extract(ty: &Type) -> Result<TokenStream> {
             return Err(syn::Error::new_spanned(
                 ty,
                 format!("unsupported leaf type `{other}` in a tree View"),
-            ))
+            ));
         }
     })
 }
@@ -1025,4 +1066,3 @@ fn leaf_name(ty: &Type) -> Result<String> {
 
 #[allow(dead_code)]
 fn unused(_: Visibility) {}
-

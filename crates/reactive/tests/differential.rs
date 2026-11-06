@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use reactive::{reactive, tree_view, view, Runtime};
+use reactive::{Runtime, reactive, tree_view, view};
 
 #[view(source)]
 pub struct RandomTable {
@@ -85,12 +85,10 @@ fn randomized_map_edits_match_the_from_scratch_oracle() {
             }
         }
         let expected = reactive_test::Oracle::evaluate(&model);
-        let actual = runtime
-            .read_outputs::<random_sum::Root>()
-            .expect("read")
-            ;
+        let actual = runtime.read_outputs::<random_sum::Root>().expect("read");
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "step {step} diverged (keys: {:?})",
             model.0.keys().collect::<Vec<_>>()
         );
@@ -347,16 +345,24 @@ mod diff_graph {
         let g = graph.graph();
         let nodes = g.nodes();
         let edges = g.edges();
-        let outgoing: Vec<u64> = nodes.iter().copied().flat_map(|node| {
-            g.outgoing(node)
-                .into_iter()
-                .flat_map(move |(edge, to)| [node, edge, to])
-        }).collect();
-        let incoming: Vec<u64> = nodes.iter().copied().flat_map(|node| {
-            g.incoming(node)
-                .into_iter()
-                .flat_map(move |(edge, from)| [node, edge, from])
-        }).collect();
+        let outgoing: Vec<u64> = nodes
+            .iter()
+            .copied()
+            .flat_map(|node| {
+                g.outgoing(node)
+                    .into_iter()
+                    .flat_map(move |(edge, to)| [node, edge, to])
+            })
+            .collect();
+        let incoming: Vec<u64> = nodes
+            .iter()
+            .copied()
+            .flat_map(|node| {
+                g.incoming(node)
+                    .into_iter()
+                    .flat_map(move |(edge, from)| [node, edge, from])
+            })
+            .collect();
         [nodes.clone(), edges, outgoing, incoming].concat()
     }
 }
@@ -420,7 +426,9 @@ fn randomized_graph_edits_match_the_from_scratch_oracle() {
             }
             1 if !model.nodes.is_empty() => {
                 model.nodes.remove(&node);
-                model.edges.retain(|_, (from, to, _)| *from != node && *to != node);
+                model
+                    .edges
+                    .retain(|_, (from, to, _)| *from != node && *to != node);
                 runtime
                     .edit(|edit| {
                         let mut graph = edit.view::<DiffGraph>();
@@ -470,9 +478,7 @@ fn randomized_graph_edits_match_the_from_scratch_oracle() {
             }
             _ => {}
         }
-        let actual = runtime
-            .read_outputs::<diff_graph::Root>()
-            .expect("read");
+        let actual = runtime.read_outputs::<diff_graph::Root>().expect("read");
         assert_eq!(actual, model.summary(), "step {step}");
     }
 }
@@ -724,13 +730,8 @@ fn randomized_keyed_list_edits_match_the_from_scratch_oracle() {
             }
             _ => {}
         }
-        let expected: Vec<(u64, u64)> = model
-            .iter()
-            .map(|(id, value)| (*id, *value * 2))
-            .collect();
-        let actual = runtime
-            .read_outputs::<keyed_doubled::Root>()
-            .expect("read");
+        let expected: Vec<(u64, u64)> = model.iter().map(|(id, value)| (*id, *value * 2)).collect();
+        let actual = runtime.read_outputs::<keyed_doubled::Root>().expect("read");
         assert_eq!(actual, expected, "step {step}");
     }
 }

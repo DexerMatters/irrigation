@@ -7,13 +7,13 @@
 use std::any::Any;
 use std::marker::PhantomData;
 
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
 use reactive_store::aggregate::AggSeq;
-use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 
 /// A declared lawful reduction.
@@ -37,7 +37,8 @@ pub trait Reduction: Clone + PartialEq + Send + Sync + 'static {
 }
 
 /// Content accessor for a reduced sequence.
-type ReducedContent<R> = fn(&dyn Any) -> AggSeq<<R as Reduction>::Aggregate, <R as Reduction>::Item>;
+type ReducedContent<R> =
+    fn(&dyn Any) -> AggSeq<<R as Reduction>::Aggregate, <R as Reduction>::Item>;
 
 /// A sequence field with a cached lawful reduction.
 pub struct Reduced<R>(PhantomData<fn() -> R>);
@@ -55,6 +56,10 @@ impl<R: Reduction> ViewField for Reduced<R> {
 
     fn empty() -> Self::Storage {
         AggSeq::new(R::leaf, R::combine, R::identity())
+    }
+
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
     }
 
     fn define(
@@ -97,7 +102,9 @@ impl<R: Reduction> ViewField for Reduced<R> {
 
     fn get(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey) -> Option<Value> {
         match key.as_any().downcast_ref::<u64>() {
-            Some(index) => storage.get(*index as usize).map(|item| value_of(item.clone())),
+            Some(index) => storage
+                .get(*index as usize)
+                .map(|item| value_of(item.clone())),
             None => Some(value_of(storage.aggregate())),
         }
     }
@@ -236,7 +243,12 @@ impl<R: Reduction> ReducedEditor<'_, R> {
     pub fn insert(&mut self, index: usize, item: R::Item) {
         *self.storage = self.storage.insert(index, item.clone());
         self.edit.set(
-            UnitKey::entity(self.view, self.field, UnitKind::Value, reactive_core::key::any_key(index as u64)),
+            UnitKey::entity(
+                self.view,
+                self.field,
+                UnitKind::Value,
+                reactive_core::key::any_key(index as u64),
+            ),
             item,
         );
         self.stage();
@@ -259,7 +271,12 @@ impl<R: Reduction> ReducedEditor<'_, R> {
     pub fn set(&mut self, index: usize, item: R::Item) {
         *self.storage = self.storage.set(index, item.clone());
         self.edit.set(
-            UnitKey::entity(self.view, self.field, UnitKind::Value, reactive_core::key::any_key(index as u64)),
+            UnitKey::entity(
+                self.view,
+                self.field,
+                UnitKind::Value,
+                reactive_core::key::any_key(index as u64),
+            ),
             item,
         );
         self.stage();
@@ -267,10 +284,10 @@ impl<R: Reduction> ReducedEditor<'_, R> {
 
     fn stage(&mut self) {
         let sequence = self.storage.clone();
-        self.edit.set(structure_unit(self.view, self.field), sequence);
+        self.edit
+            .set(structure_unit(self.view, self.field), sequence);
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -299,10 +316,9 @@ mod tests {
 
     #[test]
     fn reduced_structure_projects_the_sequence() {
-        let sequence: AggSeq<u64, u64> =
-            AggSeq::new(Sum::leaf, Sum::combine, Sum::identity())
-                .push(1)
-                .push(2);
+        let sequence: AggSeq<u64, u64> = AggSeq::new(Sum::leaf, Sum::combine, Sum::identity())
+            .push(1)
+            .push(2);
         let structure = <Reduced<Sum> as ViewField>::structure(&sequence).expect("structure");
         let projected = structure
             .value

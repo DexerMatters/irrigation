@@ -3,19 +3,20 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use reactive_core::descriptor::ViewDescriptor;
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::CancelToken;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{ComponentId, Revision, Version, ViewId};
 use reactive_core::ops::catch_engine;
 use reactive_core::value::Value;
-use reactive_core::descriptor::ViewDescriptor;
 
 use crate::component::{ComponentSpec, RootComponent};
 use crate::edit::Edit;
 use crate::inner::{Inner, RuntimeConfig};
 use crate::snapshot::{Snapshot, ViewSchema};
 use crate::state::{NodeKind, NodeRecord, RootRecord, SubscriptionRecord};
+use crate::task::DemandCause;
 
 /// The public entry point to one isolated incremental runtime.
 ///
@@ -53,6 +54,21 @@ impl Runtime {
     pub fn with_config(config: RuntimeConfig) -> Self {
         Self {
             inner: Inner::new(config),
+        }
+    }
+
+    /// Creates a runtime that reports events to `observer`.
+    ///
+    /// The observer is fixed for the runtime's lifetime. Without this
+    /// constructor no observer exists and no event is built.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn with_observer(
+        config: RuntimeConfig,
+        observer: Arc<dyn crate::observe::RuntimeObserver>,
+    ) -> Self {
+        Self {
+            inner: Inner::new_observed(config, observer),
         }
     }
 
@@ -97,6 +113,7 @@ impl Runtime {
         state
             .scope_components
             .insert(reactive_core::ids::ScopeId::ROOT, R::ID);
+        state.component_names.insert(R::ID, R::NAME);
         state.root = Some(RootRecord {
             component: R::ID,
             name: R::NAME,
@@ -148,7 +165,7 @@ impl Runtime {
     /// Fails when a root is already installed.
     pub fn install_general<T: crate::general::GeneralComponent>(&self, component: T) -> Result<()> {
         let _gate = self.inner.gate.write();
-        for descriptor in T::VIEWS {
+        for descriptor in T::VIEWS.iter().chain(T::OUTPUT_VIEWS) {
             self.inner.register_view(descriptor);
         }
         let mut state = self.inner.lock();
@@ -157,13 +174,96 @@ impl Runtime {
                 "a root component is already installed on this runtime",
             ));
         }
+        if state.generals.iter().any(|general| general.id() == T::ID) {
+            return Err(ComputeError::internal("component id is already installed"));
+        }
+        let output_views = T::OUTPUT_VIEWS;
+        for descriptor in output_views {
+            if descriptor.kind != reactive_core::descriptor::ViewKind::Derived {
+                return Err(ComputeError::internal(format!(
+                    "general output view `{}` must be derived",
+                    descriptor.name
+                )));
+            }
+            if state.producers.contains_key(&descriptor.id) {
+                return Err(ComputeError::internal(format!(
+                    "view `{}` already has a producer",
+                    descriptor.name
+                )));
+            }
+        }
+        state.component_names.insert(T::ID, T::NAME);
         state.generals.push(Arc::new(component));
         let index = state.generals.len() - 1;
         let mut record = NodeRecord::empty("general component", NodeKind::InvocationBody);
         record.label = "general component";
         record.general = Some(index);
+        // The component owns this node: the board draws it as a component, and
+        // its reads and definitions are attributed to it.
+        record.component = Some(T::ID);
+        record.scope = reactive_core::ids::ScopeId::ROOT;
         let node = state.alloc(record);
+        for descriptor in output_views {
+            state.producers.insert(descriptor.id, node);
+        }
         state.general_root = Some(node);
+        Ok(())
+    }
+
+    /// Installs a general component that owns one or more output Views.
+    ///
+    /// This is the producer path for custom components: the component is a
+    /// normal graph participant, evaluated lazily when a consumer reads one of
+    /// its output units. It is not a root and does not block root installation.
+    /// Output Views must be derived, and exactly one producer may own a View.
+    pub fn install_general_component<T: crate::general::GeneralComponent>(
+        &self,
+        component: T,
+    ) -> Result<()> {
+        let _gate = self.inner.gate.write();
+        for descriptor in T::VIEWS.iter().chain(T::OUTPUT_VIEWS) {
+            self.inner.register_view(descriptor);
+        }
+        if T::OUTPUT_VIEWS.is_empty() {
+            return Err(ComputeError::internal(
+                "a non-root general component must declare output views",
+            ));
+        }
+        let mut state = self.inner.lock();
+        if state.generals.iter().any(|general| general.id() == T::ID) {
+            return Err(ComputeError::internal("component id is already installed"));
+        }
+        for descriptor in T::OUTPUT_VIEWS {
+            if descriptor.kind != reactive_core::descriptor::ViewKind::Derived {
+                return Err(ComputeError::internal(format!(
+                    "general output view `{}` must be derived",
+                    descriptor.name
+                )));
+            }
+            if state.producers.contains_key(&descriptor.id) {
+                return Err(ComputeError::internal(format!(
+                    "view `{}` already has a producer",
+                    descriptor.name
+                )));
+            }
+        }
+        state.component_names.insert(T::ID, T::NAME);
+        state.generals.push(Arc::new(component));
+        let index = state.generals.len() - 1;
+        // Every component owns a scope, so attribution never depends on which
+        // component was installed last.
+        let key = state.next_invocation + 1;
+        let scope = state.scopes.child(reactive_core::ids::ScopeId::ROOT, key);
+        state.scope_components.insert(scope, T::ID);
+        let mut record = NodeRecord::empty("general component producer", NodeKind::InvocationBody);
+        record.label = "general component producer";
+        record.general = Some(index);
+        record.component = Some(T::ID);
+        record.scope = scope;
+        let node = state.alloc(record);
+        for descriptor in T::OUTPUT_VIEWS {
+            state.producers.insert(descriptor.id, node);
+        }
         Ok(())
     }
 
@@ -178,7 +278,7 @@ impl Runtime {
         let task = Arc::clone(&self.inner);
         let cancel = CancelToken::default();
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, DemandCause::HostRead, move || {
             task.demand_root(&token).and_then(|()| {
                 let node = {
                     let state = task.lock();
@@ -215,8 +315,139 @@ impl Runtime {
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         inner
-            .demand(CancelToken::default(), move || Ok(task.capture_snapshot()))
+            .demand(
+                CancelToken::default(),
+                DemandCause::HostSnapshot,
+                move || Ok(task.capture_snapshot()),
+            )
             .expect("snapshot demand cannot fail")
+    }
+
+    /// Captures committed View content without creating a demand task.
+    ///
+    /// Unlike [`Runtime::snapshot`], this cannot evaluate a node, so a
+    /// diagnostic page that calls it never manufactures the work it observes.
+    #[must_use]
+    pub fn inspect_snapshot(&self) -> Snapshot {
+        self.inner.capture_snapshot()
+    }
+
+    /// A unit's change version, when it is installed on this runtime.
+    ///
+    /// Read-only, for validating a renderer's unit claims.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn unit_changed_at(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+    ) -> Option<reactive_core::ids::Version> {
+        self.inner.unit_facts(unit).map(|(version, _)| version)
+    }
+
+    /// Several units' change versions under one lock.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn unit_versions(
+        &self,
+        units: &[reactive_core::descriptor::UnitKey],
+    ) -> Vec<Option<reactive_core::ids::Version>> {
+        self.inner.unit_versions(units)
+    }
+
+    /// Every registered View's metadata at the current revision.
+    ///
+    /// Read-only: it never demands a View.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn view_facts(&self) -> Vec<crate::observe::ViewFacts> {
+        self.inner.view_facts()
+    }
+
+    /// One field's entities in the View's own order.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn field_entities(
+        &self,
+        view: reactive_core::ids::ViewId,
+        field: reactive_core::ids::FieldId,
+    ) -> Vec<crate::observe::EntityFacts> {
+        self.inner.field_entities(view, field)
+    }
+
+    /// Every installed unit of one View, with its change revision.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn view_units(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Vec<(
+        reactive_core::descriptor::UnitKey,
+        reactive_core::ids::Version,
+    )> {
+        self.inner.view_units(view)
+    }
+
+    /// A View's descriptor.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn descriptor(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Option<&'static reactive_core::descriptor::ViewDescriptor> {
+        self.inner.descriptor(view)
+    }
+
+    /// A View's content, untyped.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn raw_content(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Option<reactive_core::value::Value> {
+        self.inner.raw_content(view)
+    }
+
+    /// A unit's type-erased value.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn unit_value(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+    ) -> Option<reactive_core::value::Value> {
+        self.inner.unit_value(unit)
+    }
+
+    /// Every component the runtime knows, with its read and written Views.
+    ///
+    /// Read-only. Registration is what makes a component appear: root, general,
+    /// or invoked.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn component_facts(&self) -> Vec<crate::observe::ComponentFacts> {
+        self.inner.component_facts()
+    }
+
+    /// Projects the node arena under a bounded, read-only query.
+    #[must_use]
+    #[cfg(feature = "observe")]
+    pub fn probe(&self, query: &crate::observe::GraphQuery) -> crate::observe::GraphFacts {
+        self.inner.probe(query)
+    }
+
+    /// Explains one node, or returns `None` when it was reclaimed.
+    ///
+    /// Unlike [`Runtime::explain_node`] this never panics on a stale identity.
+    #[must_use]
+    pub fn try_explain_node(&self, node: reactive_core::ids::NodeId) -> Option<Explanation> {
+        let index = node.index();
+        {
+            let state = self.inner.lock();
+            let record = state.nodes.get(index)?;
+            if record.freed || record.generation != node.generation() {
+                return None;
+            }
+        }
+        Some(self.explain_node(node))
     }
 
     /// Demands the installed root and returns an immutable snapshot.
@@ -238,10 +469,15 @@ impl Runtime {
     /// Returns [`ComputeError::Cancelled`] when the token was cancelled before
     /// or during the demand.
     pub fn read_with_cancel(&self, cancel: CancelToken) -> Result<Snapshot> {
+        self.read_as(cancel, DemandCause::HostRead)
+    }
+
+    /// Demands the root, recording `cause` for the observation stream.
+    fn read_as(&self, cancel: CancelToken, cause: DemandCause) -> Result<Snapshot> {
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, cause, move || {
             task.demand_root(&token).map(|()| task.capture_snapshot())
         })
     }
@@ -258,16 +494,12 @@ impl Runtime {
     /// # Errors
     ///
     /// Fails when the index is out of range or the demand fails.
-    pub fn call_projection<S: ComponentSpec>(
-        &self,
-        args: S::Args,
-        index: usize,
-    ) -> Result<Value> {
+    pub fn call_projection<S: ComponentSpec>(&self, args: S::Args, index: usize) -> Result<Value> {
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let cancel = CancelToken::default();
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, DemandCause::HostCall, move || {
             let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = task.arc();
             #[allow(clippy::arc_with_non_send_sync)]
             let frame = Arc::new(reactive_core::frame::Frame::scoped(
@@ -315,7 +547,7 @@ impl Runtime {
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, DemandCause::HostRead, move || {
             task.demand_root(&token).and_then(|()| {
                 let root = {
                     let state = task.lock();
@@ -379,7 +611,7 @@ impl Runtime {
         let inner = Arc::clone(&self.inner);
         let task = Arc::clone(&self.inner);
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, DemandCause::HostRead, move || {
             task.demand_root_projection(&token, index)
         })
     }
@@ -523,13 +755,7 @@ impl Runtime {
         callback: impl Fn(&Snapshot) + Send + Sync + 'static,
     ) -> Result<Subscription>
     where
-        K: std::any::Any
-            + std::hash::Hash
-            + Eq
-            + Send
-            + Sync
-            + std::fmt::Debug
-            + 'static,
+        K: std::any::Any + std::hash::Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
     {
         let key = reactive_core::key::any_key(key);
         let view = V::view_id();
@@ -642,7 +868,7 @@ impl Runtime {
         let task = Arc::clone(&self.inner);
         let cancel = CancelToken::default();
         let token = cancel.clone();
-        inner.demand(cancel, move || {
+        inner.demand(cancel, DemandCause::HostCall, move || {
             let runtime: Arc<dyn reactive_core::ops::RuntimeOps> = task.arc();
             // Frames are thread-local execution state; see the note in `eval`.
             #[allow(clippy::arc_with_non_send_sync)]
@@ -692,6 +918,14 @@ impl Runtime {
             site_reuses: state.stats.site_reuses.load(Ordering::Relaxed),
             invocations_evicted: state.stats.invocations_evicted.load(Ordering::Relaxed),
             invalidation_ns: state.stats.invalidation_ns.load(Ordering::Relaxed),
+            validation_attempts: state.stats.validation_attempts.load(Ordering::Relaxed),
+            validation_failures: state.stats.validation_failures.load(Ordering::Relaxed),
+            execution_failures: state.stats.execution_failures.load(Ordering::Relaxed),
+            cutoffs: state.stats.cutoffs.load(Ordering::Relaxed),
+            suspensions: state.stats.suspensions.load(Ordering::Relaxed),
+            demands: state.stats.demands.load(Ordering::Relaxed),
+            notifications: state.stats.notifications.load(Ordering::Relaxed),
+            no_change_runs: state.stats.no_change_runs.load(Ordering::Relaxed),
             nodes: state.nodes.len(),
             tasks,
         }
@@ -706,7 +940,13 @@ impl Runtime {
     /// Reclamation only loses reuse; correctness is unaffected because a later
     /// demand reconstructs what it needs.
     pub fn collect(&self) -> crate::inner::ReclaimStats {
-        self.inner.collect()
+        let stats = self.inner.collect();
+        #[cfg(feature = "observe")]
+        self.inner.emit(crate::observe::RuntimeEvent::Collected {
+            nodes: u32::try_from(stats.nodes_reclaimed).unwrap_or(u32::MAX),
+            scopes: u32::try_from(stats.scopes_reclaimed).unwrap_or(u32::MAX),
+        });
+        stats
     }
 
     /// Reports memory held by the runtime.
@@ -769,10 +1009,7 @@ impl Runtime {
 
     /// Captures the current provider recipe for one View region.
     #[must_use]
-    pub fn routing_recipe(
-        &self,
-        view: reactive_core::ids::ViewId,
-    ) -> Option<RoutingRecipe> {
+    pub fn routing_recipe(&self, view: reactive_core::ids::ViewId) -> Option<RoutingRecipe> {
         self.inner.routing_recipe(view)
     }
 
@@ -781,7 +1018,12 @@ impl Runtime {
     /// A definition of a planned unit from any other component is rejected.
     pub fn plan_route(
         &self,
-        entries: impl IntoIterator<Item = (reactive_core::descriptor::UnitKey, reactive_core::ids::ComponentId)>,
+        entries: impl IntoIterator<
+            Item = (
+                reactive_core::descriptor::UnitKey,
+                reactive_core::ids::ComponentId,
+            ),
+        >,
     ) {
         let mut state = self.inner.lock();
         for (unit, component) in entries {
@@ -800,10 +1042,7 @@ impl Runtime {
 
     /// Captures a revisioned routing certificate for one View region.
     #[must_use]
-    pub fn routing_stamp(
-        &self,
-        view: reactive_core::ids::ViewId,
-    ) -> Option<RoutingStamp> {
+    pub fn routing_stamp(&self, view: reactive_core::ids::ViewId) -> Option<RoutingStamp> {
         let state = self.inner.lock();
         state.regions.get(&view).map(|region| RoutingStamp {
             view,
@@ -987,9 +1226,9 @@ impl Runtime {
             )
         };
         let snapshot = if has_root && needs_demand {
-            self.read()?
+            self.read_as(CancelToken::default(), DemandCause::ObservationRefresh)?
         } else {
-            self.snapshot()
+            self.inspect_snapshot()
         };
         let pending: Vec<PendingSubscription> = {
             let state = self.inner.lock();
@@ -1052,6 +1291,18 @@ impl Runtime {
                 }
             };
             if should_fire {
+                self.inner
+                    .lock()
+                    .stats
+                    .notifications
+                    .fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "observe")]
+                self.inner
+                    .emit(crate::observe::RuntimeEvent::SubscriptionNotified {
+                        view,
+                        previous,
+                        current: version,
+                    });
                 match callback {
                     crate::state::Observer::Plain(callback) => callback(&snapshot),
                     crate::state::Observer::WithChanges(callback) => {
@@ -1090,7 +1341,9 @@ impl Drop for Subscription {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
         let mut state = self.inner.lock();
-        state.subscriptions.retain(|subscription| subscription.id != self.id);
+        state
+            .subscriptions
+            .retain(|subscription| subscription.id != self.id);
     }
 }
 
@@ -1136,6 +1389,22 @@ pub struct RuntimeStats {
     pub invocations_evicted: u64,
     /// Nanoseconds spent marking invalidation cones.
     pub invalidation_ns: u64,
+    /// Trace validations attempted, successful or not.
+    pub validation_attempts: u64,
+    /// Trace validations rejected at a moved observation.
+    pub validation_failures: u64,
+    /// Closure attempts that ended in failure or cancellation.
+    pub execution_failures: u64,
+    /// Successful commits whose value was equal (cutoff).
+    pub cutoffs: u64,
+    /// Pooled attempts that suspended on another task's node.
+    pub suspensions: u64,
+    /// Demand tasks that can evaluate, started over the runtime's lifetime.
+    pub demands: u64,
+    /// Subscription callbacks that fired.
+    pub notifications: u64,
+    /// General-component runs elided because no observed unit moved.
+    pub no_change_runs: u64,
 }
 
 /// Chooses which provider owns a unit when two live providers claim it.
@@ -1179,7 +1448,10 @@ pub struct RoutingRecipe {
     /// The routing revision this recipe was captured at.
     pub stamp: RoutingStamp,
     /// One provider per installed logical unit, unsorted.
-    pub providers: Vec<(reactive_core::descriptor::UnitKey, reactive_core::ids::NodeId)>,
+    pub providers: Vec<(
+        reactive_core::descriptor::UnitKey,
+        reactive_core::ids::NodeId,
+    )>,
     /// Planned provider components for units that do not have a value yet.
     pub planned: Vec<(
         reactive_core::descriptor::UnitKey,
@@ -1189,10 +1461,8 @@ pub struct RoutingRecipe {
 
 /// A [`RouteSelector`] that prefers the providers captured in a recipe.
 pub struct RecipeSelector {
-    preferences: std::collections::HashMap<
-        reactive_core::descriptor::UnitKey,
-        reactive_core::ids::NodeId,
-    >,
+    preferences:
+        std::collections::HashMap<reactive_core::descriptor::UnitKey, reactive_core::ids::NodeId>,
     fallback_second: bool,
 }
 
@@ -1380,5 +1650,3 @@ fn root_body_eq<R: RootComponent>(left: &Value, right: &Value) -> bool {
 pub fn component_id<S: ComponentSpec>() -> ComponentId {
     S::ID
 }
-
-

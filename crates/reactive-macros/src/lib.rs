@@ -23,6 +23,11 @@ use proc_macro::TokenStream;
 ///
 /// `#[view(source)]` declares a View populated by edit transactions;
 /// `#[view(derived)]` declares a View populated by component definitions.
+///
+/// A View's element types must be `Debug`: the board draws every View, and
+/// spells its values with their `Debug` form when the host registers no
+/// renderer. A View whose values cannot be spelled opts out with
+/// `#[view(derived, hide)]` — its plate then shows rows and change marks only.
 #[proc_macro_attribute]
 pub fn view(args: TokenStream, input: TokenStream) -> TokenStream {
     view::expand(args.into(), input.into()).into()

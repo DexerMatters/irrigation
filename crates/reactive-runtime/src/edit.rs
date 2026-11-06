@@ -9,11 +9,11 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use reactive_core::descriptor::{UnitKey, UnitKind};
 use reactive_core::error::Result;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{Revision, ViewId};
 use reactive_core::value::{Value, value_of};
-use reactive_core::descriptor::{UnitKey, UnitKind};
 
 use crate::inner::Inner;
 use crate::snapshot::EditableView;
@@ -118,7 +118,12 @@ impl Edit {
     pub fn current<T: Clone + Any>(&self, key: &UnitKey) -> Option<T> {
         let state = self.inner.lock();
         let node = state.units.get(key)?;
-        state.node(*node).value.as_ref()?.downcast_ref::<T>().cloned()
+        state
+            .node(*node)
+            .value
+            .as_ref()?
+            .downcast_ref::<T>()
+            .cloned()
     }
 
     /// Reads the current content of a View.
@@ -160,9 +165,11 @@ impl Edit {
 
     /// Applies the transaction, returning whether a new revision was published.
     pub(crate) fn commit(&mut self) -> Result<bool> {
-        if self.updates.is_empty() {
-            return Ok(false);
-        }
+        // Only the observer uses these; the commit path never branches on them.
+        #[cfg(feature = "observe")]
+        let started = std::time::Instant::now();
+        #[cfg(feature = "observe")]
+        let staged = self.updates.len() as u32;
         let mut state = self.inner.lock();
         let revision: Revision = state.revision + 1;
         let mut changed = Vec::new();
@@ -212,12 +219,9 @@ impl Edit {
                 None => {
                     // A missing unit has no node; compare against the content's
                     // current value so setting the default is a no-op.
-                    let current = state
-                        .regions
-                        .get(&update.key.view)
-                        .and_then(|region| {
-                            (region.descriptor.content.get)(&region.content, &update.key)
-                        });
+                    let current = state.regions.get(&update.key.view).and_then(|region| {
+                        (region.descriptor.content.get)(&region.content, &update.key)
+                    });
                     if current
                         .as_ref()
                         .is_some_and(|current| (update.eq)(current, &update.value))
@@ -250,6 +254,23 @@ impl Edit {
             changed.push(node);
         }
         if changed.is_empty() {
+            #[cfg(feature = "observe")]
+            let current = state.revision;
+            drop(state);
+            // A no-op transaction is a real outcome: the page must be able to
+            // say "no revision published" rather than showing nothing.
+            #[cfg(feature = "observe")]
+            self.inner
+                .emit(crate::observe::RuntimeEvent::TransactionCommitted {
+                    label: Arc::from(self.label.as_str()),
+                    revision: current,
+                    staged,
+                    changed: 0,
+                    published: false,
+                    invalidated: 0,
+                    views: smallvec::SmallVec::new(),
+                    duration_ns: started.elapsed().as_nanos() as u64,
+                });
             return Ok(false);
         }
         state.revision = revision;
@@ -257,12 +278,47 @@ impl Edit {
         state.pending_conflicts.clear();
         self.inner.publish_revision(revision);
         state.stats.revisions.fetch_add(1, Ordering::Relaxed);
-        let started = std::time::Instant::now();
-        invalidate(&mut state, changed, revision);
-        state
-            .stats
-            .invalidation_ns
-            .fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        let invalidate_started = std::time::Instant::now();
+        let invalidated = invalidate(&mut state, changed.iter().copied(), revision);
+        state.stats.invalidation_ns.fetch_add(
+            invalidate_started.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let seeds = changed;
+        drop(state);
+        #[cfg(feature = "observe")]
+        {
+            let mut views: smallvec::SmallVec<[reactive_core::ids::ViewId; 8]> =
+                smallvec::SmallVec::new();
+            {
+                let state = self.inner.lock();
+                for node in &seeds {
+                    let record = state.nodes.get(node.index());
+                    let Some(unit) = record.and_then(|record| record.unit.as_ref()) else {
+                        continue;
+                    };
+                    if views.len() < 8 && !views.contains(&unit.view) {
+                        views.push(unit.view);
+                    }
+                }
+            }
+            self.inner
+                .emit(crate::observe::RuntimeEvent::TransactionCommitted {
+                    label: Arc::from(self.label.as_str()),
+                    revision,
+                    staged,
+                    changed: seeds.len() as u32,
+                    published: true,
+                    invalidated,
+                    views,
+                    duration_ns: started.elapsed().as_nanos() as u64,
+                });
+            self.inner.emit_invalidated(revision, &seeds, invalidated);
+        }
+        #[cfg(not(feature = "observe"))]
+        {
+            let _ = (seeds, invalidated);
+        }
         Ok(true)
     }
 }
@@ -274,5 +330,3 @@ fn values_equal<T: PartialEq + Any>(left: &Value, right: &Value) -> bool {
         _ => false,
     }
 }
-
-

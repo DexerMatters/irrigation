@@ -165,12 +165,24 @@ impl<N: Clone, E: Clone> GraphStore<N, E> {
         let id = self.next_edge;
         let edge = Edge::new(from, to, value);
         let (edges, _) = self.edges.insert(id, edge);
-        let (out_for, _) = self
-            .outgoing
-            .insert(from, self.outgoing.get(&from).cloned().unwrap_or_default().insert(id, ()).0);
-        let (in_for, _) = self
-            .incoming
-            .insert(to, self.incoming.get(&to).cloned().unwrap_or_default().insert(id, ()).0);
+        let (out_for, _) = self.outgoing.insert(
+            from,
+            self.outgoing
+                .get(&from)
+                .cloned()
+                .unwrap_or_default()
+                .insert(id, ())
+                .0,
+        );
+        let (in_for, _) = self.incoming.insert(
+            to,
+            self.incoming
+                .get(&to)
+                .cloned()
+                .unwrap_or_default()
+                .insert(id, ())
+                .0,
+        );
         (
             Self {
                 nodes: self.nodes.clone(),

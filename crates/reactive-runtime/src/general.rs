@@ -62,34 +62,65 @@ pub struct Change {
 }
 
 /// The changes delivered to one `update` call.
-#[derive(Clone, Debug, Default)]
+///
+/// The batch is a handle, not a snapshot: the runtime records what the previous
+/// run observed and materializes the changed subset the first time `changes()`
+/// is called. By then the body has already read what it cares about, so the
+/// batch describes the values this run is about to see instead of the values
+/// the previous run saw. This is what makes delivery uniform across component
+/// kinds: no runtime-side ordering walk is needed to keep it accurate.
+#[derive(Clone, Default)]
 pub struct ChangeBatch {
-    changes: Vec<Change>,
+    changes: Arc<std::sync::OnceLock<Vec<Change>>>,
+    source: Option<Arc<dyn Fn() -> Vec<Change> + Send + Sync>>,
+}
+
+impl std::fmt::Debug for ChangeBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChangeBatch")
+            .field("changes", &self.changes())
+            .finish()
+    }
 }
 
 impl ChangeBatch {
     /// Builds a batch from observed changes.
     #[must_use]
     pub fn new(changes: Vec<Change>) -> Self {
-        Self { changes }
+        Self {
+            changes: Arc::new(std::sync::OnceLock::from(changes)),
+            source: None,
+        }
+    }
+
+    /// Builds a batch that computes its contents on first access.
+    pub(crate) fn lazy(source: impl Fn() -> Vec<Change> + Send + Sync + 'static) -> Self {
+        Self {
+            changes: Arc::new(std::sync::OnceLock::new()),
+            source: Some(Arc::new(source)),
+        }
     }
 
     /// The changes, in dependency order.
     #[must_use]
     pub fn changes(&self) -> &[Change] {
-        &self.changes
+        self.changes.get_or_init(|| {
+            self.source
+                .as_ref()
+                .map_or_else(Vec::new, |source| source())
+        })
     }
 
     /// Returns `true` when nothing changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.changes.is_empty()
+        self.changes().is_empty()
     }
 
     /// Number of changed units.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.changes.len()
+        self.changes().len()
     }
 }
 
@@ -104,6 +135,11 @@ pub struct GeneralCx {
     scope: Option<u64>,
     unit_scopes: FxHashMap<UnitKey, u64>,
     retained: FxHashSet<u64>,
+    allowed_output_views: Option<FxHashSet<reactive_core::ids::ViewId>>,
+    definition_error: Option<String>,
+    content_updates: Vec<(reactive_core::ids::ViewId, Arc<dyn Any + Send + Sync>)>,
+    retractions: Vec<UnitKey>,
+    restate_all: bool,
 }
 
 impl std::fmt::Debug for GeneralCx {
@@ -127,7 +163,60 @@ impl GeneralCx {
             scope: None,
             unit_scopes: FxHashMap::default(),
             retained: FxHashSet::default(),
+            allowed_output_views: None,
+            definition_error: None,
+            content_updates: Vec::new(),
+            retractions: Vec::new(),
+            restate_all: false,
         }
+    }
+
+    /// Restates every definition of this run.
+    ///
+    /// Units this run does not stage are retracted, which is the pre-write
+    /// semantics. Prefer [`OutputTxn::retract`]: restating turns every run into
+    /// a full publication.
+    pub fn replace_all(&mut self) {
+        self.restate_all = true;
+    }
+
+    pub(crate) fn take_definition_mode(&mut self) -> (Vec<UnitKey>, bool) {
+        (
+            std::mem::take(&mut self.retractions),
+            std::mem::replace(&mut self.restate_all, false),
+        )
+    }
+
+    /// Stages a replacement of a View's immutable content.
+    pub fn set_content(
+        &mut self,
+        view: reactive_core::ids::ViewId,
+        content: Arc<dyn Any + Send + Sync>,
+    ) {
+        self.content_updates.push((view, content));
+    }
+
+    pub(crate) fn take_content_updates(
+        &mut self,
+    ) -> Vec<(reactive_core::ids::ViewId, Arc<dyn Any + Send + Sync>)> {
+        std::mem::take(&mut self.content_updates)
+    }
+
+    pub(crate) fn take_definition_error(&mut self) -> Option<String> {
+        self.definition_error.take()
+    }
+
+    pub(crate) fn restrict_output_views(
+        &mut self,
+        views: impl IntoIterator<Item = reactive_core::ids::ViewId>,
+    ) {
+        self.allowed_output_views = Some(views.into_iter().collect());
+    }
+
+    fn allows_output_view(&self, view: reactive_core::ids::ViewId) -> bool {
+        self.allowed_output_views
+            .as_ref()
+            .is_none_or(|views| views.contains(&view))
     }
 
     /// Starts a dependency scope; subsequent reads are attributed to it.
@@ -177,6 +266,10 @@ impl GeneralCx {
         value: T,
         label: &'static str,
     ) {
+        if !self.allows_output_view(unit.view) {
+            self.definition_error = Some(format!("definition outside output views: {:?}", unit));
+            return;
+        }
         self.define(unit, value, label);
     }
 
@@ -223,9 +316,7 @@ impl GeneralCx {
             self.unit_scopes.insert(unit.clone(), scope);
         }
         self.runtime.ensure_unit(&unit)?;
-        let node = self
-            .runtime
-            .unit_node(unit.view, Arc::new(unit.clone()));
+        let node = self.runtime.unit_node(unit.view, Arc::new(unit.clone()));
         self.runtime.read_unit(node)
     }
 
@@ -264,6 +355,10 @@ impl GeneralCx {
         value: T,
         label: &'static str,
     ) {
+        if !self.allows_output_view(unit.view) {
+            self.definition_error = Some(format!("definition outside output views: {:?}", unit));
+            return;
+        }
         reactive_core::stage(DefinitionDraft {
             unit,
             value: value_of(value),
@@ -339,13 +434,13 @@ impl<T: Clone + Send + Sync + 'static> std::future::Future for TypedRequest<'_, 
     ) -> std::task::Poll<Self::Output> {
         let this = self.get_mut();
         match std::pin::Pin::new(&mut this.request).poll(context) {
-            std::task::Poll::Ready(Ok(value)) => std::task::Poll::Ready(
-                value.downcast_ref::<T>().cloned().ok_or_else(|| {
+            std::task::Poll::Ready(Ok(value)) => {
+                std::task::Poll::Ready(value.downcast_ref::<T>().cloned().ok_or_else(|| {
                     ComputeError::TypeMismatch {
                         expected: std::any::type_name::<T>(),
                     }
-                }),
-            ),
+                }))
+            }
             std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(error)),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -420,6 +515,85 @@ impl OutputTxn<'_> {
             present,
         );
     }
+
+    /// Defines one ordered-list element and its membership.
+    pub fn list_entry<T>(&mut self, view: ViewId, field: FieldId, id: u64, value: T)
+    where
+        T: PartialEq + Send + Sync + 'static,
+    {
+        self.define(
+            UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
+            value,
+        );
+        self.define(
+            UnitKey::entity(view, field, UnitKind::Membership, any_key(id)),
+            true,
+        );
+    }
+
+    /// Defines the ordered identity projection of a list field.
+    pub fn list_structure(
+        &mut self,
+        view: ViewId,
+        field: FieldId,
+        ids: impl IntoIterator<Item = u64>,
+    ) {
+        let ids: reactive_store::persistent::PSeq<u64> = ids.into_iter().collect();
+        self.define(UnitKey::field(view, field, UnitKind::Structure), ids);
+    }
+
+    /// Removes one map/list entity membership.
+    pub fn remove_membership<K>(&mut self, view: ViewId, field: FieldId, key: K)
+    where
+        K: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+    {
+        self.membership(view, field, key, false);
+    }
+
+    /// Inserts one set member.
+    pub fn set_insert<T>(&mut self, view: ViewId, field: FieldId, value: T)
+    where
+        T: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+    {
+        self.membership(view, field, value, true);
+    }
+
+    /// Removes one set member.
+    pub fn set_remove<T>(&mut self, view: ViewId, field: FieldId, value: T)
+    where
+        T: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+    {
+        self.membership(view, field, value, false);
+    }
+
+    /// Inserts or replaces one ordered-list element.
+    pub fn list_replace<T>(&mut self, view: ViewId, field: FieldId, id: u64, value: T)
+    where
+        T: PartialEq + Send + Sync + 'static,
+    {
+        self.list_entry(view, field, id, value);
+    }
+
+    /// Removes one ordered-list element membership.
+    pub fn list_remove(&mut self, view: ViewId, field: FieldId, id: u64) {
+        self.membership(view, field, id, false);
+    }
+
+    /// Retracts one unit this component previously defined.
+    ///
+    /// Absence is not a retraction: a unit keeps its committed value until it
+    /// is either restaged or retracted here.
+    pub fn retract(&mut self, unit: UnitKey) {
+        self.cx.retractions.push(unit);
+    }
+
+    /// Restates every definition: units this run does not stage are retracted.
+    ///
+    /// This is the pre-write semantics, kept for components whose output set is
+    /// genuinely recomputed from scratch.
+    pub fn replace_all(&mut self) {
+        self.cx.restate_all = true;
+    }
 }
 
 fn values_equal<T: PartialEq + Any>(left: &Value, right: &Value) -> bool {
@@ -442,6 +616,12 @@ pub trait GeneralComponent: Send + Sync + 'static {
     const NAME: &'static str;
     /// Views this component reads, registered at install time.
     const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// Views this component owns and publishes.
+    ///
+    /// A non-root producer must declare at least one output View. An output
+    /// View must be derived and may have only one producer.
+    const OUTPUT_VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
 
     /// How requested-dependency invalidation is handled.
     fn dependency_updates(&self) -> DependencyUpdates {
@@ -501,6 +681,12 @@ pub trait TypedGeneralComponent: Send + Sync + 'static {
     const NAME: &'static str;
     /// Views this component reads, registered at install time.
     const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// Views this component owns and publishes.
+    ///
+    /// A non-root producer must declare at least one output View. An output
+    /// View must be derived and may have only one producer.
+    const OUTPUT_VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
 
     /// The parameters fixed when the component is installed.
     fn params(&self) -> Self::Params;
@@ -584,9 +770,9 @@ impl<T: TypedGeneralComponent> GeneralComponent for TypedAdapter<T> {
         changes: &ChangeBatch,
     ) -> Result<(Self::State, Self::Output)> {
         let inputs = T::Inputs::read(cx)?;
-        let (next, returns) = self
-            .component
-            .update(cx, &state.0, &inputs, changes, &self.params)?;
+        let (next, returns) =
+            self.component
+                .update(cx, &state.0, &inputs, changes, &self.params)?;
         Ok(((next, inputs), returns))
     }
 }
@@ -609,6 +795,12 @@ pub trait LocalGeneralComponent: 'static {
     const NAME: &'static str;
     /// Views this component reads, registered at install time.
     const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
+    /// Views this component owns and publishes.
+    ///
+    /// A non-root producer must declare at least one output View. An output
+    /// View must be derived and may have only one producer.
+    const OUTPUT_VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
 
     /// How requested-dependency invalidation is handled.
     fn dependency_updates(&self) -> DependencyUpdates {
@@ -725,10 +917,7 @@ impl<C: LocalGeneralComponent> LocalAdapter<C> {
         Ok(())
     }
 
-    fn with_slot<T>(
-        &self,
-        run: impl FnOnce(&mut dyn LocalSlot) -> Result<T>,
-    ) -> Result<T> {
+    fn with_slot<T>(&self, run: impl FnOnce(&mut dyn LocalSlot) -> Result<T>) -> Result<T> {
         self.check_owner()?;
         LOCAL_SLOTS.with(|slots| {
             let mut map = slots.borrow_mut();
@@ -765,12 +954,11 @@ impl<C: LocalGeneralComponent> GeneralComponent for LocalAdapter<C> {
 
     fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
         let value = self.with_slot(|slot| slot.initialize(cx))?;
-        let output = value
-            .downcast_ref::<C::Output>()
-            .cloned()
-            .ok_or_else(|| ComputeError::TypeMismatch {
+        let output = value.downcast_ref::<C::Output>().cloned().ok_or_else(|| {
+            ComputeError::TypeMismatch {
                 expected: std::any::type_name::<C::Output>(),
-            })?;
+            }
+        })?;
         Ok(((), output))
     }
 
@@ -781,18 +969,18 @@ impl<C: LocalGeneralComponent> GeneralComponent for LocalAdapter<C> {
         changes: &ChangeBatch,
     ) -> Result<(Self::State, Self::Output)> {
         let value = self.with_slot(|slot| slot.update(cx, changes))?;
-        let output = value
-            .downcast_ref::<C::Output>()
-            .cloned()
-            .ok_or_else(|| ComputeError::TypeMismatch {
+        let output = value.downcast_ref::<C::Output>().cloned().ok_or_else(|| {
+            ComputeError::TypeMismatch {
                 expected: std::any::type_name::<C::Output>(),
-            })?;
+            }
+        })?;
         Ok(((), output))
     }
 }
 
 /// Type-erased form stored by the runtime.
 pub(crate) trait ErasedGeneral: Send + Sync + 'static {
+    fn id(&self) -> reactive_core::ComponentId;
     fn name(&self) -> &'static str;
     fn policy(&self) -> DependencyUpdates;
     fn initialize(&self, cx: &mut GeneralCx) -> Result<(ErasedState, Value)>;
@@ -803,6 +991,7 @@ pub(crate) trait ErasedGeneral: Send + Sync + 'static {
         changes: &ChangeBatch,
     ) -> Result<(ErasedState, Value)>;
     fn output_eq(&self, left: &Value, right: &Value) -> bool;
+    fn output_views(&self) -> Vec<reactive_core::ids::ViewId>;
 }
 
 /// Retained state, type-erased.
@@ -817,6 +1006,10 @@ impl std::fmt::Debug for dyn ErasedGeneral {
 }
 
 impl<T: GeneralComponent> ErasedGeneral for T {
+    fn id(&self) -> reactive_core::ComponentId {
+        T::ID
+    }
+
     fn name(&self) -> &'static str {
         T::NAME
     }
@@ -845,6 +1038,10 @@ impl<T: GeneralComponent> ErasedGeneral for T {
 
     fn output_eq(&self, left: &Value, right: &Value) -> bool {
         values_equal::<T::Output>(left, right)
+    }
+
+    fn output_views(&self) -> Vec<reactive_core::ids::ViewId> {
+        T::OUTPUT_VIEWS.iter().map(|view| view.id).collect()
     }
 }
 
@@ -929,13 +1126,22 @@ pub trait AsyncGeneralComponent: Send + Sync + 'static {
     /// Views this component reads, registered at install time.
     const VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
 
+    /// Views this component owns and publishes.
+    ///
+    /// A non-root producer must declare at least one output View. An output
+    /// View must be derived and may have only one producer.
+    const OUTPUT_VIEWS: &'static [&'static reactive_core::descriptor::ViewDescriptor] = &[];
+
     /// How requested-dependency invalidation is handled.
     fn dependency_updates(&self) -> DependencyUpdates {
         DependencyUpdates::Reset
     }
 
     /// Runs on first demand.
-    fn initialize<'a>(&'a self, cx: &'a mut GeneralCx) -> ComponentFuture<'a, (Self::State, Self::Output)>;
+    fn initialize<'a>(
+        &'a self,
+        cx: &'a mut GeneralCx,
+    ) -> ComponentFuture<'a, (Self::State, Self::Output)>;
 
     /// Runs when an observed dependency changed under `Incremental`.
     fn update<'a>(

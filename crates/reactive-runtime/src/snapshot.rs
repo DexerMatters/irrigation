@@ -8,9 +8,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use reactive_core::descriptor::ViewDescriptor;
 use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{Revision, Version, ViewId};
-use reactive_core::descriptor::ViewDescriptor;
 
 /// A registered View type.
 ///

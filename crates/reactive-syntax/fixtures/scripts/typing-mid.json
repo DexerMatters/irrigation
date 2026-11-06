@@ -1,0 +1,27 @@
+{
+  "doc": "medium",
+  "edits": [
+    {
+      "range": [
+        327,
+        327
+      ],
+      "text": "a"
+    },
+    {
+      "range": [
+        328,
+        328
+      ],
+      "text": "b"
+    },
+    {
+      "range": [
+        329,
+        329
+      ],
+      "text": "c"
+    }
+  ],
+  "gated": true
+}

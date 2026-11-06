@@ -17,24 +17,26 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
+pub mod context;
 pub mod graph;
 pub mod join;
 pub mod list;
 pub mod map;
 pub mod reduce;
 pub mod set;
-pub mod context;
 pub mod tree;
 
+pub use context::Context;
 pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use join::{EquiJoin, JoinSpec};
-pub use list::{DerivedList, DerivedListRef, SourceList, SourceListEditor, SourceListRef};
+pub use list::{
+    DerivedList, DerivedListRef, ListOutputExt, SourceList, SourceListEditor, SourceListRef,
+};
 pub use map::{Map, MapEditor, MapRef};
 pub use reduce::{Reduced, ReducedEditor, ReducedRef, Reduction};
 pub use set::{DerivedSet, DerivedSetRef, SourceSet, SourceSetEditor, SourceSetRef};
-pub use context::Context;
 pub use tree::{
-    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeImportReport, TreeRef,
-    TreeStorage, TreeNode, TreeNodeId, TreeValue, slots as tree_slots, tree_content_vtable,
-    tree_eq, tree_fields,
+    BuildSlot, ChildSlot, TreeAccess, TreeBuild, TreeEditor, TreeImportReport, TreeNode,
+    TreeNodeId, TreeOutputExt, TreeOutputTxn, TreePatch, TreePatchNode, TreeRef, TreeStorage,
+    TreeValue, slots as tree_slots, tree_content_vtable, tree_eq, tree_fields, units as tree_units,
 };

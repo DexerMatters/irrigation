@@ -186,6 +186,8 @@ impl TreeStorage {
 /// A tree under construction.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TreeBuild {
+    /// Optional stable node identity.
+    pub id: Option<TreeNodeId>,
     /// Which declared enum type this node is.
     pub type_index: u16,
     /// Which variant of that type.
@@ -214,11 +216,19 @@ impl TreeBuild {
     #[must_use]
     pub fn leaf(type_index: u16, variant: u16) -> Self {
         Self {
+            id: None,
             type_index,
             variant,
             fields: Vec::new(),
             children: Vec::new(),
         }
+    }
+
+    /// Assigns a stable node identity.
+    #[must_use]
+    pub fn with_id(mut self, id: TreeNodeId) -> Self {
+        self.id = Some(id);
+        self
     }
 
     /// Adds a leaf payload.
@@ -233,6 +243,15 @@ impl TreeBuild {
     pub fn with_child(mut self, slot: BuildSlot) -> Self {
         self.children.push(slot);
         self
+    }
+
+    /// Materializes this build into immutable Tree content.
+    #[must_use]
+    pub fn to_storage(&self) -> TreeStorage {
+        let mut storage = TreeStorage::default();
+        let root = build_tree_node(self, None, &mut storage);
+        storage.root = Some(root);
+        storage
     }
 }
 
@@ -250,6 +269,56 @@ pub mod slots {
     pub const PARENT: u16 = 4;
     /// Whether one node exists.
     pub const MEMBERSHIP: u16 = 5;
+}
+
+/// Unit keys a host renderer may cite when it wants per-node change marks.
+///
+/// A tree node's *tag* unit moves when the node's kind or variant changes; its
+/// leaf and child units move independently. A renderer that shows a node row
+/// cites the tag unit, and a renderer that shows a leaf row cites that leaf.
+pub mod units {
+    use reactive_core::descriptor::UnitKey;
+    use reactive_core::ids::ViewId;
+
+    use super::{
+        TreeNodeId, children_unit, field_unit, membership_unit, parent_unit, root_unit, tag_unit,
+    };
+
+    /// The tree's root identity.
+    #[must_use]
+    pub fn root(view: ViewId) -> UnitKey {
+        root_unit(view)
+    }
+
+    /// One node's kind and variant.
+    #[must_use]
+    pub fn tag(view: ViewId, node: TreeNodeId) -> UnitKey {
+        tag_unit(view, node)
+    }
+
+    /// One node's leaf payload at `slot`.
+    #[must_use]
+    pub fn field(view: ViewId, node: TreeNodeId, slot: u16) -> UnitKey {
+        field_unit(view, node, slot)
+    }
+
+    /// One node's child slot.
+    #[must_use]
+    pub fn children(view: ViewId, node: TreeNodeId, slot: u16) -> UnitKey {
+        children_unit(view, node, slot)
+    }
+
+    /// One node's parent.
+    #[must_use]
+    pub fn parent(view: ViewId, node: TreeNodeId) -> UnitKey {
+        parent_unit(view, node)
+    }
+
+    /// Whether one node exists.
+    #[must_use]
+    pub fn membership(view: ViewId, node: TreeNodeId) -> UnitKey {
+        membership_unit(view, node)
+    }
 }
 
 fn root_unit(view: ViewId) -> UnitKey {
@@ -381,9 +450,11 @@ impl TreeRef {
     #[must_use]
     pub fn exists(&self) -> bool {
         match &self.access {
-            TreeAccess::Live { content } => read_unit_value(membership_unit(self.view, self.node), |any| {
-                Some(content(any).node(self.node).is_some())
-            }),
+            TreeAccess::Live { content } => {
+                read_unit_value(membership_unit(self.view, self.node), |any| {
+                    Some(content(any).node(self.node).is_some())
+                })
+            }
             TreeAccess::Snapshot(storage) => storage.node(self.node).is_some(),
         }
     }
@@ -416,11 +487,12 @@ impl TreeRef {
                 if !self.exists() {
                     return None;
                 }
-                let value: TreeValue = read_unit_value(field_unit(self.view, self.node, slot), |any| {
-                    content(any)
-                        .node(self.node)
-                        .and_then(|node| node.fields.get(slot as usize).cloned())
-                });
+                let value: TreeValue =
+                    read_unit_value(field_unit(self.view, self.node, slot), |any| {
+                        content(any)
+                            .node(self.node)
+                            .and_then(|node| node.fields.get(slot as usize).cloned())
+                    });
                 Some(value)
             }
             TreeAccess::Snapshot(storage) => storage
@@ -746,7 +818,8 @@ impl<'a> TreeEditor<'a> {
             }
         } else {
             self.storage.root = None;
-            self.edit.set(root_unit(self.view), Option::<TreeNodeId>::None);
+            self.edit
+                .set(root_unit(self.view), Option::<TreeNodeId>::None);
         }
     }
 
@@ -787,7 +860,12 @@ impl<'a> TreeEditor<'a> {
             }
         }
         let mut target = target;
-        let position = index.min(target.children.get(slot as usize).map_or(0, |slot| slot.ids().len()));
+        let position = index.min(
+            target
+                .children
+                .get(slot as usize)
+                .map_or(0, |slot| slot.ids().len()),
+        );
         match target.children.get_mut(slot as usize) {
             Some(ChildSlot::One(id)) => *id = node,
             Some(ChildSlot::Optional(current)) => *current = Some(node),
@@ -801,7 +879,8 @@ impl<'a> TreeEditor<'a> {
         let mut moving = moving;
         moving.parent = Some(new_parent);
         self.storage.nodes = self.storage.nodes.insert(node, moving).0;
-        self.edit.set(parent_unit(self.view, node), Some(new_parent));
+        self.edit
+            .set(parent_unit(self.view, node), Some(new_parent));
         self.stage_children(new_parent);
         true
     }
@@ -837,9 +916,9 @@ impl<'a> TreeEditor<'a> {
         };
         self.storage.nodes = self.storage.nodes.insert(id, node).0;
         self.edit.set(membership_unit(self.view, id), true);
-        self.edit.set(tag_unit(self.view, id), (build.type_index, build.variant));
         self.edit
-            .set(parent_unit(self.view, id), parent);
+            .set(tag_unit(self.view, id), (build.type_index, build.variant));
+        self.edit.set(parent_unit(self.view, id), parent);
         for (slot, value) in build.fields.iter().enumerate() {
             self.edit
                 .set(field_unit(self.view, id, slot as u16), value.clone());
@@ -865,8 +944,7 @@ impl<'a> TreeEditor<'a> {
                 node.children[slot] = built.clone();
                 self.storage.nodes = self.storage.nodes.insert(id, node).0;
             }
-            self.edit
-                .set(children_unit(self.view, id, slot_id), built);
+            self.edit.set(children_unit(self.view, id, slot_id), built);
         }
         id
     }
@@ -875,29 +953,24 @@ impl<'a> TreeEditor<'a> {
         self.edit.set(membership_unit(self.view, id), false);
         if let Some(node) = self.storage.node(id).cloned() {
             for slot in 0..node.fields.len() {
-                self.edit.set(
-                    field_unit(self.view, id, slot as u16),
-                    TreeValue::Unit,
-                );
+                self.edit
+                    .set(field_unit(self.view, id, slot as u16), TreeValue::Unit);
             }
             for slot in 0..node.children.len() {
-                self.edit.set(
-                    children_unit(self.view, id, slot as u16),
-                    ChildSlot::None,
-                );
+                self.edit
+                    .set(children_unit(self.view, id, slot as u16), ChildSlot::None);
             }
         }
         self.edit.set(tag_unit(self.view, id), (u16::MAX, u16::MAX));
-        self.edit.set(parent_unit(self.view, id), Option::<TreeNodeId>::None);
+        self.edit
+            .set(parent_unit(self.view, id), Option::<TreeNodeId>::None);
     }
 
     fn stage_children(&mut self, id: TreeNodeId) {
         if let Some(node) = self.storage.node(id).cloned() {
             for (slot, children) in node.children.iter().enumerate() {
-                self.edit.set(
-                    children_unit(self.view, id, slot as u16),
-                    children.clone(),
-                );
+                self.edit
+                    .set(children_unit(self.view, id, slot as u16), children.clone());
             }
         }
     }
@@ -956,7 +1029,11 @@ pub fn tree_get(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> Option<V
     match key.field.0 {
         slots::ROOT => Some(value_of(storage.root)),
         slots::TAG => {
-            let node = key.entity.as_deref()?.as_any().downcast_ref::<TreeNodeId>()?;
+            let node = key
+                .entity
+                .as_deref()?
+                .as_any()
+                .downcast_ref::<TreeNodeId>()?;
             storage
                 .node(*node)
                 .map(|node| value_of((node.type_index, node.variant)))
@@ -984,11 +1061,19 @@ pub fn tree_get(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> Option<V
                 .map(value_of)
         }
         slots::PARENT => {
-            let node = key.entity.as_deref()?.as_any().downcast_ref::<TreeNodeId>()?;
+            let node = key
+                .entity
+                .as_deref()?
+                .as_any()
+                .downcast_ref::<TreeNodeId>()?;
             storage.node(*node).map(|node| value_of(node.parent))
         }
         slots::MEMBERSHIP => {
-            let node = key.entity.as_deref()?.as_any().downcast_ref::<TreeNodeId>()?;
+            let node = key
+                .entity
+                .as_deref()?
+                .as_any()
+                .downcast_ref::<TreeNodeId>()?;
             Some(value_of(storage.node(*node).is_some()))
         }
         _ => None,
@@ -997,10 +1082,7 @@ pub fn tree_get(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> Option<V
 
 /// Compares two tree contents.
 #[must_use]
-pub fn tree_eq(
-    left: &Arc<dyn Any + Send + Sync>,
-    right: &Arc<dyn Any + Send + Sync>,
-) -> bool {
+pub fn tree_eq(left: &Arc<dyn Any + Send + Sync>, right: &Arc<dyn Any + Send + Sync>) -> bool {
     left.downcast_ref::<TreeStorage>() == right.downcast_ref::<TreeStorage>()
 }
 
@@ -1023,8 +1105,11 @@ pub const fn tree_content_vtable() -> ContentVtable {
         contains: tree_contains,
         get: tree_get,
         structure: tree_structure,
+        len: tree_len,
         eq: tree_eq,
         debug: tree_debug,
+        describe: |_| None,
+        variant_label: |_, _| None,
     }
 }
 
@@ -1033,6 +1118,17 @@ fn tree_structure(
     _field: reactive_core::ids::FieldId,
 ) -> Option<reactive_core::descriptor::Structure> {
     None
+}
+
+fn tree_len(
+    content: &reactive_core::descriptor::Content,
+    field: reactive_core::ids::FieldId,
+) -> Option<usize> {
+    // Only the tree field has nodes; other fields are scalars.
+    if field.0 != 0 {
+        return None;
+    }
+    content.downcast_ref::<TreeStorage>().map(TreeStorage::len)
 }
 
 /// The field layout reported by a tree View descriptor.
@@ -1072,12 +1168,14 @@ mod tests {
 
     fn sample() -> TreeBuild {
         TreeBuild {
+            id: None,
             type_index: 0,
             variant: 0,
             fields: vec![TreeValue::Text(String::from("root"))],
             children: vec![BuildSlot::Many(vec![
                 TreeBuild::leaf(1, 0).with_field(TreeValue::Int(1)),
                 TreeBuild {
+                    id: None,
                     type_index: 1,
                     variant: 1,
                     fields: vec![TreeValue::Text(String::from("call"))],
@@ -1156,7 +1254,9 @@ mod tests {
         let root_ref = TreeRef::snapshot(Arc::clone(&storage), 0);
         assert_eq!(root_ref.tag(), Some((0, 0)));
         assert_eq!(
-            root_ref.field(0).and_then(|v| v.as_text().map(str::to_string)),
+            root_ref
+                .field(0)
+                .and_then(|v| v.as_text().map(str::to_string)),
             Some(String::from("root"))
         );
         let children = root_ref.child_slot(0);
@@ -1189,4 +1289,360 @@ mod tests {
         assert!(tree_eq(&content, &content));
         assert!(tree_debug(&content).contains("tree"));
     }
+}
+
+/// Extension for publishing a Tree View from a general component.
+pub trait TreeOutputExt {
+    /// Starts a Tree output transaction for `view`.
+    fn tree_output(&mut self, view: ViewId) -> TreeOutputTxn<'_>;
+}
+
+impl TreeOutputExt for reactive_runtime::general::GeneralCx {
+    fn tree_output(&mut self, view: ViewId) -> TreeOutputTxn<'_> {
+        TreeOutputTxn { cx: self, view }
+    }
+}
+
+/// One changed node in a local Tree patch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TreePatchNode {
+    /// Stable node identity.
+    pub id: TreeNodeId,
+    /// Parent identity.
+    pub parent: Option<TreeNodeId>,
+    /// Declared enum type index.
+    pub type_index: u16,
+    /// Variant index.
+    pub variant: u16,
+    /// Leaf payloads.
+    pub fields: Vec<TreeValue>,
+    /// Child slots.
+    pub children: Vec<ChildSlot>,
+}
+
+/// Local Tree patch. No whole-tree comparison is implied.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TreePatch {
+    /// Root identity.
+    pub root: Option<TreeNodeId>,
+    /// Inserted or changed nodes.
+    pub nodes: Vec<TreePatchNode>,
+    /// Removed nodes; subtrees are removed with their roots.
+    pub removed: Vec<TreeNodeId>,
+}
+
+/// Transactional Tree publisher for a GeneralComponent output View.
+pub struct TreeOutputTxn<'a> {
+    cx: &'a mut reactive_runtime::general::GeneralCx,
+    view: ViewId,
+}
+
+impl std::fmt::Debug for TreeOutputTxn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TreeOutputTxn").finish_non_exhaustive()
+    }
+}
+
+impl TreeOutputTxn<'_> {
+    /// Replaces the whole tree with `build` and stages all tree units.
+    pub fn set_root(&mut self, build: &TreeBuild) -> TreeNodeId {
+        let mut storage = TreeStorage::default();
+        let root = build_tree_node(build, None, &mut storage);
+        storage.root = Some(root);
+        self.cx.set_content(self.view, Arc::new(storage.clone()));
+        let mut output = self.cx.output();
+        output.define(
+            UnitKey::field(self.view, FieldId(slots::ROOT), UnitKind::Value),
+            Some(root),
+        );
+        for (id, node) in storage.nodes.iter() {
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::MEMBERSHIP),
+                    UnitKind::Membership,
+                    any_key(*id),
+                ),
+                true,
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::TAG),
+                    UnitKind::Value,
+                    any_key(*id),
+                ),
+                (node.type_index, node.variant),
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::PARENT),
+                    UnitKind::Value,
+                    any_key(*id),
+                ),
+                node.parent,
+            );
+            for (slot, value) in node.fields.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::FIELD),
+                        UnitKind::Value,
+                        any_key((*id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+            for (slot, value) in node.children.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::CHILDREN),
+                        UnitKind::Structure,
+                        any_key((*id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+        }
+        root
+    }
+
+    /// Updates a tree from `previous`, staging only changed nodes and slots.
+    pub fn set_root_diff(&mut self, build: &TreeBuild, previous: &TreeBuild) {
+        let mut old = TreeStorage::default();
+        let old_root = build_tree_node(previous, None, &mut old);
+        old.root = Some(old_root);
+        let mut storage = TreeStorage::default();
+        let root = build_tree_node(build, None, &mut storage);
+        storage.root = Some(root);
+        self.cx.set_content(self.view, Arc::new(storage.clone()));
+        let mut output = self.cx.output();
+        output.define(
+            UnitKey::field(self.view, FieldId(slots::ROOT), UnitKind::Value),
+            Some(root),
+        );
+        for (id, _) in old.nodes.iter() {
+            if !storage.nodes.contains_key(id) {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::MEMBERSHIP),
+                        UnitKind::Membership,
+                        any_key(*id),
+                    ),
+                    false,
+                );
+            }
+        }
+        for (id, node) in storage.nodes.iter() {
+            if old.nodes.get(id) == Some(node) {
+                continue;
+            }
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::MEMBERSHIP),
+                    UnitKind::Membership,
+                    any_key(*id),
+                ),
+                true,
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::TAG),
+                    UnitKind::Value,
+                    any_key(*id),
+                ),
+                (node.type_index, node.variant),
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::PARENT),
+                    UnitKind::Value,
+                    any_key(*id),
+                ),
+                node.parent,
+            );
+            for (slot, value) in node.fields.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::FIELD),
+                        UnitKind::Value,
+                        any_key((*id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+            for (slot, value) in node.children.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::CHILDREN),
+                        UnitKind::Structure,
+                        any_key((*id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+            if let Some(old_node) = old.nodes.get(id) {
+                for slot in node.children.len()..old_node.children.len() {
+                    output.define(
+                        UnitKey::entity(
+                            self.view,
+                            FieldId(slots::CHILDREN),
+                            UnitKind::Structure,
+                            any_key((*id, slot as u16)),
+                        ),
+                        ChildSlot::None,
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl TreeOutputTxn<'_> {
+    /// Applies a local patch to `previous` content and stages only changed units.
+    pub fn apply_patch(&mut self, previous: &TreeStorage, patch: &TreePatch) -> TreeStorage {
+        let mut storage = previous.clone();
+        for id in &patch.removed {
+            // Patch removals are explicit node identities. Do not recurse into
+            // children that may be reused by a replacement node.
+            if let Some(node) = storage.nodes.get(id).cloned() {
+                storage.nodes = storage.nodes.remove(id).0;
+                let _ = node;
+            }
+        }
+        for node in &patch.nodes {
+            storage.nodes = storage
+                .nodes
+                .insert(
+                    node.id,
+                    TreeNode {
+                        type_index: node.type_index,
+                        variant: node.variant,
+                        fields: node.fields.clone(),
+                        children: node.children.clone(),
+                        parent: node.parent,
+                    },
+                )
+                .0;
+            storage.next_id = storage.next_id.max(node.id.saturating_add(1));
+        }
+        storage.root = patch.root;
+        self.cx.set_content(self.view, Arc::new(storage.clone()));
+        let mut output = self.cx.output();
+        output.define(
+            UnitKey::field(self.view, FieldId(slots::ROOT), UnitKind::Value),
+            patch.root,
+        );
+        for node in &patch.nodes {
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::MEMBERSHIP),
+                    UnitKind::Membership,
+                    any_key(node.id),
+                ),
+                true,
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::TAG),
+                    UnitKind::Value,
+                    any_key(node.id),
+                ),
+                (node.type_index, node.variant),
+            );
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::PARENT),
+                    UnitKind::Value,
+                    any_key(node.id),
+                ),
+                node.parent,
+            );
+            for (slot, value) in node.fields.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::FIELD),
+                        UnitKind::Value,
+                        any_key((node.id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+            for (slot, value) in node.children.iter().enumerate() {
+                output.define(
+                    UnitKey::entity(
+                        self.view,
+                        FieldId(slots::CHILDREN),
+                        UnitKind::Structure,
+                        any_key((node.id, slot as u16)),
+                    ),
+                    value.clone(),
+                );
+            }
+        }
+        for id in &patch.removed {
+            output.define(
+                UnitKey::entity(
+                    self.view,
+                    FieldId(slots::MEMBERSHIP),
+                    UnitKind::Membership,
+                    any_key(*id),
+                ),
+                false,
+            );
+        }
+        storage
+    }
+}
+
+fn build_tree_node(
+    build: &TreeBuild,
+    parent: Option<TreeNodeId>,
+    storage: &mut TreeStorage,
+) -> TreeNodeId {
+    let id = build.id.unwrap_or(storage.next_id);
+    storage.next_id = storage.next_id.max(id.saturating_add(1));
+    let mut children = Vec::with_capacity(build.children.len());
+    for child in &build.children {
+        children.push(match child {
+            BuildSlot::None => ChildSlot::None,
+            BuildSlot::One(child) => ChildSlot::One(build_tree_node(child, Some(id), storage)),
+            BuildSlot::Optional(None) => ChildSlot::Optional(None),
+            BuildSlot::Optional(Some(child)) => {
+                ChildSlot::Optional(Some(build_tree_node(child, Some(id), storage)))
+            }
+            BuildSlot::Many(children) => ChildSlot::Many(
+                children
+                    .iter()
+                    .map(|child| build_tree_node(child, Some(id), storage))
+                    .collect(),
+            ),
+        });
+    }
+    storage.nodes = storage
+        .nodes
+        .insert(
+            id,
+            TreeNode {
+                type_index: build.type_index,
+                variant: build.variant,
+                fields: build.fields.clone(),
+                children,
+                parent,
+            },
+        )
+        .0;
+    id
 }

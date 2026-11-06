@@ -38,10 +38,7 @@ fn main() {
         let insert_combines = COMBINES.load(Ordering::Relaxed);
 
         assert_eq!(edited.aggregate(), expected - (size as u64 / 2) + 1);
-        assert_eq!(
-            inserted.aggregate(),
-            expected - (size as u64 / 2) + 1 + 7
-        );
+        assert_eq!(inserted.aggregate(), expected - (size as u64 / 2) + 1 + 7);
         println!(
             "{size}\t{set_combines}\t{insert_combines}\t{}",
             inserted.aggregate()

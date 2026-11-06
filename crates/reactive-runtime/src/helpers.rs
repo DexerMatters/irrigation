@@ -7,20 +7,19 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use reactive_core::descriptor::UnitKey;
 use reactive_core::error::ComputeError;
 use reactive_core::frame::current_or_engine_panic;
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::ops::panic_engine;
 use reactive_core::value::{Value, value_of};
-use reactive_core::descriptor::UnitKey;
 
 use crate::inner::DefinitionDraft;
 
 /// Whether a field currently uses the keyed derived protocol.
 #[must_use]
 pub fn field_is_keyed(view: ViewId, field: FieldId) -> bool {
-    reactive_core::frame::current()
-        .is_some_and(|frame| frame.runtime().field_is_keyed(view, field))
+    reactive_core::frame::current().is_some_and(|frame| frame.runtime().field_is_keyed(view, field))
 }
 
 /// Reads one logical unit, creating it with `init` when first observed.
@@ -108,9 +107,11 @@ where
 pub fn view_content<C: Any + Send + Sync>(view: ViewId) -> Arc<C> {
     let frame = current_or_engine_panic("view content read");
     let runtime = Arc::clone(frame.runtime());
-    let content = runtime
-        .view_content(view)
-        .unwrap_or_else(|| panic_engine(ComputeError::internal(format!("view {view:?} is not registered"))));
+    let content = runtime.view_content(view).unwrap_or_else(|| {
+        panic_engine(ComputeError::internal(format!(
+            "view {view:?} is not registered"
+        )))
+    });
     content.downcast::<C>().unwrap_or_else(|_| {
         panic_engine(ComputeError::internal(format!(
             "view {view:?} content is not `{}`",
@@ -133,9 +134,7 @@ pub fn values_equal<T: PartialEq + Any>(left: &Value, right: &Value) -> bool {
 /// component body still has a region to define units in.
 pub fn ensure_view(descriptor: &'static reactive_core::descriptor::ViewDescriptor) {
     if let Some(frame) = reactive_core::frame::current() {
-        frame
-            .runtime()
-            .declare_view(frame.scope(), descriptor.id);
+        frame.runtime().declare_view(frame.scope(), descriptor.id);
         frame.runtime().register_view(descriptor);
     }
 }
@@ -148,7 +147,9 @@ pub fn ensure_view(descriptor: &'static reactive_core::descriptor::ViewDescripto
 #[must_use]
 pub fn node_of(site: reactive_core::ids::SiteId) -> reactive_core::ids::NodeId {
     let frame = current_or_engine_panic("node_of");
-    frame.runtime().site_node(frame.scope(), site)
+    frame
+        .runtime()
+        .site_node_in(Some(frame.node()), frame.scope(), site)
 }
 
 /// Records an observation of a certified node.

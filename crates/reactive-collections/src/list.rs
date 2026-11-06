@@ -13,13 +13,13 @@
 use std::any::Any;
 use std::marker::PhantomData;
 
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, SiteId, ViewId};
 use reactive_core::key::any_key;
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
-use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::persistent::PSeq;
 
@@ -42,6 +42,10 @@ where
 
     fn empty() -> Self::Storage {
         PSeq::new()
+    }
+
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
     }
 
     fn define(
@@ -81,9 +85,7 @@ where
         let ids: PSeq<u64> = storage.iter().map(|(id, _)| *id).collect();
         Some(reactive_core::descriptor::Structure {
             value: value_of(ids),
-            eq: |left, right| {
-                left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>()
-            },
+            eq: |left, right| left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>(),
         })
     }
 
@@ -137,12 +139,7 @@ where
 
     fn ids(&self) -> PSeq<u64> {
         read_unit_value(structure_unit(self.view, self.field), |content| {
-            Some(
-                (self.content)(content)
-                    .iter()
-                    .map(|(id, _)| *id)
-                    .collect(),
-            )
+            Some((self.content)(content).iter().map(|(id, _)| *id).collect())
         })
     }
 
@@ -330,7 +327,8 @@ where
     {
         let frame = reactive_core::frame::current_or_engine_panic("list filter");
         let runtime = std::sync::Arc::clone(frame.runtime());
-        let call_scope = runtime.child_scope(frame.scope(), u64::from(frame.node().0), "list_filter");
+        let call_scope =
+            runtime.child_scope(frame.scope(), u64::from(frame.node().0), "list_filter");
         let content = self.content;
         let view = self.view;
         let field = self.field;
@@ -503,8 +501,7 @@ where
 
     fn stage_structure(&mut self) {
         let ids: PSeq<u64> = self.storage.iter().map(|(id, _)| *id).collect();
-        self.edit
-            .set(structure_unit(self.view, self.field), ids);
+        self.edit.set(structure_unit(self.view, self.field), ids);
     }
 }
 
@@ -658,6 +655,10 @@ where
         DerivedListStorage::Whole(PSeq::new())
     }
 
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
+    }
+
     fn define(
         storage: &Self::Storage,
         key: &dyn reactive_core::key::AnyKey,
@@ -701,9 +702,7 @@ where
         let ids = storage.ids();
         Some(reactive_core::descriptor::Structure {
             value: value_of(ids),
-            eq: |left, right| {
-                left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>()
-            },
+            eq: |left, right| left.downcast_ref::<PSeq<u64>>() == right.downcast_ref::<PSeq<u64>>(),
         })
     }
 }
@@ -739,7 +738,11 @@ where
 {
     /// Builds a handle for one derived list field.
     #[must_use]
-    pub fn new(view: ViewId, field: FieldId, content: fn(&dyn Any) -> DerivedListStorage<T>) -> Self {
+    pub fn new(
+        view: ViewId,
+        field: FieldId,
+        content: fn(&dyn Any) -> DerivedListStorage<T>,
+    ) -> Self {
         Self {
             view,
             field,
@@ -756,12 +759,7 @@ where
     }
 
     fn membership_key(&self, id: u64) -> UnitKey {
-        UnitKey::entity(
-            self.view,
-            self.field,
-            UnitKind::Membership,
-            any_key(id),
-        )
+        UnitKey::entity(self.view, self.field, UnitKind::Membership, any_key(id))
     }
 
     fn value_key(&self, id: u64) -> UnitKey {
@@ -875,23 +873,19 @@ where
                 .iter()
                 .enumerate()
                 .map(|(index, _)| {
-                    let member_scope =
-                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
                     let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: T =
-                        reactive_core::ops::eval_node_with(&runtime, param_node, || {
-                            let storage: DerivedListStorage<T> = read_unit_value(
-                                self.unit(),
-                                |content| Some((self.content)(content)),
-                            );
-                            storage.get(index as u64).cloned().unwrap_or_else(|| {
-                                reactive_core::ops::panic_engine(
-                                    reactive_core::error::ComputeError::internal(
-                                        "whole-value list member disappeared",
-                                    ),
-                                )
-                            })
-                        });
+                    let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
+                        let storage: DerivedListStorage<T> =
+                            read_unit_value(self.unit(), |content| Some((self.content)(content)));
+                        storage.get(index as u64).cloned().unwrap_or_else(|| {
+                            reactive_core::ops::panic_engine(
+                                reactive_core::error::ComputeError::internal(
+                                    "whole-value list member disappeared",
+                                ),
+                            )
+                        })
+                    });
                     let result_node = runtime.site_node(member_scope, SiteId(2));
                     reactive_core::ops::eval_node_with(&runtime, result_node, || {
                         f(reactive_runtime::Param::new(param_node, value.clone()))
@@ -909,8 +903,11 @@ where
     {
         let frame = reactive_core::frame::current_or_engine_panic("derived list filter");
         let runtime = std::sync::Arc::clone(frame.runtime());
-        let call_scope =
-            runtime.child_scope(frame.scope(), u64::from(frame.node().0), "derived_list_filter");
+        let call_scope = runtime.child_scope(
+            frame.scope(),
+            u64::from(frame.node().0),
+            "derived_list_filter",
+        );
         let storage: DerivedListStorage<T> =
             read_unit_value(self.unit(), |content| Some((self.content)(content)));
         let mut kept = Vec::new();
@@ -939,14 +936,11 @@ where
             }
             DerivedListStorage::Whole(items) => {
                 for (index, _) in items.iter().enumerate() {
-                    let member_scope =
-                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
                     let param_node = runtime.site_node(member_scope, SiteId(1));
                     let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
-                        let storage: DerivedListStorage<T> = read_unit_value(
-                            self.unit(),
-                            |content| Some((self.content)(content)),
-                        );
+                        let storage: DerivedListStorage<T> =
+                            read_unit_value(self.unit(), |content| Some((self.content)(content)));
                         storage.get(index as u64).cloned().unwrap_or_else(|| {
                             reactive_core::ops::panic_engine(
                                 reactive_core::error::ComputeError::internal(
@@ -1009,14 +1003,11 @@ where
             }
             DerivedListStorage::Whole(items) => {
                 for (index, _) in items.iter().enumerate() {
-                    let member_scope =
-                        runtime.child_scope(call_scope, index as u64, "list_member");
+                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
                     let param_node = runtime.site_node(member_scope, SiteId(1));
                     let value: T = reactive_core::ops::eval_node_with(&runtime, param_node, || {
-                        let storage: DerivedListStorage<T> = read_unit_value(
-                            self.unit(),
-                            |content| Some((self.content)(content)),
-                        );
+                        let storage: DerivedListStorage<T> =
+                            read_unit_value(self.unit(), |content| Some((self.content)(content)));
                         storage.get(index as u64).cloned().unwrap_or_else(|| {
                             reactive_core::ops::panic_engine(
                                 reactive_core::error::ComputeError::internal(
@@ -1066,11 +1057,7 @@ where
         for (id, value) in &items {
             define_unit(self.value_key(*id), value.clone(), label);
         }
-        define_unit(
-            self.unit(),
-            DerivedListStorage::Keyed(sequence),
-            label,
-        );
+        define_unit(self.unit(), DerivedListStorage::Keyed(sequence), label);
     }
 }
 
@@ -1129,6 +1116,54 @@ where
     reactive_core::ops::eval_node_with(runtime, result_node, || {
         f(reactive_runtime::Param::new(param_node, value.clone()))
     })
+}
+
+/// Framework-native keyed list publication for general components.
+pub trait ListOutputExt {
+    /// Replaces a set of explicit keyed list entries as one ordered list.
+    fn list_define_keyed<T>(
+        &mut self,
+        view: ViewId,
+        field: FieldId,
+        items: impl IntoIterator<Item = (u64, T)>,
+    ) where
+        T: Clone + PartialEq + Send + Sync + 'static;
+}
+
+impl ListOutputExt for reactive_runtime::general::GeneralCx {
+    fn list_define_keyed<T>(
+        &mut self,
+        view: ViewId,
+        field: FieldId,
+        items: impl IntoIterator<Item = (u64, T)>,
+    ) where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
+        let items: PSeq<(u64, T)> = items.into_iter().collect();
+        let ids: PSeq<u64> = items.iter().map(|(id, _)| *id).collect();
+        self.define(
+            UnitKey::field(view, field, UnitKind::Structure),
+            ids,
+            "output.list.structure",
+        );
+        for (id, value) in items.iter() {
+            self.define(
+                UnitKey::entity(view, field, UnitKind::Value, any_key(*id)),
+                value.clone(),
+                "output.list.value",
+            );
+            self.define(
+                UnitKey::entity(view, field, UnitKind::Membership, any_key(*id)),
+                true,
+                "output.list.membership",
+            );
+        }
+        self.define(
+            UnitKey::field(view, field, UnitKind::Value),
+            DerivedListStorage::Keyed(items),
+            "output.list.content",
+        );
+    }
 }
 
 #[cfg(test)]

@@ -146,7 +146,9 @@ impl<V> KeyTable<V> {
 
     /// Iterates over every stored entry.
     pub fn iter(&self) -> impl Iterator<Item = (&Arc<dyn AnyKey>, &V)> {
-        self.buckets.values().flat_map(|bucket| bucket.iter().map(|(k, v)| (k, v)))
+        self.buckets
+            .values()
+            .flat_map(|bucket| bucket.iter().map(|(k, v)| (k, v)))
     }
 
     /// Removes all entries.
@@ -187,7 +189,12 @@ mod tests {
         let mut table = KeyTable::new();
         table.insert(any_key(String::from("a")), 1);
         assert!(table.remove(any_key(String::from("b")).as_ref()).is_none());
-        assert_eq!(table.remove(any_key(String::from("a")).as_ref()).map(|(_, v)| v), Some(1));
+        assert_eq!(
+            table
+                .remove(any_key(String::from("a")).as_ref())
+                .map(|(_, v)| v),
+            Some(1)
+        );
         assert!(table.is_empty());
     }
 }

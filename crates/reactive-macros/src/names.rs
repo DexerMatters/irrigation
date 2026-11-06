@@ -16,7 +16,6 @@ pub fn pascal_case(name: &str) -> Ident {
     Ident::new(&result, Span::call_site())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

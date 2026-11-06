@@ -14,8 +14,8 @@
 //! because there is no worker to yield.
 
 use std::cell::{Cell, RefCell};
-use std::sync::mpsc::SyncSender;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::SyncSender;
 
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::ids::NodeId;
@@ -30,6 +30,45 @@ pub enum TaskMode {
     Pooled,
     /// Runs on the calling thread and blocks that thread when it waits.
     Inline,
+}
+
+/// Why a demand task was started.
+///
+/// Recorded with the task so an observer can attribute work to a host read, a
+/// call, or an observation refresh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemandCause {
+    /// A host read: `read`, `read_outputs`, or `read_projection`.
+    HostRead,
+    /// A host call: `call` or `call_projection`.
+    HostCall,
+    /// A host snapshot. Capturing content cannot evaluate a node.
+    HostSnapshot,
+    /// An observation refresh caused by an edit.
+    ///
+    /// One refresh serves every live subscription, so the cause names the
+    /// refresh rather than a single subscription; `SubscriptionNotified`
+    /// events carry the subscription-level detail.
+    ObservationRefresh,
+}
+
+impl DemandCause {
+    /// Whether this demand can execute user computation.
+    #[must_use]
+    pub fn evaluates(self) -> bool {
+        !matches!(self, Self::HostSnapshot)
+    }
+
+    /// The wire name for this cause's kind.
+    #[must_use]
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::HostRead => "host_read",
+            Self::HostCall => "host_call",
+            Self::HostSnapshot => "host_snapshot",
+            Self::ObservationRefresh => "observation_refresh",
+        }
+    }
 }
 
 /// Scheduling state of one task.
@@ -268,7 +307,9 @@ mod tests {
         active_push(NodeId(3));
         assert!(active_contains(NodeId(3)));
         active_pop(NodeId(3));
-        let other = std::thread::spawn(current_or_detached).join().expect("thread");
+        let other = std::thread::spawn(current_or_detached)
+            .join()
+            .expect("thread");
         assert_ne!(first, other);
     }
 }

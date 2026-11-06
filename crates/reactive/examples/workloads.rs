@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use reactive::{reactive, tree_view, view, Runtime};
+use reactive::{Runtime, reactive, tree_view, view};
 
 #[view(source)]
 pub struct Table {
@@ -84,7 +84,6 @@ fn document(size: usize) -> syntax::Document {
             .collect(),
     }
 }
-
 
 // --- Cross-family workloads ------------------------------------------------
 
@@ -195,7 +194,10 @@ mod graph_workload {
     pub fn root(mode: &GraphMode) -> Option<u64> {
         reactive::ensure_view(<WorkGraph as reactive::ViewSchema>::DESCRIPTOR);
         reactive::ensure_view(<WorkGraphMap as reactive::ViewSchema>::DESCRIPTOR);
-        define_work_graph(graph_nodes(mode.size(), mode.bump()), graph_edges(mode.size()));
+        define_work_graph(
+            graph_nodes(mode.size(), mode.bump()),
+            graph_edges(mode.size()),
+        );
         let target = WorkGraphMap.field0();
         WorkGraph.field0().node_map(&target);
         target.get(&1)
@@ -346,7 +348,9 @@ fn cross_family_rows() {
 
         // Derived graph -> node map.
         let runtime = Runtime::new();
-        runtime.install(graph_workload::Root).expect("install graph");
+        runtime
+            .install(graph_workload::Root)
+            .expect("install graph");
         runtime
             .edit(|edit| {
                 let mut mode = edit.view::<GraphMode>();
@@ -412,7 +416,6 @@ fn cross_family_rows() {
     }
 }
 
-
 #[view(derived)]
 pub struct SyntaxFlatten(Map<u64, u32>);
 
@@ -455,7 +458,9 @@ fn main() {
             entries.insert(1, 10);
         })
         .expect("seed");
-    let _ = runtime.read_outputs::<map_workload::Lookup>().expect("warm");
+    let _ = runtime
+        .read_outputs::<map_workload::Lookup>()
+        .expect("warm");
     let before = runtime.stats();
     let started = Instant::now();
     for _ in 0..100 {
@@ -486,7 +491,9 @@ fn main() {
             entries.insert(2, 20);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<map_workload::Lookup>().expect("read");
+    let _ = runtime
+        .read_outputs::<map_workload::Lookup>()
+        .expect("read");
     let elapsed = started.elapsed();
     let after = runtime.stats();
     println!(
@@ -506,7 +513,9 @@ fn main() {
                 tree.set_root(&document(size));
             })
             .expect("seed");
-        let _ = runtime.read_outputs::<tree_workload::Total>().expect("warm");
+        let _ = runtime
+            .read_outputs::<tree_workload::Total>()
+            .expect("warm");
         let before = runtime.stats();
         let started = Instant::now();
         runtime
@@ -518,7 +527,9 @@ fn main() {
                 tree.replace_expr(leaf, &syntax::Expr::Name(String::from("-1")));
             })
             .expect("edit");
-        let _ = runtime.read_outputs::<tree_workload::Total>().expect("read");
+        let _ = runtime
+            .read_outputs::<tree_workload::Total>()
+            .expect("read");
         let elapsed = started.elapsed();
         let after = runtime.stats();
         println!(
@@ -537,10 +548,7 @@ fn main() {
         }
         let elapsed = started.elapsed() / 10;
         assert_eq!(total, (0..size as i64).sum::<i64>());
-        println!(
-            "from-scratch\t{size}\t-\t-\t{}",
-            elapsed.as_micros()
-        );
+        println!("from-scratch\t{size}\t-\t-\t{}", elapsed.as_micros());
 
         // Specialized handwritten incremental algorithm: a running total
         // updated at the edited index. This is the floor the transparent
@@ -556,10 +564,7 @@ fn main() {
         }
         let per_edit = started.elapsed().as_secs_f64() * 1e6 / 10_000.0;
         std::hint::black_box(&values);
-        assert_eq!(
-            running,
-            (0..size as i64).sum::<i64>() - middle as i64 - 2
-        );
+        assert_eq!(running, (0..size as i64).sum::<i64>() - middle as i64 - 2);
         println!("handwritten\t{size}\t-\t-\t{per_edit:.4}");
 
         // Whole-function memoization baseline: an edit invalidates the entry,
@@ -574,10 +579,7 @@ fn main() {
         }
         let elapsed = started.elapsed() / 10;
         assert_eq!(memo_total, values.iter().sum::<i64>());
-        println!(
-            "memoized-miss\t{size}\t-\t-\t{}",
-            elapsed.as_micros()
-        );
+        println!("memoized-miss\t{size}\t-\t-\t{}", elapsed.as_micros());
     }
     cross_family_rows();
 }

@@ -8,13 +8,13 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use reactive_core::descriptor::{
+    ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
+};
 use reactive_core::ids::{ComponentId, FieldId, ViewId};
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::helpers::read_unit_value;
 use reactive_runtime::{ComponentSpec, RootComponent, Runtime, ViewSchema, call_component};
-use reactive_core::descriptor::{
-    ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
-};
 
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 struct SettingsContent {
@@ -83,10 +83,7 @@ fn settings_get(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> Option<V
     }
 }
 
-fn settings_eq(
-    left: &Arc<dyn Any + Send + Sync>,
-    right: &Arc<dyn Any + Send + Sync>,
-) -> bool {
+fn settings_eq(left: &Arc<dyn Any + Send + Sync>, right: &Arc<dyn Any + Send + Sync>) -> bool {
     left.downcast_ref::<SettingsContent>() == right.downcast_ref::<SettingsContent>()
 }
 
@@ -106,8 +103,11 @@ static SETTINGS_DESC: ViewDescriptor = ViewDescriptor {
         contains: settings_contains,
         get: settings_get,
         structure: settings_structure,
+        len: |_, _| None,
         eq: settings_eq,
         debug: settings_debug,
+        describe: |_| None,
+        variant_label: |_, _| None,
     },
 };
 
@@ -172,7 +172,9 @@ fn set_count(runtime: &Runtime, value: u32) {
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
-    TEST_LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
+    TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 static BODY_RUNS: AtomicU64 = AtomicU64::new(0);
@@ -410,7 +412,11 @@ fn a_transaction_is_normalized_to_its_final_values() {
             edit.set(flag_key(), false);
         })
         .expect("edit");
-    assert_eq!(runtime.revision(), revision, "a net no-op published a revision");
+    assert_eq!(
+        runtime.revision(),
+        revision,
+        "a net no-op published a revision"
+    );
 
     // The same unit written twice, ending at a new value: the last write wins.
     runtime

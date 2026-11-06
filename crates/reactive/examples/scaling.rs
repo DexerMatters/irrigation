@@ -13,7 +13,7 @@
 
 use std::time::Instant;
 
-use reactive::{reactive, view, Runtime};
+use reactive::{Runtime, reactive, view};
 
 #[view(source)]
 pub struct Numbers {

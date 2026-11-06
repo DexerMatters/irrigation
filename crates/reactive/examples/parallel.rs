@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-use reactive::{reactive, view, Runtime};
+use reactive::{Runtime, reactive, view};
 
 const MEMBERS: u64 = 1_000;
 const WORK: u64 = 40_000;
@@ -33,7 +33,7 @@ fn burn(seed: u64, factor: u64) -> u64 {
 
 #[reactive]
 mod scaling {
-    use super::{burn, Numbers};
+    use super::{Numbers, burn};
 
     #[component]
     pub fn total(numbers: &Numbers) -> u64 {

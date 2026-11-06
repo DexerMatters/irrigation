@@ -49,7 +49,7 @@ pub fn expand(args: TokenStream, input: TokenStream) -> TokenStream {
 
 fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let attr: syn::Attribute = syn::parse_quote!(#[view(#args)]);
-    let kind = crate::attr::parse_view_kind(&attr)?;
+    let crate::attr::ViewArgs { kind, hide } = crate::attr::parse_view_args(&attr)?;
     let item: DeriveInput = syn::parse2(input)?;
     let name = item.ident.clone();
     let vis = item.vis.clone();
@@ -105,18 +105,57 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let contains_fn = format_ident!("__{}_contains", prefix);
     let get_fn = format_ident!("__{}_get", prefix);
     let structure_fn = format_ident!("__{}_structure", prefix);
+    let len_fn = format_ident!("__{}_len", prefix);
     let eq_fn = format_ident!("__{}_eq", prefix);
     let debug_fn = format_ident!("__{}_debug", prefix);
+    let describe_fn = format_ident!("__{}_describe", prefix);
+
+    // A View spells its own values unless it declined: one downcast per
+    // declared element type, so a projection can draw it with no host renderer.
+    let mut described: Vec<Type> = Vec::new();
+    for field in &fields {
+        match &field.shape {
+            FieldShape::Scalar(ty) | FieldShape::List(ty) | FieldShape::Set(ty) => {
+                described.push(ty.clone());
+            }
+            FieldShape::Map(key, value) | FieldShape::Graph(key, value) => {
+                described.push(key.clone());
+                described.push(value.clone());
+            }
+            FieldShape::Reduced(reduction) => {
+                described.push(syn::parse_quote!(<#reduction as reactive::Reduction>::Item));
+                described.push(syn::parse_quote!(<#reduction as reactive::Reduction>::Aggregate));
+            }
+            // Tree values are the framework's own; the tree drawing reads them.
+            FieldShape::Tree(_) => {}
+        }
+    }
+    let describe_arms: Vec<TokenStream> = if hide {
+        Vec::new()
+    } else {
+        described
+            .iter()
+            .map(|ty| {
+                quote! {
+                    if let Some(found) = value.downcast_ref::<#ty>() {
+                        return Some(format!("{found:?}"));
+                    }
+                }
+            })
+            .collect()
+    };
+    let describe_entry = if hide {
+        quote!(|_| None)
+    } else {
+        quote!(#describe_fn)
+    };
 
     let markers: Vec<TokenStream> = fields
         .iter()
         .map(|field| marker_for(&field.shape, derived))
         .collect();
     let field_idents: Vec<&Ident> = fields.iter().map(|field| &field.ident).collect();
-    let field_names: Vec<String> = fields
-        .iter()
-        .map(|field| field.ident.to_string())
-        .collect();
+    let field_names: Vec<String> = fields.iter().map(|field| field.ident.to_string()).collect();
     let field_vis: Vec<&Visibility> = fields.iter().map(|field| &field.vis).collect();
     let _indices: Vec<u16> = fields.iter().map(|field| field.index).collect();
 
@@ -236,6 +275,18 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         })
         .collect();
 
+    let len_arms: Vec<TokenStream> = fields
+        .iter()
+        .map(|field| {
+            let ident = &field.ident;
+            let index = field.index;
+            let marker = marker_for(&field.shape, derived);
+            quote! {
+                #index => <#marker as reactive::ViewField>::len(&next.#ident),
+            }
+        })
+        .collect();
+
     let vtable = quote! {
         fn #empty_fn() -> ::std::sync::Arc<dyn ::std::any::Any + Send + Sync> {
             ::std::sync::Arc::new(#content_ident::empty())
@@ -307,6 +358,17 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             }
         }
 
+        fn #len_fn(
+            content: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+            field: reactive::FieldId,
+        ) -> Option<usize> {
+            let next = content.downcast_ref::<#content_ident>()?;
+            match field.0 {
+                #( #len_arms )*
+                _ => None,
+            }
+        }
+
         fn #eq_fn(
             left: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
             right: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -318,6 +380,13 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             _content: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
         ) -> String {
             String::from(#name_str)
+        }
+
+        fn #describe_fn(
+            value: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+        ) -> Option<String> {
+            #( #describe_arms )*
+            None
         }
 
         const #view_const: reactive::ViewId = reactive::ViewId(
@@ -341,8 +410,11 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 contains: #contains_fn,
                 get: #get_fn,
                 structure: #structure_fn,
+                len: #len_fn,
                 eq: #eq_fn,
                 debug: #debug_fn,
+                describe: #describe_entry,
+                variant_label: |_, _| None,
             },
         };
     };
@@ -558,18 +630,18 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                             self.#ident().define_all(items, #name_str);
                         }
                     },
-                FieldShape::Graph(node_ty, edge_ty) => quote! {
-                    #[track_caller]
-                        #vis fn #define_name(
-                        &self,
-                        nodes: &[(u64, #node_ty)],
-                        edges: &[(u64, u64, u64, #edge_ty)],
-                    ) {
-                        reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
-                        self.#ident().define_graph(nodes, edges, #name_str);
-                    }
-                },
-                FieldShape::Tree(_) => quote! {},
+                    FieldShape::Graph(node_ty, edge_ty) => quote! {
+                        #[track_caller]
+                            #vis fn #define_name(
+                            &self,
+                            nodes: &[(u64, #node_ty)],
+                            edges: &[(u64, u64, u64, #edge_ty)],
+                        ) {
+                            reactive::ensure_view(<#name as reactive::ViewSchema>::DESCRIPTOR);
+                            self.#ident().define_graph(nodes, edges, #name_str);
+                        }
+                    },
+                    FieldShape::Tree(_) => quote! {},
                 }
             })
             .collect()

@@ -297,7 +297,10 @@ mod tests {
         let base: PSeq<u32> = [1, 2, 3].into_iter().collect();
         let first = ListDelta::from_edits(vec![
             ListEdit::Insert { index: 0, value: 0 },
-            ListEdit::Replace { index: 2, value: 20 },
+            ListEdit::Replace {
+                index: 2,
+                value: 20,
+            },
         ]);
         let second = ListDelta::from_edits(vec![ListEdit::Move { from: 0, to: 3 }]);
 

@@ -10,6 +10,12 @@ description.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Emit runtime observation events. Runtime call sites reference the module
+# unconditionally, so it is enabled by default until those sites are gated.
+default = ["observe"]
+observe = []
+
 [dependencies]
 parking_lot.workspace = true
 smallvec.workspace = true

@@ -154,11 +154,7 @@ impl<A: Clone, T: Clone> AggSeq<A, T> {
         self.make(
             left.value.clone(),
             left.left.clone(),
-            self.make(
-                node.value.clone(),
-                left.right.clone(),
-                node.right.clone(),
-            ),
+            self.make(node.value.clone(), left.right.clone(), node.right.clone()),
         )
     }
 
@@ -166,11 +162,7 @@ impl<A: Clone, T: Clone> AggSeq<A, T> {
         let right = node.right.as_ref().expect("right child");
         self.make(
             right.value.clone(),
-            self.make(
-                node.value.clone(),
-                node.left.clone(),
-                right.left.clone(),
-            ),
+            self.make(node.value.clone(), node.left.clone(), right.left.clone()),
             right.right.clone(),
         )
     }
@@ -351,9 +343,7 @@ impl<A: Clone, T: Clone> AggSeq<A, T> {
                 node.left.clone(),
                 self.set_at(node.right.clone(), index - left_size - 1, value),
             ),
-            std::cmp::Ordering::Equal => {
-                self.make(value, node.left.clone(), node.right.clone())
-            }
+            std::cmp::Ordering::Equal => self.make(value, node.left.clone(), node.right.clone()),
         }
     }
 

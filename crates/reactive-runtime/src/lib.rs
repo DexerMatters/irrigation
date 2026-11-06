@@ -18,11 +18,13 @@ pub mod component;
 pub mod demand;
 pub mod edit;
 pub mod field;
-pub mod gate;
 pub mod fixed_point;
+pub mod gate;
 pub mod general;
 pub mod helpers;
 pub mod inner;
+#[cfg(feature = "observe")]
+pub mod observe;
 pub mod param;
 pub mod runtime;
 pub mod scheduler;
@@ -35,18 +37,19 @@ pub use edit::Edit;
 pub use field::{ScalarEditor, ScalarRef, ViewFieldHandle};
 pub use fixed_point::{FixedPoint, FixedPointProblem, Lattice, solve, solve_with_budget};
 pub use general::{
-    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
-    DefinitionCapability, GeneralComponent, GeneralCx, GeneralHandle, GeneralInputs, LocalAdapter,
-    LocalGeneralComponent, Request, TypedAdapter, TypedGeneralComponent, TypedRequest, drive,
+    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture,
+    DefinitionCapability, DependencyUpdates, GeneralComponent, GeneralCx, GeneralHandle,
+    GeneralInputs, LocalAdapter, LocalGeneralComponent, Request, TypedAdapter,
+    TypedGeneralComponent, TypedRequest, drive,
 };
 pub use helpers::{define_unit, read_unit_value, try_read_unit_value, view_content};
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig};
 pub use param::Param;
 pub use runtime::{
     DependencyExplanation, Explain, Explanation, IdentityReport, NodeInfo, RecipeSelector,
-    RouteSelector,
-    RoutingRecipe, RoutingStamp, Runtime, RuntimeStats, Subscription, TaskCounts,
+    RouteSelector, RoutingRecipe, RoutingStamp, Runtime, RuntimeStats, Subscription, TaskCounts,
 };
-pub use snapshot::{
-    ChangeSummary, DerivedView, EditableView, Snapshot, SourceView, ViewSchema,
-};
+pub use snapshot::{ChangeSummary, DerivedView, EditableView, Snapshot, SourceView, ViewSchema};
+
+#[cfg(feature = "observe")]
+pub use observe::{DemandCause, ObserveLevel, RuntimeEvent, RuntimeObserver, error_kind};

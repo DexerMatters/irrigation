@@ -1,7 +1,7 @@
 //! End-to-end test of the macro surface: views, a root component, edits,
 //! snapshots, and typed outputs.
 
-use reactive::{reactive, view, Runtime};
+use reactive::{Runtime, reactive, view};
 
 #[view(source)]
 pub struct Inputs {
@@ -50,7 +50,9 @@ fn views_components_and_edits_work_end_to_end() {
     squares.sort();
     assert_eq!(squares, vec![(2, 1), (4, 4), (6, 9)]);
 
-    let (_, total) = runtime.read_outputs::<analysis::Analyze>().expect("outputs");
+    let (_, total) = runtime
+        .read_outputs::<analysis::Analyze>()
+        .expect("outputs");
     assert_eq!(total, 12);
 }
 
@@ -75,7 +77,9 @@ fn a_point_edit_repairs_only_the_affected_member() {
         })
         .expect("edit");
 
-    let (_, total) = runtime.read_outputs::<analysis::Analyze>().expect("outputs");
+    let (_, total) = runtime
+        .read_outputs::<analysis::Analyze>()
+        .expect("outputs");
     assert_eq!(total, 2 * 10 + 2 * 2);
 
     let snapshot = runtime.read().expect("read");

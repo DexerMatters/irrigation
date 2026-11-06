@@ -1,0 +1,13 @@
+{
+  "doc": "medium",
+  "edits": [
+    {
+      "range": [
+        1969,
+        1969
+      ],
+      "text": ",{\"id\":1000,\"name\":\"pasted 0\",\"tags\":[\"alpha\",\"beta\"],\"value\":0},{\"id\":1001,\"name\":\"pasted 1\",\"tags\":[\"alpha\",\"beta\"],\"value\":1},{\"id\":1002,\"name\":\"pasted 2\",\"tags\":[\"alpha\",\"beta\"],\"value\":2},{\"id\":1003,\"name\":\"pasted 3\",\"tags\":[\"alpha\",\"beta\"],\"value\":3},{\"id\":1004,\"name\":\"pasted 4\",\"tags\":[\"alpha\",\"beta\"],\"value\":4},{\"id\":1005,\"name\":\"pasted 5\",\"tags\":[\"alpha\",\"beta\"],\"value\":5},{\"id\":1006,\"name\":\"pasted 6\",\"tags\":[\"alpha\",\"beta\"],\"value\":6},{\"id\":1007,\"name\":\"pasted 7\",\"tags\":[\"alpha\",\"beta\"],\"value\":7}"
+    }
+  ],
+  "gated": true
+}

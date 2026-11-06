@@ -87,14 +87,12 @@ pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) 
     let frame = current_or_engine_panic("component call");
     let runtime = Arc::clone(frame.runtime());
     let hash = arguments_hash(&args);
-    let args_eq = |left: &dyn Any, right: &dyn Any| {
-        match (
-            left.downcast_ref::<S::Args>(),
-            right.downcast_ref::<S::Args>(),
-        ) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        }
+    let args_eq = |left: &dyn Any, right: &dyn Any| match (
+        left.downcast_ref::<S::Args>(),
+        right.downcast_ref::<S::Args>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
     };
     let (body, outputs) = runtime.invocation_node(
         S::ID,
@@ -110,28 +108,36 @@ pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) 
             "projection index out of range",
         ));
     };
-    let body_eq = |left: &Value, right: &Value| {
-        match (
-            left.downcast_ref::<S::Output>(),
-            right.downcast_ref::<S::Output>(),
-        ) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        }
+    let body_eq = |left: &Value, right: &Value| match (
+        left.downcast_ref::<S::Output>(),
+        right.downcast_ref::<S::Output>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
     };
-    let body_value = eval_value(&runtime, body, || {
-        reactive_core::value::value_of(S::run(&args))
-    }, &body_eq);
+    let body_value = eval_value(
+        &runtime,
+        body,
+        || reactive_core::value::value_of(S::run(&args)),
+        &body_eq,
+    );
     let projection_eq = |left: &Value, right: &Value| S::projection_eq(index, left, right);
-    eval_value(&runtime, node, || {
-        runtime.observe(body).unwrap_or_else(|error| panic_engine(error));
-        let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
-            panic_engine(reactive_core::ComputeError::internal(
-                "component body produced an unexpected type",
-            ))
-        });
-        S::project(output, index)
-    }, &projection_eq)
+    eval_value(
+        &runtime,
+        node,
+        || {
+            runtime
+                .observe(body)
+                .unwrap_or_else(|error| panic_engine(error));
+            let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
+                panic_engine(reactive_core::ComputeError::internal(
+                    "component body produced an unexpected type",
+                ))
+            });
+            S::project(output, index)
+        },
+        &projection_eq,
+    )
 }
 
 /// Demands one component invocation and returns its output product.
@@ -143,14 +149,12 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
     let frame = current_or_engine_panic("component call");
     let runtime = Arc::clone(frame.runtime());
     let hash = arguments_hash(&args);
-    let args_eq = |left: &dyn Any, right: &dyn Any| {
-        match (
-            left.downcast_ref::<S::Args>(),
-            right.downcast_ref::<S::Args>(),
-        ) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        }
+    let args_eq = |left: &dyn Any, right: &dyn Any| match (
+        left.downcast_ref::<S::Args>(),
+        right.downcast_ref::<S::Args>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
     };
     let (body, outputs) = runtime.invocation_node(
         S::ID,
@@ -162,18 +166,19 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
         &args_eq,
     );
 
-    let body_eq = |left: &Value, right: &Value| {
-        match (
-            left.downcast_ref::<S::Output>(),
-            right.downcast_ref::<S::Output>(),
-        ) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        }
+    let body_eq = |left: &Value, right: &Value| match (
+        left.downcast_ref::<S::Output>(),
+        right.downcast_ref::<S::Output>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
     };
-    let body_value = eval_value(&runtime, body, || {
-        reactive_core::value::value_of(S::run(&args))
-    }, &body_eq);
+    let body_value = eval_value(
+        &runtime,
+        body,
+        || reactive_core::value::value_of(S::run(&args)),
+        &body_eq,
+    );
 
     let mut parts = Vec::with_capacity(S::ARITY);
     for (index, node) in outputs.iter().enumerate() {
@@ -182,15 +187,22 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
         // Reading the body inside the projection node records the dependency,
         // so a body change invalidates the projections even when the value was
         // produced by an earlier demand.
-        let value = eval_value(&runtime, node, || {
-            runtime.observe(body).unwrap_or_else(|error| panic_engine(error));
-            let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
-                panic_engine(reactive_core::ComputeError::internal(
-                    "component body produced an unexpected type",
-                ))
-            });
-            S::project(output, index)
-        }, &projection_eq);
+        let value = eval_value(
+            &runtime,
+            node,
+            || {
+                runtime
+                    .observe(body)
+                    .unwrap_or_else(|error| panic_engine(error));
+                let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
+                    panic_engine(reactive_core::ComputeError::internal(
+                        "component body produced an unexpected type",
+                    ))
+                });
+                S::project(output, index)
+            },
+            &projection_eq,
+        );
         parts.push(value);
     }
     S::reconstruct(&parts)

@@ -11,15 +11,15 @@
 use std::any::Any;
 use std::marker::PhantomData;
 
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, ViewId};
 use reactive_core::key::any_key;
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::{define_unit, read_unit_value};
-use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
-use reactive_store::graph::{GraphStore, GraphNodeId};
+use reactive_store::graph::{GraphNodeId, GraphStore};
 use reactive_store::persistent::{PMap, PSet};
 
 /// Identity of a graph node as a unit key.
@@ -91,6 +91,10 @@ where
         GraphStore::new()
     }
 
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.node_count())
+    }
+
     fn define(
         storage: &Self::Storage,
         key: &dyn reactive_core::key::AnyKey,
@@ -104,12 +108,9 @@ where
         if let Some(edge) = key.as_any().downcast_ref::<EdgeKey>() {
             if let Some(payload) = value.downcast_ref::<Option<EdgePayload<E>>>() {
                 return match payload {
-                    Some(payload) => storage.insert_edge(
-                        edge.0,
-                        payload.from,
-                        payload.to,
-                        payload.value.clone(),
-                    ),
+                    Some(payload) => {
+                        storage.insert_edge(edge.0, payload.from, payload.to, payload.value.clone())
+                    }
                     None => storage.remove_edge(edge.0),
                 };
             }
@@ -217,11 +218,21 @@ where
     }
 
     fn node_key(&self, node: u64) -> UnitKey {
-        UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(NodeKey(node)))
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Value,
+            any_key(NodeKey(node)),
+        )
     }
 
     fn edge_key(&self, edge: u64) -> UnitKey {
-        UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(EdgeKey(edge)))
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Value,
+            any_key(EdgeKey(edge)),
+        )
     }
 
     fn edge_membership_key(&self, edge: u64) -> UnitKey {
@@ -315,14 +326,13 @@ where
         if !self.contains_edge(edge) {
             return None;
         }
-        let value: Option<EdgePayload<E>> =
-            read_unit_value(self.edge_key(edge), |content| {
-                Some((self.content)(content).edge(edge).map(|edge| EdgePayload {
-                    from: edge.from,
-                    to: edge.to,
-                    value: edge.value.clone(),
-                }))
-            });
+        let value: Option<EdgePayload<E>> = read_unit_value(self.edge_key(edge), |content| {
+            Some((self.content)(content).edge(edge).map(|edge| EdgePayload {
+                from: edge.from,
+                to: edge.to,
+                value: edge.value.clone(),
+            }))
+        });
         value
     }
 
@@ -377,9 +387,10 @@ where
                 .map(|(edge, (from, _))| (*edge, *from))
                 .collect();
         }
-        let value: Vec<(u64, u64)> = read_unit_value(self.incoming_adjacency_key(node), |content| {
-            Some(incoming_adjacency_of(&(self.content)(content), node))
-        });
+        let value: Vec<(u64, u64)> =
+            read_unit_value(self.incoming_adjacency_key(node), |content| {
+                Some(incoming_adjacency_of(&(self.content)(content), node))
+            });
         value
     }
 
@@ -512,11 +523,21 @@ where
     }
 
     fn node_key(&self, node: u64) -> UnitKey {
-        UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(NodeKey(node)))
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Value,
+            any_key(NodeKey(node)),
+        )
     }
 
     fn edge_key(&self, edge: u64) -> UnitKey {
-        UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(EdgeKey(edge)))
+        UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Value,
+            any_key(EdgeKey(edge)),
+        )
     }
 
     fn adjacency_key(&self, node: u64) -> UnitKey {
@@ -599,14 +620,8 @@ where
     pub fn add_edge(&mut self, from: u64, to: u64, value: E) -> u64 {
         let (next, edge) = self.storage.add_edge(from, to, value.clone());
         *self.storage = next;
-        self.edit.set(
-            self.edge_key(edge),
-            Some(EdgePayload {
-                from,
-                to,
-                value,
-            }),
-        );
+        self.edit
+            .set(self.edge_key(edge), Some(EdgePayload { from, to, value }));
         self.mark_dirty(from);
         self.mark_dirty(to);
         edge
@@ -619,7 +634,8 @@ where
         };
         let (from, to) = (existing.from, existing.to);
         *self.storage = self.storage.remove_edge(edge);
-        self.edit.set(self.edge_key(edge), Option::<EdgePayload<E>>::None);
+        self.edit
+            .set(self.edge_key(edge), Option::<EdgePayload<E>>::None);
         self.mark_dirty(from);
         self.mark_dirty(to);
     }
@@ -631,14 +647,8 @@ where
         };
         let (from, to) = (existing.from, existing.to);
         *self.storage = self.storage.set_edge(edge, value.clone());
-        self.edit.set(
-            self.edge_key(edge),
-            Some(EdgePayload {
-                from,
-                to,
-                value,
-            }),
-        );
+        self.edit
+            .set(self.edge_key(edge), Some(EdgePayload { from, to, value }));
     }
 
     fn stage_structure(&mut self) {
@@ -743,9 +753,6 @@ mod tests {
         let graph = graph.add_node(1, ()).add_node(2, ());
         let (graph, first) = graph.add_edge(1, 2, 1);
         let (graph, second) = graph.add_edge(1, 2, 2);
-        assert_eq!(
-            adjacency_of(&graph, 1),
-            vec![(first, 2), (second, 2)]
-        );
+        assert_eq!(adjacency_of(&graph, 1), vec![(first, 2), (second, 2)]);
     }
 }

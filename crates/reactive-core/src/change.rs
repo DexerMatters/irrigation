@@ -85,11 +85,11 @@ mod tests {
         let d2 = CounterDelta::Add(3);
 
         assert_eq!(d1.apply(&base), Counter(3));
-        assert_eq!(d1.apply(&CounterDelta::empty().apply(&base)), d1.apply(&base));
         assert_eq!(
-            d2.apply(&d1.apply(&base)),
-            d1.compose(&d2).apply(&base)
+            d1.apply(&CounterDelta::empty().apply(&base)),
+            d1.apply(&base)
         );
+        assert_eq!(d2.apply(&d1.apply(&base)), d1.compose(&d2).apply(&base));
         assert_eq!(normalize(&d1, &base).apply(&base), d1.apply(&base));
     }
 }

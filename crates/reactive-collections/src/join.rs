@@ -64,6 +64,9 @@ fn publish<S: JoinSpec>(cx: &mut GeneralCx, joined: &BTreeMap<S::Key, S::Joined>
     let Some((view, field)) = S::target() else {
         return;
     };
+    // The join recomputes the whole map, so keys that disappeared must be
+    // retracted: absence alone no longer removes a definition.
+    cx.replace_all();
     for (key, value) in joined {
         cx.define(
             UnitKey::entity(
@@ -78,11 +81,7 @@ fn publish<S: JoinSpec>(cx: &mut GeneralCx, joined: &BTreeMap<S::Key, S::Joined>
     }
 }
 
-fn membership(
-    view: ViewId,
-    field: FieldId,
-    key: &Arc<dyn reactive_core::key::AnyKey>,
-) -> UnitKey {
+fn membership(view: ViewId, field: FieldId, key: &Arc<dyn reactive_core::key::AnyKey>) -> UnitKey {
     UnitKey::entity(
         view,
         field,

@@ -23,7 +23,9 @@ pub struct Param<T> {
 
 impl<T> std::fmt::Debug for Param<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Param").field("node", &self.node).finish_non_exhaustive()
+        f.debug_struct("Param")
+            .field("node", &self.node)
+            .finish_non_exhaustive()
     }
 }
 

@@ -16,29 +16,31 @@
 //!     commit atomically, preserving changed_at for equal values
 //! ```
 
-use std::any::Any;
+use parking_lot::{Condvar, Mutex, MutexGuard};
 use reactive_core::hash::FxHashSet;
 use smallvec::SmallVec;
+use std::any::Any;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
+use reactive_core::descriptor::{UnitKey, UnitKind, ViewDescriptor};
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::{self, CancelToken, Dep, Frame, FrameGuard};
 use reactive_core::hash::{FxHashMap, hash_one};
-use reactive_core::ids::{ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId};
+use reactive_core::ids::{
+    ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId,
+};
 use reactive_core::key::{AnyKey, any_key};
 use reactive_core::ops::{RuntimeOps, catch_engine};
 use reactive_core::value::{Value, value_of};
-use reactive_core::descriptor::{UnitKey, UnitKind, ViewDescriptor};
 
-use crate::task::{self, TaskId, TaskMode, TaskStatus};
 use crate::state::{
     DefinitionRecord, Invocation, NodeKind, NodeRecord, NodeState, ProviderRef, Region, State,
     UnitSlot, invalidate,
 };
+use crate::task::{self, TaskId, TaskMode, TaskStatus};
 
 /// A definition staged by a computation.
 pub struct DefinitionDraft {
@@ -122,6 +124,10 @@ pub struct Inner {
     pub pool: crate::scheduler::Pool,
     /// The most recently started demand, targeted by `cancel`.
     pub(crate) active_task: Mutex<Option<TaskId>>,
+    /// Passive event sink. Set once, immediately after construction, before
+    /// anything can demand.
+    #[cfg(feature = "observe")]
+    pub observer: OnceLock<Arc<dyn crate::observe::RuntimeObserver>>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -130,6 +136,88 @@ impl std::fmt::Debug for Inner {
             .field("config", &self.config)
             .finish_non_exhaustive()
     }
+}
+
+/// Resolves the node that currently holds a unit.
+fn current_unit_node(state: &State, unit: &UnitKey) -> Option<NodeId> {
+    state.units.get(unit).copied().or_else(|| {
+        state
+            .regions
+            .get(&unit.view)
+            .and_then(|region| region.units.get(unit))
+            .map(|slot| slot.node)
+    })
+}
+
+/// Collects the observed units whose version moved since the previous run.
+///
+/// Scope-filtered: a unit observed under a scope the component asked not to
+/// retain is reported only when it is the unit itself, never through a
+/// dependency of an unrelated scope.
+fn observed_changes(
+    state: &State,
+    trace: &[Dep],
+    unit_scopes: &FxHashMap<UnitKey, u64>,
+    retained: &FxHashSet<u64>,
+) -> Vec<crate::general::Change> {
+    let mut changes = Vec::new();
+    for dep in trace {
+        let record = state.node(dep.node);
+        if record.changed_at == dep.version && record.routing_at == dep.routing {
+            continue;
+        }
+        let Some(unit) = &record.unit else {
+            continue;
+        };
+        if unit_scopes
+            .get(unit)
+            .is_some_and(|scope| !retained.contains(scope))
+        {
+            continue;
+        }
+        changes.push(crate::general::Change {
+            unit: unit.clone(),
+            previous: dep.version,
+            current: record.changed_at,
+            routing_changed: record.changed_at == dep.version,
+        });
+    }
+    changes
+}
+
+/// Whether the unit is still a current definition of its certified provider.
+///
+/// A producer keeps every unit it does not explicitly retract, so a unit may
+/// outlive the revision that staged it. Such a unit keeps its old `verified_at`
+/// while its value stays authoritative, and a reader must not treat it as
+/// undefined just because something marked it suspect. Ownership is a hash lookup: scanning the
+/// provider's definition list here would make every read linear in the View size.
+fn unit_definition_is_current(state: &State, node: NodeId, revision: Revision) -> bool {
+    let record = state.node(node);
+    let Some(unit) = &record.unit else {
+        return false;
+    };
+    let Some(provider) = state.producers.get(&unit.view).copied() else {
+        return false;
+    };
+    if state.node(provider).verified_at != revision {
+        return false;
+    }
+    state
+        .regions
+        .get(&unit.view)
+        .and_then(|region| region.owners.get(&owner_key(unit)))
+        .is_some_and(|owner| owner.node == provider)
+}
+
+/// Returns the producer of a unit whose value cannot be trusted yet.
+///
+/// A unit materialized from stale View content must re-derive from its producer
+/// before a reader is allowed to re-certify it lazily.
+fn bad_producer(state: &State, node: NodeId, revision: Revision) -> Option<NodeId> {
+    let unit = state.node(node).unit.as_ref()?;
+    let producer = state.producers.get(&unit.view).copied()?;
+    (state.node(producer).verified_at != revision).then_some(producer)
 }
 
 impl Inner {
@@ -148,8 +236,21 @@ impl Inner {
             self_ref: OnceLock::new(),
             pool,
             active_task: Mutex::new(None),
+            observer: OnceLock::new(),
         });
         let _ = inner.self_ref.set(Arc::downgrade(&inner));
+        inner
+    }
+
+    /// Creates the shared runtime with an installed observer.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn new_observed(
+        config: RuntimeConfig,
+        observer: Arc<dyn crate::observe::RuntimeObserver>,
+    ) -> Arc<Self> {
+        let inner = Self::new(config);
+        let _ = inner.observer.set(observer);
         inner
     }
 
@@ -320,45 +421,64 @@ impl Inner {
     pub fn read_unit(&self, node: NodeId) -> Result<Value> {
         let me = task::current_or_detached();
         loop {
+            let (pending_producer, definition_current, unit_provider) = {
+                let state = self.lock();
+                let revision = state.revision;
+                (
+                    bad_producer(&state, node, revision),
+                    unit_definition_is_current(&state, node, revision),
+                    state
+                        .node(node)
+                        .unit
+                        .as_ref()
+                        .and_then(|unit| state.producers.get(&unit.view).copied()),
+                )
+            };
             let outcome = {
                 let mut state = self.lock();
                 let revision = state.revision;
-                let record = state.node_mut(node);
-                if let Some(failure) = &record.failure {
-                    if record.failed_at == revision {
-                        Outcome::Fail(failure.clone())
-                    } else {
-                        record.failure = None;
-                        record.state = NodeState::Vacant;
-                        Outcome::Retry
-                    }
-                } else if record.verified_at == revision {
-                    match &record.value {
-                        Some(value) => {
-                            Outcome::Return(value.clone(), record.changed_at, record.routing_at)
-                        }
-                        None => Outcome::Fail(ComputeError::internal(format!(
-                            "unit {} is undefined",
-                            record
-                                .unit
-                                .as_ref()
-                                .map_or_else(|| String::from("?"), |unit| format!("{unit:?}"))
-                        ))),
-                    }
-                } else if record.is_running() {
-                    Outcome::Wait
-                } else if record.suspect_at <= record.verified_at && record.value.is_some() {
-                    record.verified_at = revision;
-                    Outcome::Return(
-                        record.value.clone().expect("checked"),
-                        record.changed_at,
-                        record.routing_at,
-                    )
+                if let Some(producer) = pending_producer {
+                    Outcome::Demand(producer)
                 } else {
-                    Outcome::Fail(ComputeError::internal(format!(
-                        "read of undefined unit {:?}",
-                        record.unit
-                    )))
+                    let record = state.node_mut(node);
+                    if let Some(failure) = &record.failure {
+                        if record.failed_at == revision {
+                            Outcome::Fail(failure.clone())
+                        } else {
+                            record.failure = None;
+                            record.state = NodeState::Vacant;
+                            Outcome::Retry
+                        }
+                    } else if record.verified_at == revision {
+                        match &record.value {
+                            Some(value) => {
+                                Outcome::Return(value.clone(), record.changed_at, record.routing_at)
+                            }
+                            None => Outcome::Fail(ComputeError::internal(format!(
+                                "unit {} is undefined",
+                                record
+                                    .unit
+                                    .as_ref()
+                                    .map_or_else(|| String::from("?"), |unit| format!("{unit:?}"))
+                            ))),
+                        }
+                    } else if record.is_running() {
+                        Outcome::Wait
+                    } else if (record.suspect_at <= record.verified_at || definition_current)
+                        && record.value.is_some()
+                    {
+                        record.verified_at = revision;
+                        Outcome::Return(
+                            record.value.clone().expect("checked"),
+                            record.changed_at,
+                            record.routing_at,
+                        )
+                    } else {
+                        Outcome::Fail(ComputeError::internal(format!(
+                            "read of undefined unit {:?}",
+                            record.unit
+                        )))
+                    }
                 }
             };
             match outcome {
@@ -368,13 +488,76 @@ impl Inner {
                         version,
                         routing,
                     });
+                    // Observe the provider too, so a provider handover is
+                    // visible. Once per run: the trace lists producers, not
+                    // reads, so it cannot grow with the View's size.
+                    if let Some(provider_node) = unit_provider {
+                        let (version, routing) = {
+                            let state = self.lock();
+                            let record = state.node(provider_node);
+                            (record.changed_at, record.routing_at)
+                        };
+                        frame::record_provider_dep(Dep {
+                            node: provider_node,
+                            version,
+                            routing,
+                        });
+                    }
                     return Ok(value);
                 }
                 Outcome::Fail(error) => return Err(error),
                 Outcome::Retry => continue,
                 Outcome::Wait => self.wait_for(node, me)?,
+                Outcome::Demand(producer) => {
+                    let mut compute = || {
+                        Err(ComputeError::internal(
+                            "a general component producer does not use a compute closure",
+                        ))
+                    };
+                    let eq = {
+                        let state = self.lock();
+                        let general = state
+                            .node(producer)
+                            .general
+                            .map(|index| Arc::clone(&state.generals[index]));
+                        move |left: &Value, right: &Value| {
+                            general
+                                .as_ref()
+                                .is_some_and(|general| general.output_eq(left, right))
+                        }
+                    };
+                    self.eval(producer, &mut compute, &eq)?;
+                }
             }
         }
+    }
+
+    /// Re-certifies a general component whose observed units are all unchanged.
+    ///
+    /// Observed units may look unverified only because their producers have not
+    /// run yet. Producers are certified first (in a scratch frame, so the walk
+    /// never becomes part of any trace); if every observed version survives, the
+    /// component is re-certified without running its body.
+    fn certify_observed(&self, trace: &[Dep], revision: Revision) -> Result<()> {
+        let views: Vec<ViewId> = {
+            let state = self.lock();
+            trace
+                .iter()
+                .filter_map(|dep| {
+                    let record = state.node(dep.node);
+                    let unit = record.unit.as_ref()?;
+                    (record.verified_at != revision).then_some(unit.view)
+                })
+                .collect()
+        };
+        if views.is_empty() {
+            return Ok(());
+        }
+        let mut seen = reactive_core::hash::FxHashSet::default();
+        for view in views {
+            ensure_view_current(self, view, &mut seen, 0)?;
+        }
+        Ok(())
     }
 
     /// Demands a node, executing `compute` when reuse is impossible.
@@ -384,9 +567,7 @@ impl Inner {
         compute: &mut dyn FnMut() -> Result<Value>,
         eq: &dyn Fn(&Value, &Value) -> bool,
     ) -> Result<Value> {
-        if frame::current()
-            .is_some_and(|frame| frame.cancel().is_cancelled())
-        {
+        if frame::current().is_some_and(|frame| frame.cancel().is_cancelled()) {
             return Err(ComputeError::Cancelled);
         }
         let me = task::current_or_detached();
@@ -403,7 +584,10 @@ impl Inner {
                         record.state = NodeState::Vacant;
                         state.next_generation += 1;
                         let generation = state.next_generation;
-                        state.node_mut(node).state = NodeState::Running { owner: me, generation };
+                        state.node_mut(node).state = NodeState::Running {
+                            owner: me,
+                            generation,
+                        };
                         Action::Claim(generation)
                     }
                 } else if record.verified_at == revision && record.value.is_some() {
@@ -431,7 +615,10 @@ impl Inner {
                 } else {
                     state.next_generation += 1;
                     let generation = state.next_generation;
-                    state.node_mut(node).state = NodeState::Running { owner: me, generation };
+                    state.node_mut(node).state = NodeState::Running {
+                        owner: me,
+                        generation,
+                    };
                     Action::Claim(generation)
                 }
             };
@@ -440,17 +627,31 @@ impl Inner {
                 Action::Return(value) => {
                     let version = self.changed_at(node);
                     let routing = self.routing_at(node);
-                    frame::record_dep(Dep { node, version, routing });
+                    frame::record_dep(Dep {
+                        node,
+                        version,
+                        routing,
+                    });
                     return Ok(value);
                 }
                 Action::Fail(error) => return Err(error),
                 Action::Wait => self.wait_for(node, me)?,
-                Action::Claim(generation) | Action::Resume(generation) => break generation,
+                Action::Claim(generation) => {
+                    #[cfg(feature = "observe")]
+                    self.emit(crate::observe::RuntimeEvent::NodeClaimed { node, task: me });
+                    break generation;
+                }
+                Action::Resume(generation) => break generation,
             }
         };
 
-        // Ordered validation: stop at the first observation that cannot be
-        // certified without executing its own computation.
+        // Ordered validation. Re-certifying a node without running it needs its
+        // observed inputs to be final, which is a property of every traced node
+        // rather than of one component kind: certify the producers of the views
+        // this node observed (depth-first, in a scratch frame) before comparing
+        // versions. Without this a consumer could validate against a producer
+        // that has not run yet and mistake an unchanged observation for a stale
+        // one.
         let (revision, scope, trace, has_value) = {
             let state = self.lock();
             let record = state.node(node);
@@ -461,9 +662,16 @@ impl Inner {
                 record.value.is_some(),
             )
         };
+        if has_value {
+            self.certify_observed(&trace, revision)?;
+        }
         if has_value && self.validate_trace(&trace, revision) {
-            let value = {
+            let logged = {
                 let mut state = self.lock();
+                let general = state.node(node).general.is_some();
+                if general {
+                    state.stats.no_change_runs.fetch_add(1, Ordering::Relaxed);
+                }
                 let record = state.node_mut(node);
                 record.state = NodeState::Ready;
                 record.verified_at = revision;
@@ -474,9 +682,19 @@ impl Inner {
                     .clone()
                     .expect("validated node without a value")
             };
+            let value = logged;
             let version = self.changed_at(node);
             let routing = self.routing_at(node);
-            frame::record_dep(Dep { node, version, routing });
+            frame::record_dep(Dep {
+                node,
+                version,
+                routing,
+            });
+            #[cfg(feature = "observe")]
+            self.emit(crate::observe::RuntimeEvent::NodeValidated {
+                node,
+                deps: trace.len() as u32,
+            });
             return Ok(value);
         }
 
@@ -517,6 +735,7 @@ impl Inner {
         ));
         task::active_push(node);
         let guard = FrameGuard::push(Arc::clone(&frame));
+        let execute_started = std::time::Instant::now();
         let result = catch_engine(compute);
         let definitions: Vec<DefinitionDraft> = frame.take_staged();
         let deps = frame.take_deps();
@@ -528,11 +747,16 @@ impl Inner {
         }
         match result {
             Ok(Ok(value)) => {
+                // A lowered component's body restates its whole output on every
+                // run, so its commit replaces the definition set. Only a custom
+                // component writes deltas.
                 let committed = self.commit(
                     node,
                     value,
                     deps,
                     definitions,
+                    Vec::new(),
+                    (Vec::new(), true),
                     true,
                     None,
                     FxHashMap::default(),
@@ -545,7 +769,15 @@ impl Inner {
                 )?;
                 let version = self.changed_at(node);
                 let routing = self.routing_at(node);
-                frame::record_dep(Dep { node, version, routing });
+                frame::record_dep(Dep {
+                    node,
+                    version,
+                    routing,
+                });
+                #[cfg(feature = "observe")]
+                self.note_commit(node, version, revision, execute_started);
+                #[cfg(not(feature = "observe"))]
+                let _ = (execute_started, version);
                 Ok(committed)
             }
             Ok(Err(error)) | Err(error) => {
@@ -569,6 +801,8 @@ impl Inner {
         owner: TaskId,
         generation: u64,
     ) -> Result<Value> {
+        #[cfg(feature = "observe")]
+        let started = std::time::Instant::now();
         let (general, old_trace, old_state, scope, old_unit_scopes, old_retained) = {
             let state = self.lock();
             let record = state.node(node);
@@ -582,29 +816,20 @@ impl Inner {
                 record.general_retained_scopes.clone(),
             )
         };
+        // The batch is lazy: it is materialized when the body first asks, which
+        // is after the body's own reads have pulled the producers it observes.
+        // No pre-walk is needed to make it accurate, and evaluation order no
+        // longer decides what update sees.
         let changes = {
-            let state = self.lock();
-            let mut changes = Vec::new();
-            for dep in &old_trace {
-                let record = state.node(dep.node);
-                if record.changed_at != dep.version || record.routing_at != dep.routing {
-                    if let Some(unit) = &record.unit {
-                        if old_unit_scopes
-                            .get(unit)
-                            .is_some_and(|scope| !old_retained.contains(scope))
-                        {
-                            continue;
-                        }
-                        changes.push(crate::general::Change {
-                            unit: unit.clone(),
-                            previous: dep.version,
-                            current: record.changed_at,
-                            routing_changed: record.changed_at == dep.version,
-                        });
-                    }
-                }
-            }
-            crate::general::ChangeBatch::new(changes)
+            let weak = Arc::downgrade(&self.arc());
+            let trace = old_trace.clone();
+            crate::general::ChangeBatch::lazy(move || {
+                let Some(inner) = weak.upgrade() else {
+                    return Vec::new();
+                };
+                let state = inner.lock();
+                observed_changes(&state, &trace, &old_unit_scopes, &old_retained)
+            })
         };
         let parent = frame::current();
         let (depth, cancel) = match &parent {
@@ -631,6 +856,10 @@ impl Inner {
         ));
         let guard = FrameGuard::push(Arc::clone(&frame));
         let mut cx = crate::general::GeneralCx::new(self.arc(), revision, scope);
+        let output_views = general.output_views();
+        if !output_views.is_empty() {
+            cx.restrict_output_views(output_views);
+        }
         let use_update = general.policy() == crate::general::DependencyUpdates::Incremental
             && old_state.is_some();
         let result = catch_engine(|| match (&old_state, use_update) {
@@ -638,11 +867,24 @@ impl Inner {
             _ => general.initialize(&mut cx),
         });
         let (unit_scopes, retained_scopes) = cx.take_scopes();
+        let definition_error = cx.take_definition_error();
+        let content_updates = cx.take_content_updates();
+        let (retractions, restate_all) = cx.take_definition_mode();
         let definitions: Vec<DefinitionDraft> = frame.take_staged();
         let deps = frame.take_deps();
         drop(guard);
         if frame_cancelled(&parent) {
             return self.fail(node, ComputeError::Cancelled, revision);
+        }
+        if let Some(reason) = definition_error {
+            return self.fail(
+                node,
+                ComputeError::DefinitionDenied {
+                    unit: String::from("general component output"),
+                    reason,
+                },
+                revision,
+            );
         }
         match result {
             Ok(Ok((state, output))) => {
@@ -652,6 +894,8 @@ impl Inner {
                     output,
                     deps,
                     definitions,
+                    content_updates,
+                    (retractions, restate_all),
                     false,
                     Some(state),
                     unit_scopes,
@@ -664,7 +908,13 @@ impl Inner {
                 )?;
                 let version = self.changed_at(node);
                 let routing = self.routing_at(node);
-                frame::record_dep(Dep { node, version, routing });
+                frame::record_dep(Dep {
+                    node,
+                    version,
+                    routing,
+                });
+                #[cfg(feature = "observe")]
+                self.note_commit(node, version, revision, started);
                 Ok(committed)
             }
             Ok(Err(error)) | Err(error) => {
@@ -676,7 +926,189 @@ impl Inner {
         }
     }
 
-    /// Returns a node's routing generation.
+    /// Every component the runtime knows, with the Views it reads and defines.
+    ///
+    /// Registration is what puts a component here: the root, every installed
+    /// general component, and every component that has been invoked. Ownership
+    /// is the scope's: a record names its component directly when it belongs to
+    /// an invocation, and every node a run creates — its expression sites, the
+    /// definitions installed on them — is attributed through the scope that
+    /// holds it.
+    ///
+    /// Reads resolve the same way. A trace names producers, and a producer is
+    /// usually an expression site rather than a unit, so the walk descends
+    /// through nodes it does not own and collects the units it reaches. When it
+    /// reaches another component's body the walk stops: what this component
+    /// reads from a callee is the View the callee defines, not everything the
+    /// callee happened to look at.
+    ///
+    /// Timestamps come from the records that run — a component's body and its
+    /// output projections — never from the units and sites in its scope, whose
+    /// own timestamps belong to whoever published them.
+    #[must_use]
+    pub fn component_facts(&self) -> Vec<crate::observe::ComponentFacts> {
+        use crate::observe::{ComponentFacts, ComponentKind};
+        use reactive_core::ids::ComponentId;
+        use std::collections::HashMap;
+
+        let state = self.lock();
+        let mut components: HashMap<ComponentId, ComponentFacts> = HashMap::new();
+        let mut entry = |id: ComponentId, name: &'static str, kind: ComponentKind| {
+            components.entry(id).or_insert(ComponentFacts {
+                id,
+                name,
+                kind,
+                reads: Vec::new(),
+                writes: Vec::new(),
+                executed_at: 0,
+                suspect_at: 0,
+            });
+        };
+        if let Some(root) = &state.root {
+            entry(root.component, root.name, ComponentKind::Root);
+        }
+        for general in &state.generals {
+            entry(general.id(), general.name(), ComponentKind::General);
+        }
+        for (id, name) in &state.component_names {
+            entry(*id, name, ComponentKind::Invoked);
+        }
+
+        // Who owns each node: the record says so for an invocation's body and
+        // projections, and the scope says so for everything the run created.
+        let mut owner: Vec<Option<ComponentId>> = Vec::with_capacity(state.nodes.len());
+        for record in state.nodes.iter() {
+            let id = if record.freed {
+                None
+            } else {
+                record.component.or_else(|| {
+                    record
+                        .general
+                        .and_then(|index| state.generals.get(index))
+                        .map(|general| general.id())
+                        .or_else(|| component_of(&state, record.scope))
+                })
+            };
+            owner.push(id);
+        }
+
+        let root_body = state.root.as_ref().map(|root| root.body);
+        let root_outputs: &[NodeId] = state
+            .root
+            .as_ref()
+            .map_or(&[], |root| root.outputs.as_slice());
+        let runs = |node: NodeId, record: &crate::state::NodeRecord| -> bool {
+            record.component.is_some()
+                || Some(node) == root_body
+                || Some(node) == state.general_root
+                || root_outputs.contains(&node)
+        };
+
+        // Pass one: what each component defines, and when it last ran.
+        for (index, record) in state.nodes.iter().enumerate() {
+            if record.freed {
+                continue;
+            }
+            let Some(id) = owner[index] else {
+                continue;
+            };
+            let Some(facts) = components.get_mut(&id) else {
+                continue;
+            };
+            // A unit holds a value and a region content node holds the host's
+            // content; neither is a component's definition.
+            if !matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) {
+                for view in record
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.unit.view)
+                    .chain(record.content_writes.iter().copied())
+                {
+                    if !facts.writes.contains(&view) {
+                        facts.writes.push(view);
+                    }
+                }
+            }
+            let node = NodeId::new(index as u32, record.generation);
+            if runs(node, record) {
+                facts.executed_at = facts.executed_at.max(record.executed_at);
+                facts.suspect_at = facts.suspect_at.max(record.suspect_at);
+            }
+        }
+
+        // Pass two: what each component reads. The walk needs the writes above,
+        // because a callee boundary stands for the Views the callee defines.
+        let mut seen = vec![0u32; state.nodes.len()];
+        let mut stamp = 0u32;
+        let mut reached: Vec<ViewId> = Vec::new();
+        for (index, record) in state.nodes.iter().enumerate() {
+            if record.freed {
+                continue;
+            }
+            let Some(id) = owner[index] else {
+                continue;
+            };
+            if record.trace.is_empty() {
+                continue;
+            }
+            stamp = stamp.wrapping_add(1);
+            reached.clear();
+            let mut stack: Vec<NodeId> = record.trace.iter().map(|dep| dep.node).collect();
+            while let Some(dep) = stack.pop() {
+                let slot = dep.index();
+                if slot >= seen.len() || seen[slot] == stamp {
+                    continue;
+                }
+                seen[slot] = stamp;
+                let other = state.node(dep);
+                if other.freed {
+                    continue;
+                }
+                if let Some(unit) = &other.unit {
+                    reached.push(unit.view);
+                    continue;
+                }
+                // Crossing into a callee is a boundary, not a read. What this
+                // component reads from another one is the value it returns — the
+                // output projection — so the Views that callee defines are what
+                // the edge stands for. Entering through a callee's *body* is a
+                // transitive dependency the board does not draw: it would give
+                // the root an edge from every stage below it.
+                let callee = other
+                    .component
+                    .or_else(|| component_of(&state, other.scope));
+                match callee {
+                    Some(callee) if callee != id => {
+                        if matches!(other.kind, NodeKind::InvocationOutput)
+                            && let Some(facts) = components.get(&callee)
+                        {
+                            reached.extend(facts.writes.iter().copied());
+                        }
+                    }
+                    _ => stack.extend(other.trace.iter().map(|dep| dep.node)),
+                }
+            }
+            let Some(facts) = components.get_mut(&id) else {
+                continue;
+            };
+            for view in reached.drain(..) {
+                // A component that publishes a View does not read it back.
+                if !facts.writes.contains(&view) && !facts.reads.contains(&view) {
+                    facts.reads.push(view);
+                }
+            }
+        }
+
+        let mut facts: Vec<ComponentFacts> = components.into_values().collect();
+        for component in &mut facts {
+            component.reads.sort_unstable_by_key(|view| view.0);
+            component.writes.sort_unstable_by_key(|view| view.0);
+        }
+        facts.sort_by_key(|component| (component.name, component.id.0));
+        facts
+    }
+
+    /// Returns a node's routing generation.    /// Returns a node's routing generation.
     #[must_use]
     pub fn routing_at(&self, node: NodeId) -> Version {
         self.lock().node(node).routing_at
@@ -754,6 +1186,10 @@ impl Inner {
     /// and carries the version recorded at execution time.
     fn validate_trace(&self, trace: &[Dep], revision: Revision) -> bool {
         let mut state = self.lock();
+        state
+            .stats
+            .validation_attempts
+            .fetch_add(1, Ordering::Relaxed);
         for dep in trace {
             let (verified, clean, changed, routing) = {
                 let record = state.node(dep.node);
@@ -766,11 +1202,19 @@ impl Inner {
             };
             if !verified {
                 if !clean {
+                    state
+                        .stats
+                        .validation_failures
+                        .fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
                 state.node_mut(dep.node).verified_at = revision;
             }
             if changed != dep.version || routing != dep.routing {
+                state
+                    .stats
+                    .validation_failures
+                    .fetch_add(1, Ordering::Relaxed);
                 return false;
             }
         }
@@ -785,6 +1229,8 @@ impl Inner {
         value: Value,
         deps: Vec<Dep>,
         definitions: Vec<DefinitionDraft>,
+        content_updates: Vec<(reactive_core::ids::ViewId, Arc<dyn Any + Send + Sync>)>,
+        definition_mode: (Vec<UnitKey>, bool),
         enforce_views: bool,
         retained_state: Option<crate::general::ErasedState>,
         unit_scopes: FxHashMap<UnitKey, u64>,
@@ -820,34 +1266,36 @@ impl Inner {
             drop(state);
             return self.fail(
                 node,
-                ComputeError::internal(
-                    "input revision changed while a computation was running",
-                ),
+                ComputeError::internal("input revision changed while a computation was running"),
                 revision,
             );
         }
+        let mut content_views: Vec<reactive_core::ids::ViewId> = Vec::new();
+        for (view, content) in content_updates {
+            if let Some(region) = state.regions.get_mut(&view) {
+                region.content = content;
+                content_views.push(view);
+            }
+        }
+        state.node_mut(node).content_writes = content_views;
         let mut changed_nodes = Vec::new();
-        if let Err(error) =
-            self.install_definitions(
-                &mut state,
-                node,
-                definitions,
-                revision,
-                enforce_views,
-                route_selector.as_ref(),
-                &mut changed_nodes,
-            )
-        {
+        if let Err(error) = self.install_definitions(
+            &mut state,
+            node,
+            definitions,
+            definition_mode,
+            revision,
+            enforce_views,
+            route_selector.as_ref(),
+            &mut changed_nodes,
+        ) {
             drop(state);
             return self.fail(node, error, revision);
         }
 
         let (changed, old_trace) = {
             let record = state.node(node);
-            let changed = record
-                .value
-                .as_ref()
-                .is_none_or(|old| !eq(old, &value));
+            let changed = record.value.as_ref().is_none_or(|old| !eq(old, &value));
             (changed, record.trace.clone())
         };
         for dep in &old_trace {
@@ -892,16 +1340,22 @@ impl Inner {
         for retired in retired {
             self.retire_unreachable(&mut state, retired, revision, &mut changed_nodes);
         }
+        let mut invalidated = 0;
         if !changed_nodes.is_empty() {
             let started = std::time::Instant::now();
-            invalidate(&mut state, changed_nodes, revision);
+            invalidated = invalidate(&mut state, changed_nodes.iter().copied(), revision);
             state.stats.invalidation_ns.fetch_add(
                 started.elapsed().as_nanos() as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
-        let mut waiters = Self::wake_waiters(&mut state, node);
+        let seeds = changed_nodes;
+        let mut waiters = self.wake_waiters(&mut state, node);
         drop(state);
+        #[cfg(feature = "observe")]
+        self.emit_invalidated(revision, &seeds, invalidated);
+        #[cfg(not(feature = "observe"))]
+        let _ = (invalidated, seeds);
         self.wake.notify_all();
         self.enqueue(std::mem::take(&mut waiters.tasks));
         waiters.wake();
@@ -972,6 +1426,10 @@ impl Inner {
 
     fn fail(&self, node: NodeId, error: ComputeError, revision: Revision) -> Result<Value> {
         let mut state = self.lock();
+        state
+            .stats
+            .execution_failures
+            .fetch_add(1, Ordering::Relaxed);
         {
             let record = state.node_mut(node);
             if error.is_cancelled() {
@@ -983,8 +1441,13 @@ impl Inner {
                 record.failed_at = revision;
             }
         }
-        let mut waiters = Self::wake_waiters(&mut state, node);
+        let mut waiters = self.wake_waiters(&mut state, node);
         drop(state);
+        #[cfg(feature = "observe")]
+        self.emit(crate::observe::RuntimeEvent::NodeFailed {
+            node,
+            kind: crate::observe::error_kind(&error),
+        });
         self.wake.notify_all();
         self.enqueue(std::mem::take(&mut waiters.tasks));
         waiters.wake();
@@ -997,11 +1460,14 @@ impl Inner {
         state: &mut State,
         provider: NodeId,
         drafts: Vec<DefinitionDraft>,
+        definition_mode: (Vec<UnitKey>, bool),
         revision: Revision,
         enforce_views: bool,
         selector: Option<&Arc<dyn crate::runtime::RouteSelector>>,
         changed_nodes: &mut Vec<NodeId>,
     ) -> Result<()> {
+        let (retractions, restate_all) = definition_mode;
+        let retracted: FxHashSet<UnitKey> = retractions.into_iter().collect();
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
         // Two-phase commit: every target region must exist before anything is
         // retracted or installed, so a rejected commit leaves the regions
@@ -1039,11 +1505,12 @@ impl Inner {
                 }
             }
         }
-        let restaged: FxHashSet<UnitKey> =
-            drafts.iter().map(|draft| draft.unit.clone()).collect();
+        let restaged: FxHashSet<UnitKey> = drafts.iter().map(|draft| draft.unit.clone()).collect();
         if restaged.len() != drafts.len() {
-            let mut seen: std::collections::HashMap<UnitKey, Option<&'static std::panic::Location<'static>>> =
-                std::collections::HashMap::new();
+            let mut seen: std::collections::HashMap<
+                UnitKey,
+                Option<&'static std::panic::Location<'static>>,
+            > = std::collections::HashMap::new();
             for draft in &drafts {
                 if let Some(first_location) = seen.get(&draft.unit) {
                     return Err(ComputeError::DuplicateDefinition {
@@ -1056,10 +1523,15 @@ impl Inner {
             }
         }
 
-        // Retractions first: a unit this provider defined before but no longer
-        // defines must disappear atomically with the new value.
+        // Retractions first: a unit this provider no longer produces must
+        // disappear atomically with the new value. A unit is removed only when
+        // it is retracted explicitly or the run restates everything; absence
+        // alone keeps the committed value.
         for record in &old {
             if restaged.contains(&record.unit) {
+                continue;
+            }
+            if !restate_all && !retracted.contains(&record.unit) {
                 continue;
             }
             let view = record.unit.view;
@@ -1082,7 +1554,14 @@ impl Inner {
         for draft in drafts {
             by_view.entry(draft.unit.view).or_default().push(draft);
         }
-        let mut installed: Vec<DefinitionRecord> = Vec::new();
+        let mut installed: Vec<DefinitionRecord> = old
+            .into_iter()
+            .filter(|record| {
+                !restaged.contains(&record.unit)
+                    && !retracted.contains(&record.unit)
+                    && !restate_all
+            })
+            .collect();
         for (view, drafts) in by_view {
             let Some(mut region) = state.regions.remove(&view) else {
                 return Err(ComputeError::DefinitionDenied {
@@ -1102,6 +1581,20 @@ impl Inner {
             );
             state.regions.insert(view, region);
             outcome?;
+        }
+        // Retained definitions are still this provider's output for the
+        // revision: certify them so readers and reuse checks see them as final.
+        // Only restaged units are written this run.
+        for record in &installed {
+            if restaged.contains(&record.unit) {
+                continue;
+            }
+            if let Some(node) = current_unit_node(state, &record.unit) {
+                let node_record = state.node_mut(node);
+                if node_record.value.is_some() && node_record.verified_at < revision {
+                    node_record.verified_at = revision;
+                }
+            }
         }
         state.node_mut(provider).definitions = installed;
         Ok(())
@@ -1259,8 +1752,11 @@ impl Inner {
                 let member_node = match region.units.get(&membership) {
                     Some(slot) => slot.node,
                     None => {
-                        let node =
-                            Self::ensure_unit_node(state, membership.clone(), Some(value_of(false)));
+                        let node = Self::ensure_unit_node(
+                            state,
+                            membership.clone(),
+                            Some(value_of(false)),
+                        );
                         region.units.insert(
                             any_key(membership.clone()),
                             UnitSlot {
@@ -1484,7 +1980,10 @@ impl Inner {
                 slot.status = TaskStatus::Waiting(node);
                 slot.held = held;
             }
+            state.stats.suspensions.fetch_add(1, Ordering::Relaxed);
             state.node_mut(node).waiters.push(me);
+            #[cfg(feature = "observe")]
+            self.emit(crate::observe::RuntimeEvent::TaskWaiting { task: me, node });
             return Err(ComputeError::Suspended);
         }
         // Inline tasks have no worker to yield; park the calling thread.
@@ -1512,7 +2011,7 @@ impl Inner {
 
     /// Queues the tasks suspended on `node`. Called under the state lock; the
     /// caller enqueues the returned tasks once the lock is released.
-    pub(crate) fn wake_waiters(state: &mut State, node: NodeId) -> Waiters {
+    pub(crate) fn wake_waiters(&self, state: &mut State, node: NodeId) -> Waiters {
         let waiters = std::mem::take(&mut state.node_mut(node).waiters);
         let wakers = std::mem::take(&mut state.node_mut(node).wakers);
         let mut tasks = Vec::new();
@@ -1528,6 +2027,8 @@ impl Inner {
             if pooled {
                 tasks.push(waiter);
             }
+            #[cfg(feature = "observe")]
+            self.emit(crate::observe::RuntimeEvent::TaskWoken { task: waiter, node });
         }
         Waiters { tasks, wakers }
     }
@@ -1592,8 +2093,7 @@ impl Inner {
                     // committed content.
                     let first = state.node_mut(conflict.first);
                     first.definitions.retain(|definition| {
-                        definition.unit != conflict.unit
-                            || definition.provider != conflict.first
+                        definition.unit != conflict.unit || definition.provider != conflict.first
                     });
                     force_recompute(&mut state, &[conflict.first, conflict.second], revision);
                     continue;
@@ -1658,7 +2158,8 @@ impl Inner {
                 .and_then(|region| region.owners.get(&owner_key(&conflict.unit)))
                 .and_then(|provider| provider.location);
             let first = describe_provider(state.node(conflict.first).label, first_location);
-            let second = describe_provider(state.node(conflict.second).label, conflict.second_location);
+            let second =
+                describe_provider(state.node(conflict.second).label, conflict.second_location);
             let view = conflict.unit.view;
             if let Some(mut region) = state.regions.remove(&view) {
                 let mut changed = Vec::new();
@@ -1683,11 +2184,7 @@ impl Inner {
 
     /// Demands the installed root at the current revision.
     /// Demands one root output projection without evaluating its siblings.
-    pub fn demand_root_projection(
-        &self,
-        cancel: &CancelToken,
-        index: usize,
-    ) -> Result<Value> {
+    pub fn demand_root_projection(&self, cancel: &CancelToken, index: usize) -> Result<Value> {
         let revision = self.current_revision();
         let (root, general_root) = {
             let state = self.lock();
@@ -1720,9 +2217,9 @@ impl Inner {
                     &runtime,
                     node,
                     || {
-                        runtime.observe(root.body).unwrap_or_else(|error| {
-                            reactive_core::ops::panic_engine(error)
-                        });
+                        runtime
+                            .observe(root.body)
+                            .unwrap_or_else(|error| reactive_core::ops::panic_engine(error));
                         (root.project)(&body_value, index)
                     },
                     &|left, right| projection_eq(index, left, right),
@@ -1754,7 +2251,18 @@ impl Inner {
                 "a general component does not use a compute closure",
             ))
         };
-        let eq = |_: &Value, _: &Value| false;
+        let eq = {
+            let state = self.lock();
+            let general = state
+                .node(general_node)
+                .general
+                .map(|index| Arc::clone(&state.generals[index]));
+            move |left: &Value, right: &Value| {
+                general
+                    .as_ref()
+                    .is_some_and(|general| general.output_eq(left, right))
+            }
+        };
         let value = self.eval(general_node, &mut compute, &eq)?;
         self.resolve_conflicts(revision)?;
         Ok(value)
@@ -1793,7 +2301,18 @@ impl Inner {
                     "a general component does not use a compute closure",
                 ))
             };
-            let eq = |_: &Value, _: &Value| false;
+            let eq = {
+                let state = self.lock();
+                let general = state
+                    .node(general_node)
+                    .general
+                    .map(|index| Arc::clone(&state.generals[index]));
+                move |left: &Value, right: &Value| {
+                    general
+                        .as_ref()
+                        .is_some_and(|general| general.output_eq(left, right))
+                }
+            };
             self.eval(general_node, &mut compute, &eq)?;
             return self.resolve_conflicts(revision);
         };
@@ -1809,21 +2328,17 @@ impl Inner {
         ));
         let _guard = FrameGuard::push(scope_frame);
         catch_engine(|| {
-            let body_value = crate::component::eval_value(
-                &runtime,
-                root.body,
-                || (root.run)(),
-                &root.body_eq,
-            );
+            let body_value =
+                crate::component::eval_value(&runtime, root.body, || (root.run)(), &root.body_eq);
             for (index, node) in root.outputs.iter().enumerate() {
                 let projection_eq = root.projection_eq;
                 crate::component::eval_value(
                     &runtime,
                     *node,
                     || {
-                        runtime.observe(root.body).unwrap_or_else(|error| {
-                            reactive_core::ops::panic_engine(error)
-                        });
+                        runtime
+                            .observe(root.body)
+                            .unwrap_or_else(|error| reactive_core::ops::panic_engine(error));
                         (root.project)(&body_value, index)
                     },
                     &|left, right| projection_eq(index, left, right),
@@ -1849,10 +2364,523 @@ impl Inner {
         crate::snapshot::Snapshot::new(revision, views, versions, routing)
     }
 
+    /// Returns a unit's change version and presence, when it is installed.
+    ///
+    /// Read-only: it never demands the unit.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn unit_facts(&self, unit: &UnitKey) -> Option<(Version, u32)> {
+        let state = self.lock();
+        let region = state.regions.get(&unit.view)?;
+        let slot = region.units.get(unit)?;
+        Some((state.node(slot.node).changed_at, 0))
+    }
+
+    /// Returns several units' change versions under one lock.
+    ///
+    /// A unit installed by a host edit lives in the global table, one installed
+    /// by a provider lives in the region; both are installed units, so both
+    /// answer. Consulting only the region made a host-rendered row on an edited
+    /// unit look removed.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn unit_versions(&self, units: &[UnitKey]) -> Vec<Option<Version>> {
+        let state = self.lock();
+        units
+            .iter()
+            .map(|unit| {
+                if let Some(node) = state.units.get(unit) {
+                    return Some(state.node(*node).changed_at);
+                }
+                let region = state.regions.get(&unit.view)?;
+                let slot = region.units.get(unit)?;
+                Some(state.node(slot.node).changed_at)
+            })
+            .collect()
+    }
+
+    /// One field's entities in the View's own order, for a generic drawing.
+    ///
+    /// A list follows its sequence, a set and a map follow their key table
+    /// (sorted by the key's display text, so the board is stable across
+    /// revisions), and a scalar field answers with its single value unit. A tree
+    /// field answers empty: its nodes live in slot units, see [`Self::tree_rows`].
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn field_entities(
+        &self,
+        view: reactive_core::ids::ViewId,
+        field: reactive_core::ids::FieldId,
+    ) -> Vec<crate::observe::EntityFacts> {
+        use reactive_core::descriptor::UnitKind;
+        let state = self.lock();
+        let revision = state.revision;
+        let Some(region) = state.regions.get(&view) else {
+            return Vec::new();
+        };
+        let declared = region.descriptor.fields.get(field.0 as usize);
+        if declared.is_none() {
+            return Vec::new();
+        }
+        // The structure projection already knows the field's order.
+        let order: Option<Vec<u64>> = (region.descriptor.content.structure)(&region.content, field)
+            .and_then(|structure| {
+                structure
+                    .value
+                    .downcast_ref::<reactive_store::PSeq<u64>>()
+                    .map(|sequence| sequence.iter().copied().collect())
+            });
+        let mut rows: Vec<crate::observe::EntityFacts> = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut push = |unit: reactive_core::descriptor::UnitKey, node: NodeId| {
+            let key = unit
+                .entity
+                .as_ref()
+                .map(|entity| entity.key_display())
+                .unwrap_or_default();
+            if unit.entity.is_some() && seen.contains(&format!("{}:{}", unit.kind as u8, key)) {
+                return;
+            }
+            if unit.entity.is_some() {
+                seen.push(format!("{}:{}", unit.kind as u8, key));
+            }
+            rows.push(crate::observe::EntityFacts {
+                unit,
+                version: state.node(node).changed_at,
+                changed: state.node(node).changed_at == revision,
+            });
+        };
+        let edited = state
+            .units
+            .iter()
+            .filter_map(|(key, node)| key.as_any().downcast_ref::<UnitKey>().map(|u| (u, *node)));
+        let owned = region.units.iter().filter_map(|(key, slot)| {
+            key.as_any()
+                .downcast_ref::<UnitKey>()
+                .map(|u| (u, slot.node))
+        });
+        for (unit, node) in edited.chain(owned) {
+            if unit.view != view || unit.field != field {
+                continue;
+            }
+            // The identity unit is what a row stands for; the value unit is
+            // fetched by the projection when it needs the text.
+            let wanted = match declared.map(|field| field.kind) {
+                Some(reactive_core::descriptor::FieldKind::Scalar) => unit.kind == UnitKind::Value,
+                _ => unit.kind == UnitKind::Membership,
+            };
+            if wanted {
+                // A scalar field has one unit and no entity; a collection's
+                // identity is per entity.
+                push(unit.clone(), node);
+            }
+        }
+        if let Some(order) = order {
+            // A list answers in sequence order: the ids are the entities.
+            rows.sort_by_key(|row| {
+                let id = row
+                    .unit
+                    .entity
+                    .as_ref()
+                    .and_then(|entity| entity.as_any().downcast_ref::<u64>().copied());
+                id.and_then(|id| order.iter().position(|existing| *existing == id))
+                    .unwrap_or(usize::MAX)
+            });
+        } else if declared
+            .is_some_and(|field| field.kind != reactive_core::descriptor::FieldKind::Scalar)
+        {
+            rows.sort_by_key(|row| {
+                row.unit
+                    .entity
+                    .as_ref()
+                    .map(|entity| entity.key_display())
+                    .unwrap_or_default()
+            });
+        }
+        rows
+    }
+
+    /// Every installed unit of one View, with the revision it last changed at.
+    ///
+    /// A generic drawing reads identities and versions from here — including a
+    /// tree's slot units, which are not attached to a declared field.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn view_units(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Vec<(reactive_core::descriptor::UnitKey, Version)> {
+        use reactive_core::descriptor::UnitKind;
+        let state = self.lock();
+        let Some(region) = state.regions.get(&view) else {
+            return Vec::new();
+        };
+        let mut seen: Vec<String> = Vec::new();
+        let mut rows: Vec<(UnitKey, Version)> = Vec::new();
+        let edited = state
+            .units
+            .iter()
+            .filter_map(|(key, node)| key.as_any().downcast_ref::<UnitKey>().map(|u| (u, *node)));
+        let owned = region.units.iter().filter_map(|(key, slot)| {
+            key.as_any()
+                .downcast_ref::<UnitKey>()
+                .map(|u| (u, slot.node))
+        });
+        for (unit, node) in edited.chain(owned) {
+            if unit.view != view
+                || unit.kind != UnitKind::Value && unit.kind != UnitKind::Membership
+            {
+                continue;
+            }
+            let token = format!(
+                "{}:{}:{}",
+                unit.field.0,
+                unit.kind as u8,
+                unit.entity
+                    .as_ref()
+                    .map(|entity| entity.key_display())
+                    .unwrap_or_default()
+            );
+            if seen.contains(&token) {
+                continue;
+            }
+            seen.push(token);
+            rows.push((unit.clone(), state.node(node).changed_at));
+        }
+        rows
+    }
+
+    /// A View's descriptor, for a projection that draws it generically.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn descriptor(&self, view: reactive_core::ids::ViewId) -> Option<&'static ViewDescriptor> {
+        self.lock()
+            .regions
+            .get(&view)
+            .map(|region| region.descriptor)
+    }
+
+    /// A View's content, untyped.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn raw_content(
+        &self,
+        view: reactive_core::ids::ViewId,
+    ) -> Option<reactive_core::value::Value> {
+        self.lock()
+            .regions
+            .get(&view)
+            .map(|region| Arc::clone(&region.content))
+    }
+
+    /// A unit's type-erased value, for a display hook with no typed snapshot.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn unit_value(
+        &self,
+        unit: &reactive_core::descriptor::UnitKey,
+    ) -> Option<reactive_core::value::Value> {
+        let state = self.lock();
+        let region = state.regions.get(&unit.view)?;
+        let node = region.units.get(unit)?.node;
+        state.node(node).value.clone()
+    }
+
+    /// Projects every registered View's metadata at one revision.
+    ///
+    /// Values are never cloned; element counts come from the content vtable.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn view_facts(&self) -> Vec<crate::observe::ViewFacts> {
+        let state = self.lock();
+        let revision = state.revision;
+        // One pass over the edited-unit table, grouped by the View and field it
+        // names. The per-field projection used to walk every unit in the runtime
+        // once per field, which made a keystroke cost a scan per plate.
+        let mut edited: FxHashMap<(ViewId, FieldId), Vec<NodeId>> = FxHashMap::default();
+        for (key, node) in state.units.iter() {
+            let Some(unit) = key.as_any().downcast_ref::<UnitKey>() else {
+                continue;
+            };
+            edited
+                .entry((unit.view, unit.field))
+                .or_default()
+                .push(*node);
+        }
+        let mut views: Vec<&crate::state::Region> = state.regions.values().collect();
+        views.sort_by_key(|region| region.descriptor.id.0);
+        views
+            .into_iter()
+            .map(|region| {
+                let descriptor = region.descriptor;
+                let content_version = state.node(region.content_node).changed_at;
+                let mut changed_units = 0;
+                let fields = descriptor
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        let id = reactive_core::ids::FieldId(index as u16);
+                        // Edited units live in the global table, provided ones
+                        // in the region; both count toward the field.
+                        let mut units = 0;
+                        let mut changed = 0;
+                        let mut seen: std::collections::HashSet<reactive_core::ids::NodeId> =
+                            std::collections::HashSet::new();
+                        let edited_nodes = edited
+                            .get(&(descriptor.id, id))
+                            .map_or(&[][..], |nodes| nodes.as_slice());
+                        let provided = region.units.iter().filter_map(|(key, slot)| {
+                            key.as_any()
+                                .downcast_ref::<UnitKey>()
+                                .filter(|unit| unit.field == id)
+                                .map(|_| slot.node)
+                        });
+                        // `units` is the number of *entities* a field holds, not
+                        // the number of unit rows (an entity has several).
+                        let mut entities: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
+                        for node in edited_nodes.iter().copied().chain(provided) {
+                            if !seen.insert(node) {
+                                continue;
+                            }
+                            let record = &state.nodes[node.index()];
+                            match record.unit.as_ref() {
+                                Some(unit) if unit.entity.is_some() => {
+                                    let key = unit
+                                        .entity
+                                        .as_ref()
+                                        .map(|entity| entity.key_display())
+                                        .unwrap_or_default();
+                                    entities.insert(key);
+                                }
+                                Some(unit)
+                                    if unit.kind == reactive_core::descriptor::UnitKind::Value =>
+                                {
+                                    units += 1;
+                                }
+                                _ => {}
+                            }
+                            if record.changed_at == revision {
+                                changed += 1;
+                            }
+                        }
+                        if !entities.is_empty() {
+                            units = entities.len();
+                        }
+                        changed_units += changed;
+                        crate::observe::FieldFacts {
+                            field: id,
+                            name: field.name,
+                            kind: field.kind,
+                            granularity: granularity_of(&state, descriptor, id),
+                            units,
+                            elements: (descriptor.content.len)(&region.content, id),
+                            content_version,
+                            changed_units: changed,
+                        }
+                    })
+                    .collect();
+                crate::observe::ViewFacts {
+                    view: descriptor.id,
+                    name: descriptor.name,
+                    kind: descriptor.kind,
+                    fields,
+                    // The producing *component*, not the node: the page names
+                    // the component beside the View. An installed definition
+                    // names its provider; a registered producer (a general
+                    // component, the root) is the fallback.
+                    producer: region
+                        .owners
+                        .iter()
+                        .next()
+                        .map(|(_, provider)| provider.node)
+                        .or_else(|| state.producers.get(&descriptor.id).copied())
+                        .and_then(|node| {
+                            let record = state.node(node);
+                            record
+                                .component
+                                .or_else(|| component_of(&state, record.scope))
+                        }),
+                    routing: region.routing_version,
+                    content_version,
+                    demanded: descriptor.kind == reactive_core::descriptor::ViewKind::Source
+                        || !region.owners.is_empty(),
+                    content_node: region.content_node,
+                    provider_node: region
+                        .owners
+                        .iter()
+                        .next()
+                        .map(|(_, provider)| provider.node),
+                    suspect: {
+                        // A definition's dependents are invalidated, not the
+                        // unit node itself. The provider of any installed unit
+                        // stands in for "this View's data may be stale".
+                        let owner = region
+                            .owners
+                            .iter()
+                            .next()
+                            .map(|(_, provider)| provider.node)
+                            .unwrap_or(region.content_node);
+                        let record = state.node(owner);
+                        record.suspect_at > record.verified_at
+                    },
+                    changed_units,
+                }
+            })
+            .collect()
+    }
+
+    /// Projects the node arena with a cap.
+    ///
+    /// Holds the metadata lock for one pass and never clones a value.
+    #[cfg(feature = "observe")]
+    #[must_use]
+    pub fn probe(&self, query: &crate::observe::GraphQuery) -> crate::observe::GraphFacts {
+        use crate::observe::{GraphFacts, NodeFacts, UnitFacts};
+        let state = self.lock();
+        let revision = state.revision;
+        let mut nodes = Vec::new();
+        let mut matched = 0usize;
+        let mut truncated = false;
+        for (index, record) in state.nodes.iter().enumerate() {
+            if record.freed {
+                continue;
+            }
+            let id = NodeId::new(index as u32, record.generation);
+            if !scope_matches(&state, query.scope, id, record) {
+                continue;
+            }
+            if matches!(record.kind, NodeKind::Site) && !query.include_sites {
+                continue;
+            }
+            matched += 1;
+            if nodes.len() >= query.node_limit {
+                truncated = true;
+                continue;
+            }
+            nodes.push(NodeFacts {
+                id,
+                kind: kind_name(record.kind),
+                label: record.label,
+                scope: record.scope,
+                component: record.component,
+                unit: record.unit.as_ref().map(|unit| UnitFacts {
+                    view: unit.view,
+                    field: unit.field,
+                    kind: unit.kind,
+                    entity: unit.entity.as_ref().map(|entity| entity.key_display()),
+                }),
+                changed_at: record.changed_at,
+                verified_at: record.verified_at,
+                suspect_at: record.suspect_at,
+                executed_at: record.executed_at,
+                validated_at: record.validated_at,
+                routing_at: record.routing_at,
+                waiters: record.waiters.len() as u32,
+                value_size: record
+                    .value
+                    .as_ref()
+                    .map(|value| std::mem::size_of_val(value.as_ref())),
+            });
+        }
+        let included: std::collections::HashSet<NodeId> =
+            nodes.iter().map(|node| node.id).collect();
+        let mut edges = Vec::new();
+        'outer: for node in &nodes {
+            let record = &state.nodes[node.id.index()];
+            for dep in &record.trace {
+                if !included.contains(&dep.node) {
+                    continue;
+                }
+                if edges.len() >= query.edge_limit {
+                    break 'outer;
+                }
+                edges.push(crate::observe::EdgeFacts {
+                    from: node.id,
+                    to: dep.node,
+                    recorded: dep.version,
+                    current: state.nodes[dep.node.index()].changed_at,
+                });
+            }
+        }
+        GraphFacts {
+            revision,
+            nodes,
+            edges,
+            total_nodes: matched,
+            truncated,
+        }
+    }
+
     /// Number of worker threads.
     #[must_use]
     pub fn workers(&self) -> usize {
         self.pool.workers()
+    }
+
+    /// Emits one observation event when an observer is installed.
+    #[cfg(feature = "observe")]
+    pub(crate) fn emit(&self, event: crate::observe::RuntimeEvent) {
+        if let Some(observer) = self.observer.get() {
+            observer.record(event);
+        }
+    }
+
+    /// Emits an invalidation event for one reverse-dependency walk.
+    #[cfg(feature = "observe")]
+    pub(crate) fn emit_invalidated(&self, revision: Revision, seeds: &[NodeId], count: u64) {
+        let seeds: smallvec::SmallVec<[NodeId; 4]> = seeds.iter().copied().take(4).collect();
+        self.emit(crate::observe::RuntimeEvent::Invalidated {
+            revision,
+            seeds,
+            count,
+        });
+    }
+
+    /// Emits the commit event for one executed node.
+    #[cfg(feature = "observe")]
+    pub(crate) fn note_commit(
+        &self,
+        node: NodeId,
+        version: Version,
+        revision: Revision,
+        started: std::time::Instant,
+    ) {
+        let (views, equal_views) = {
+            let state = self.lock();
+            let mut views: smallvec::SmallVec<[reactive_core::ids::ViewId; 4]> =
+                smallvec::SmallVec::new();
+            let mut equal_views: smallvec::SmallVec<[reactive_core::ids::ViewId; 4]> =
+                smallvec::SmallVec::new();
+            let Some(record) = state.nodes.get(node.index()) else {
+                return;
+            };
+            for definition in &record.definitions {
+                let target = if state
+                    .units
+                    .get(&definition.unit)
+                    .is_some_and(|value_node| state.node(*value_node).changed_at == revision)
+                {
+                    &mut views
+                } else {
+                    &mut equal_views
+                };
+                if target.len() < 4 && !target.contains(&definition.unit.view) {
+                    target.push(definition.unit.view);
+                }
+            }
+            (views, equal_views)
+        };
+        self.emit(crate::observe::RuntimeEvent::NodeCommitted {
+            node,
+            views,
+            equal_views,
+            changed: version == revision,
+            invalidated: 0,
+            definitions: 0,
+            duration_ns: started.elapsed().as_nanos() as u64,
+        });
     }
 
     /// Records an observer-refresh failure without failing the transaction.
@@ -1934,10 +2962,7 @@ pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
 }
 
 /// Returns the component that owns a scope, walking member scopes to the body.
-fn component_of(
-    state: &State,
-    scope: ScopeId,
-) -> Option<reactive_core::ids::ComponentId> {
+fn component_of(state: &State, scope: ScopeId) -> Option<reactive_core::ids::ComponentId> {
     let mut current = scope;
     for _ in 0..64 {
         if let Some(component) = state.scope_components.get(&current) {
@@ -2074,6 +3099,8 @@ enum Outcome {
     Fail(ComputeError),
     Retry,
     Wait,
+    /// The unit's View has a producer that is not current: demand it first.
+    Demand(NodeId),
 }
 
 enum Action {
@@ -2084,6 +3111,111 @@ enum Action {
     Claim(u64),
     /// The task already owns this node and still has to finish it.
     Resume(u64),
+}
+
+/// Certifies a View's producer, after certifying the producers it observes.
+///
+/// Producers are certified depth-first so that, by the time a consumer's body
+/// is evaluated, every unit it observed is final for this revision. Without
+/// this ordering a consumer could be evaluated against a producer that has
+/// not run yet, which makes an unchanged observation indistinguishable from a
+/// stale one.
+/// Certifies a View's producer, after certifying the producers it observes.
+///
+/// Producers are certified depth-first so that, by the time a consumer's body is
+/// evaluated, every unit it observed is final for this revision.
+fn ensure_view_current(
+    inner: &Inner,
+    view: ViewId,
+    seen: &mut reactive_core::hash::FxHashSet<ViewId>,
+    depth: usize,
+) -> Result<()> {
+    if depth > 16 || !seen.insert(view) {
+        return Ok(());
+    }
+    // Producer demands made here are housekeeping, not observations of the
+    // caller. A scratch frame keeps them out of the caller's trace; otherwise a
+    // trace alternates between runs and the producer gets retired as unreachable.
+    let runtime: Arc<dyn RuntimeOps> = inner.arc();
+    let cancel = frame::current().map_or_else(CancelToken::default, |frame| frame.cancel().clone());
+    #[allow(clippy::arc_with_non_send_sync)]
+    let scratch = Arc::new(Frame::scoped(
+        runtime,
+        NodeId::NONE,
+        reactive_core::ids::ScopeId::ROOT,
+        0,
+        cancel,
+    ));
+    let _guard = FrameGuard::push(scratch);
+    ensure_view_current_inner(inner, view, seen, depth)
+}
+
+/// The recursion behind [`ensure_view_current`]. `seen` and `depth` are the
+/// guard the wrapper installs; this function only threads them down, which is why
+/// it looks like it never reads them.
+#[allow(clippy::only_used_in_recursion)]
+fn ensure_view_current_inner(
+    inner: &Inner,
+    view: ViewId,
+    seen: &mut reactive_core::hash::FxHashSet<ViewId>,
+    depth: usize,
+) -> Result<()> {
+    let (node, deps, stale, self_computing) = {
+        let state = inner.lock();
+        let Some(node) = state.producers.get(&view).copied() else {
+            return Ok(());
+        };
+        let record = state.node(node);
+        let stale = record.verified_at != state.revision || record.value.is_none();
+        if !stale || record.is_running() {
+            return Ok(());
+        }
+        let deps: Vec<ViewId> = record
+            .trace
+            .iter()
+            .filter_map(|dep| state.node(dep.node).unit.as_ref().map(|unit| unit.view))
+            .collect();
+        (node, deps, stale, record.general.is_some())
+    };
+    if !stale {
+        return Ok(());
+    }
+    // Only a node that carries its own algorithm can be demanded without a
+    // caller-supplied body. A lowered node's body belongs to its call site, so
+    // that path certifies it; its consumers stay conservative.
+    if !self_computing {
+        return Ok(());
+    }
+    for dep in deps {
+        ensure_view_current_inner(inner, dep, seen, depth + 1)?;
+    }
+    let ready = {
+        let state = inner.lock();
+        let record = state.node(node);
+        record.verified_at == state.revision && record.value.is_some()
+    };
+    if ready {
+        return Ok(());
+    }
+    let eq = {
+        let state = inner.lock();
+        let general = state
+            .node(node)
+            .general
+            .map(|index| Arc::clone(&state.generals[index]));
+        move |left: &Value, right: &Value| {
+            general
+                .as_ref()
+                .is_some_and(|general| general.output_eq(left, right))
+        }
+    };
+    let mut compute = || {
+        Err(ComputeError::internal(
+            "a general component producer does not use a compute closure",
+        ))
+    };
+    inner.eval(node, &mut compute, &eq)?;
+    Ok(())
 }
 
 impl RuntimeOps for Inner {
@@ -2122,6 +3254,37 @@ impl RuntimeOps for Inner {
     }
 
     fn ensure_unit(&self, unit: &UnitKey) -> Result<()> {
+        let producer = {
+            let state = self.lock();
+            state.producers.get(&unit.view).copied()
+        };
+        if let Some(node) = producer {
+            let ready = {
+                let state = self.lock();
+                let record = state.node(node);
+                record.verified_at == state.revision && record.value.is_some()
+            };
+            if !ready {
+                let mut compute = || {
+                    Err(ComputeError::internal(
+                        "a general component producer does not use a compute closure",
+                    ))
+                };
+                let eq = {
+                    let state = self.lock();
+                    let general = state
+                        .node(node)
+                        .general
+                        .map(|index| Arc::clone(&state.generals[index]));
+                    move |left: &Value, right: &Value| {
+                        general
+                            .as_ref()
+                            .is_some_and(|general| general.output_eq(left, right))
+                    }
+                };
+                self.eval(node, &mut compute, &eq)?;
+            }
+        }
         let mut state = self.lock();
         if state.units.get(unit).is_some() {
             return Ok(());
@@ -2229,9 +3392,7 @@ impl RuntimeOps for Inner {
             }
             if record.verified_at == revision {
                 match &record.value {
-                    Some(value) => {
-                        (value.clone(), record.changed_at, record.routing_at)
-                    }
+                    Some(value) => (value.clone(), record.changed_at, record.routing_at),
                     None => {
                         return Err(ComputeError::internal(format!(
                             "unit {} is undefined",
@@ -2308,14 +3469,19 @@ impl RuntimeOps for Inner {
         state.next_invocation = invocation_id;
         let invocation_scope = state.scopes.child(scope, invocation_id);
         state.scope_components.insert(invocation_scope, component);
+        state.component_names.entry(component).or_insert(name);
         let mut body_record = NodeRecord::empty(name, NodeKind::InvocationBody);
         body_record.scope = invocation_scope;
+        // Tag the call with its own component: the observation projection
+        // attributes a link to the component that made it, not to the caller.
+        body_record.component = Some(component);
         let body = state.alloc(body_record);
         let mut outputs = Vec::with_capacity(arity);
         for index in 0..arity {
             let mut record = NodeRecord::empty("invocation output", NodeKind::InvocationOutput);
             record.scope = invocation_scope;
             record.site = SiteId(index as u32);
+            record.component = Some(component);
             outputs.push(state.alloc(record));
         }
         state
@@ -2506,8 +3672,10 @@ impl Inner {
             if reachable.contains(&id) {
                 continue;
             }
-            let absent_membership = record.kind == NodeKind::Unit && Self::is_absent_membership(record);
-            if matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) && !absent_membership {
+            let absent_membership =
+                record.kind == NodeKind::Unit && Self::is_absent_membership(record);
+            if matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent) && !absent_membership
+            {
                 continue;
             }
             if !record.definitions.is_empty() {
@@ -2567,9 +3735,7 @@ impl Inner {
             entries.retain(|invocation| !doomed_set.contains(&invocation.body));
             invocations_reclaimed += before - entries.len();
         }
-        state
-            .invocations
-            .retain(|_, entries| !entries.is_empty());
+        state.invocations.retain(|_, entries| !entries.is_empty());
         ReclaimStats {
             nodes_before,
             nodes_after: state.nodes.len(),
@@ -2615,6 +3781,120 @@ impl Inner {
             tasks: state.tasks.len(),
             structure_units,
         }
+    }
+}
+
+/// Element granularity for one field, derived from the region it lives in.
+///
+/// The field kind alone is not enough: a source tree stages one whole content
+/// value, while a derived tree can stage a unit per node. Only the installed
+/// units can answer honestly.
+#[cfg(feature = "observe")]
+fn granularity_of(
+    state: &State,
+    descriptor: &'static ViewDescriptor,
+    field: reactive_core::ids::FieldId,
+) -> crate::observe::Granularity {
+    use crate::observe::Granularity;
+    let region = match state.regions.get(&descriptor.id) {
+        Some(region) => region,
+        None => return Granularity::Unknown,
+    };
+    let mut entities = 0usize;
+    let mut units = 0usize;
+    // An edit stages a unit in the global table, while a provider stages it in
+    // the region; both are installed units and both answer the question.
+    let edited = state
+        .units
+        .iter()
+        .filter_map(|(key, _)| key.as_any().downcast_ref::<UnitKey>())
+        .filter(|unit| unit.view == descriptor.id && unit.field == field);
+    let owned = region
+        .units
+        .iter()
+        .filter_map(|(key, _)| key.as_any().downcast_ref::<UnitKey>())
+        .filter(|unit| unit.field == field);
+    for unit in edited.chain(owned) {
+        units += 1;
+        if unit.entity.is_some() {
+            entities += 1;
+        }
+    }
+    if entities > 0 {
+        return Granularity::PerEntity;
+    }
+    // A tree keeps its node units in the tag/field/children slots, not in the
+    // root field. If the region has entity units at all, rows can be marked.
+    if descriptor
+        .fields
+        .get(field.0 as usize)
+        .is_some_and(|field| field.kind == reactive_core::descriptor::FieldKind::Tree)
+    {
+        let tree_entities = region
+            .units
+            .iter()
+            .filter_map(|(key, _)| key.as_any().downcast_ref::<UnitKey>())
+            .filter(|unit| unit.entity.is_some())
+            .count();
+        if tree_entities > 0 {
+            return Granularity::PerEntity;
+        }
+    }
+    match descriptor
+        .fields
+        .get(field.0 as usize)
+        .map(|field| field.kind)
+    {
+        Some(reactive_core::descriptor::FieldKind::Scalar) if units > 0 => Granularity::PerEntity,
+        Some(
+            reactive_core::descriptor::FieldKind::List
+            | reactive_core::descriptor::FieldKind::Set
+            | reactive_core::descriptor::FieldKind::Map
+            | reactive_core::descriptor::FieldKind::Graph
+            | reactive_core::descriptor::FieldKind::Tree,
+        ) => Granularity::WholeValue,
+        Some(_) => Granularity::Unknown,
+        None => Granularity::Unknown,
+    }
+}
+
+/// Whether a node belongs to the queried scope.
+#[cfg(feature = "observe")]
+fn scope_matches(
+    state: &State,
+    scope: crate::observe::GraphScope,
+    id: NodeId,
+    record: &NodeRecord,
+) -> bool {
+    use crate::observe::GraphScope;
+    match scope {
+        GraphScope::All => true,
+        GraphScope::View(view) => {
+            record.unit.as_ref().is_some_and(|unit| unit.view == view)
+                || matches!(record.kind, NodeKind::RegionContent)
+                    && state
+                        .regions
+                        .get(&view)
+                        .is_some_and(|region| region.content_node == id)
+        }
+        GraphScope::Component(component) => {
+            record.component == Some(component)
+                || component_of(state, record.scope) == Some(component)
+        }
+        GraphScope::Node(node) => node == id,
+    }
+}
+
+/// Stable kind names for the wire.
+#[cfg(feature = "observe")]
+fn kind_name(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Site => "site",
+        NodeKind::Unit => "unit",
+        NodeKind::InvocationBody => "body",
+        NodeKind::InvocationOutput => "output",
+        NodeKind::Operator => "operator",
+        NodeKind::RegionContent => "content",
     }
 }
 
@@ -2683,7 +3963,7 @@ mod tests {
             assert!(state.node(node).waiters.contains(&task));
             assert_eq!(state.wait_graph.get(&task), Some(&node));
         }
-        let mut waiters = Inner::wake_waiters(&mut inner.lock(), node);
+        let mut waiters = inner.wake_waiters(&mut inner.lock(), node);
         assert!(waiters.tasks.contains(&task));
         waiters.wake();
     }
@@ -2718,7 +3998,7 @@ mod tests {
         let waker = std::task::Waker::from(Arc::new(Flag(Arc::clone(&flag))));
         let poll = inner.try_read_unit(node, &waker).expect("poll");
         assert!(matches!(poll, std::task::Poll::Pending));
-        let mut waiters = Inner::wake_waiters(&mut inner.lock(), node);
+        let mut waiters = inner.wake_waiters(&mut inner.lock(), node);
         waiters.wake();
         assert!(flag.load(Ordering::SeqCst));
     }
@@ -2777,7 +4057,9 @@ mod tests {
             value_of(1u32),
             Vec::new(),
             Vec::new(),
-            false,
+            Vec::new(),
+            (Vec::new(), false),
+            true,
             None,
             FxHashMap::default(),
             FxHashSet::default(),
@@ -2792,7 +4074,10 @@ mod tests {
         assert!(
             matches!(
                 state.node(node).state,
-                NodeState::Running { owner: 1, generation: 7 }
+                NodeState::Running {
+                    owner: 1,
+                    generation: 7
+                }
             ),
             "a stale commit must not disturb the live claim"
         );
@@ -2823,7 +4108,9 @@ mod tests {
             value_of(1u32),
             Vec::new(),
             Vec::new(),
-            false,
+            Vec::new(),
+            (Vec::new(), false),
+            true,
             None,
             FxHashMap::default(),
             FxHashSet::default(),

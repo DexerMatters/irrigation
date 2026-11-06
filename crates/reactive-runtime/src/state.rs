@@ -8,16 +8,16 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use reactive_core::descriptor::{UnitKey, ViewDescriptor};
 use reactive_core::error::ComputeError;
 use reactive_core::frame::CancelToken;
 use reactive_core::frame::Dep;
 use reactive_core::hash::{FxHashMap, FxHashSet};
 use reactive_core::ids::{
-    ComponentId, NodeId, Revision, ScopeId, SiteId, Version, FieldId, ViewId,
+    ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId,
 };
 use reactive_core::key::{AnyKey, KeyTable};
 use reactive_core::value::Value;
-use reactive_core::descriptor::{UnitKey, ViewDescriptor};
 
 use crate::task::{Task, TaskId, TaskMode, TaskStatus};
 
@@ -73,6 +73,8 @@ pub struct NodeRecord {
     pub site: SiteId,
     /// Logical unit for unit nodes.
     pub unit: Option<UnitKey>,
+    /// Component that owns this node, when it is a component body or output.
+    pub component: Option<ComponentId>,
     /// The last committed value.
     pub value: Option<Value>,
     /// Revision at which the value last changed.
@@ -99,6 +101,11 @@ pub struct NodeRecord {
     pub failed_at: Revision,
     /// Units this node currently defines.
     pub definitions: Vec<DefinitionRecord>,
+    /// Views whose content this node replaced on its last run.
+    ///
+    /// A general component publishes content instead of defining units; both
+    /// are writes to a View, and both are attributed to the component.
+    pub content_writes: Vec<reactive_core::ids::ViewId>,
     /// Index into `State::generals` for a custom component node.
     pub general: Option<usize>,
     /// Retained state of a custom component, committed with its output.
@@ -125,6 +132,7 @@ impl NodeRecord {
             scope,
             site,
             unit: None,
+            component: None,
             value: None,
             changed_at: 0,
             verified_at: 0,
@@ -138,6 +146,7 @@ impl NodeRecord {
             failure: None,
             failed_at: 0,
             definitions: Vec::new(),
+            content_writes: Vec::new(),
             general: None,
             general_state: None,
             general_unit_scopes: FxHashMap::default(),
@@ -362,10 +371,8 @@ impl ScopeTable {
         let scope = self.allocate();
         self.by_discriminant
             .insert((parent.raw(), discriminant), scope);
-        self.parents.insert(
-            scope,
-            (parent, format!("discriminant {discriminant}")),
-        );
+        self.parents
+            .insert(scope, (parent, format!("discriminant {discriminant}")));
         scope
     }
 
@@ -380,10 +387,8 @@ impl ScopeTable {
             }
         }
         let scope = self.allocate();
-        self.parents.insert(
-            scope,
-            (parent, format!("key {}", key.key_display())),
-        );
+        self.parents
+            .insert(scope, (parent, format!("key {}", key.key_display())));
         self.by_key.entry(lookup).or_default().push((key, scope));
         scope
     }
@@ -578,6 +583,22 @@ pub struct Stats {
     pub site_reuses: std::sync::atomic::AtomicU64,
     /// Invocation records evicted by the cache cap.
     pub invocations_evicted: std::sync::atomic::AtomicU64,
+    /// Trace validations attempted, successful or not.
+    pub validation_attempts: std::sync::atomic::AtomicU64,
+    /// Trace validations rejected at a moved observation.
+    pub validation_failures: std::sync::atomic::AtomicU64,
+    /// Closure attempts that ended in failure or cancellation.
+    pub execution_failures: std::sync::atomic::AtomicU64,
+    /// Successful commits whose value was equal (cutoff).
+    pub cutoffs: std::sync::atomic::AtomicU64,
+    /// Pooled attempts that suspended on another task's node.
+    pub suspensions: std::sync::atomic::AtomicU64,
+    /// Demand tasks that can evaluate, started over the runtime's lifetime.
+    pub demands: std::sync::atomic::AtomicU64,
+    /// Subscription callbacks that fired.
+    pub notifications: std::sync::atomic::AtomicU64,
+    /// General-component runs elided because no observed unit moved.
+    pub no_change_runs: std::sync::atomic::AtomicU64,
 }
 
 /// Everything the runtime protects with its metadata lock.
@@ -631,6 +652,10 @@ pub struct State {
     pub(crate) generals: Vec<std::sync::Arc<dyn crate::general::ErasedGeneral>>,
     /// The installed `GeneralComponent` root, if any.
     pub general_root: Option<NodeId>,
+    /// Names of components the runtime has seen, so a projection can name them.
+    pub component_names: FxHashMap<reactive_core::ids::ComponentId, &'static str>,
+    /// One producing component per derived output View.
+    pub(crate) producers: FxHashMap<ViewId, NodeId>,
     /// Conflicting definitions awaiting end-of-revision resolution.
     pub pending_conflicts: Vec<PendingConflict>,
     /// Fields currently populated by the keyed derived protocol.
@@ -753,9 +778,14 @@ impl State {
 ///
 /// This is the invalidation cost the plan calls `E_v`: it can visit the whole
 /// old reachable cone even when equality later stops execution.
-pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, revision: Revision) {
+pub fn invalidate(
+    state: &mut State,
+    seeds: impl IntoIterator<Item = NodeId>,
+    revision: Revision,
+) -> u64 {
     let mut stack: smallvec::SmallVec<[NodeId; 16]> = seeds.into_iter().collect();
-    let mut seen: reactive_core::hash::FxHashSet<NodeId> = reactive_core::hash::FxHashSet::default();
+    let mut seen: reactive_core::hash::FxHashSet<NodeId> =
+        reactive_core::hash::FxHashSet::default();
     let mut marked = 0u64;
     while let Some(node) = stack.pop() {
         if !seen.insert(node) {
@@ -775,6 +805,7 @@ pub fn invalidate(state: &mut State, seeds: impl IntoIterator<Item = NodeId>, re
         .stats
         .invalidations
         .fetch_add(marked, std::sync::atomic::Ordering::Relaxed);
+    marked
 }
 
 #[cfg(test)]

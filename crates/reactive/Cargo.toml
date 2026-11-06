@@ -10,6 +10,10 @@ description.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Compiles the runtime observation path and the Observatory example.
+observatory = ["reactive-runtime/observe"]
+
 [dependencies]
 reactive-core.workspace = true
 reactive-store.workspace = true
@@ -20,3 +24,25 @@ reactive-macros.workspace = true
 
 [dev-dependencies]
 reactive-test.workspace = true
+reactive-observe.workspace = true
+reactive-syntax.workspace = true
+
+[[example]]
+name = "observatory"
+path = "examples/observatory/main.rs"
+required-features = ["observatory"]
+
+[[example]]
+name = "observe_cost"
+path = "examples/observe_cost.rs"
+required-features = ["observatory"]
+
+[[example]]
+name = "observe_board"
+path = "examples/observe_board.rs"
+required-features = ["observatory"]
+
+[[example]]
+name = "observatory_syntax"
+path = "examples/observatory_syntax.rs"
+required-features = ["observatory"]

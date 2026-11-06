@@ -11,7 +11,7 @@
 //! diagnostic rather than silently made coarse.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Block, Expr, ExprClosure, ExprMacro, Pat, Stmt};
 
 /// A lowered expression and, when it is backed by one node, that node.
@@ -191,7 +191,10 @@ impl Lowerer {
                 };
                 if init.diverge.is_some() {
                     return self
-                        .error(&init.expr, "`let ... else` is not supported in a component body")
+                        .error(
+                            &init.expr,
+                            "`let ... else` is not supported in a component body",
+                        )
                         .tokens;
                 }
                 let lowered = self.expr_node(&init.expr);
@@ -219,7 +222,10 @@ impl Lowerer {
                 };
                 let binding = format_ident!(
                     "__node_{}",
-                    names.first().cloned().unwrap_or_else(|| String::from("value"))
+                    names
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| String::from("value"))
                 );
                 for name in &names {
                     self.bind(name.clone(), quote!(#binding));
@@ -259,9 +265,10 @@ impl Lowerer {
                 let lowered = self.macro_expr(&macro_expr).tokens;
                 quote!(#lowered;)
             }
-            Stmt::Item(item) => self
-                .error(item, "nested items are not supported in a component body")
-                .tokens,
+            Stmt::Item(item) => {
+                self.error(item, "nested items are not supported in a component body")
+                    .tokens
+            }
         }
     }
 
@@ -322,9 +329,10 @@ impl Lowerer {
                     self.expr(&call.receiver)
                 };
                 let turbofish = &call.turbofish;
-                let args: Vec<TokenStream> = call.args.iter().map(|arg| self.argument(arg)).collect();
-                let iterator_chain = is_collection_adapter(&method_name)
-                    && receiver_is_iterator(&call.receiver);
+                let args: Vec<TokenStream> =
+                    call.args.iter().map(|arg| self.argument(arg)).collect();
+                let iterator_chain =
+                    is_collection_adapter(&method_name) && receiver_is_iterator(&call.receiver);
                 if is_transparent_method(&method_name) || iterator_chain {
                     let tokens = quote!(#receiver.#method #turbofish (#(#args),*));
                     return if is_iterator_method(&method_name) || iterator_chain {
@@ -347,7 +355,8 @@ impl Lowerer {
                     );
                 }
                 let function = self.expr(&call.func);
-                let args: Vec<TokenStream> = call.args.iter().map(|arg| self.argument(arg)).collect();
+                let args: Vec<TokenStream> =
+                    call.args.iter().map(|arg| self.argument(arg)).collect();
                 self.node_or_inline(quote!(#function(#(#args),*)))
             }
             Expr::Field(field) => {
@@ -361,11 +370,13 @@ impl Lowerer {
                 self.node_or_inline(quote!(#base[#offset]))
             }
             Expr::Tuple(tuple) => {
-                let elems: Vec<TokenStream> = tuple.elems.iter().map(|elem| self.expr(elem)).collect();
+                let elems: Vec<TokenStream> =
+                    tuple.elems.iter().map(|elem| self.expr(elem)).collect();
                 self.node_or_inline(quote!((#(#elems),*)))
             }
             Expr::Array(array) => {
-                let elems: Vec<TokenStream> = array.elems.iter().map(|elem| self.expr(elem)).collect();
+                let elems: Vec<TokenStream> =
+                    array.elems.iter().map(|elem| self.expr(elem)).collect();
                 self.node_or_inline(quote!([#(#elems),*]))
             }
             Expr::Repeat(repeat) => {
@@ -405,9 +416,10 @@ impl Lowerer {
             }
             Expr::Match(match_expr) => {
                 let scrutinee = self.expr_node(&match_expr.expr);
-                let observe = scrutinee.node.as_ref().map(|node| {
-                    quote!(reactive::observe_local(#node);)
-                });
+                let observe = scrutinee
+                    .node
+                    .as_ref()
+                    .map(|node| quote!(reactive::observe_local(#node);));
                 let scrutinee_tokens = &scrutinee.tokens;
                 let arms: Vec<TokenStream> = match_expr
                     .arms
@@ -477,9 +489,10 @@ impl Lowerer {
             Expr::Await(await_expr) => {
                 self.error(await_expr, "`.await` is not supported inside a component")
             }
-            Expr::Async(async_expr) => {
-                self.error(async_expr, "async blocks are not supported inside a component")
-            }
+            Expr::Async(async_expr) => self.error(
+                async_expr,
+                "async blocks are not supported inside a component",
+            ),
             Expr::Unsafe(unsafe_expr) => {
                 self.error(unsafe_expr, "`unsafe` is not supported inside a component")
             }
@@ -489,20 +502,25 @@ impl Lowerer {
                  use the final expression of a block",
             ),
             Expr::Break(break_expr) => self.error(break_expr, "`break` is not supported"),
-            Expr::Continue(continue_expr) => self.error(continue_expr, "`continue` is not supported"),
+            Expr::Continue(continue_expr) => {
+                self.error(continue_expr, "`continue` is not supported")
+            }
             Expr::While(while_expr) => self.error(
                 while_expr,
                 "`while` loops are not supported; use a collection operator",
             ),
-            Expr::Loop(loop_expr) => {
-                self.error(loop_expr, "`loop` is not supported; use a collection operator")
-            }
+            Expr::Loop(loop_expr) => self.error(
+                loop_expr,
+                "`loop` is not supported; use a collection operator",
+            ),
             Expr::ForLoop(for_expr) => self.error(
                 for_expr,
                 "`for` loops are not supported; use `map`, `filter`, or `flat_map`",
             ),
             Expr::Let(let_expr) => self.error(let_expr, "`let` expressions are not supported"),
-            Expr::Infer(infer) => self.error(infer, "type inference placeholders are not supported"),
+            Expr::Infer(infer) => {
+                self.error(infer, "type inference placeholders are not supported")
+            }
             Expr::Const(const_block) => self.error(
                 const_block,
                 "const blocks are not supported inside a component",

@@ -9,13 +9,13 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
+use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_core::ids::{FieldId, SiteId, ViewId};
 use reactive_core::key::any_key;
 use reactive_core::value::{Value, value_of};
 use reactive_runtime::edit::Edit;
 use reactive_runtime::field::{ViewFieldHandle, structure_unit};
 use reactive_runtime::helpers::read_unit_value;
-use reactive_core::descriptor::{FieldKind, UnitKey, UnitKind};
 use reactive_store::field::ViewField;
 use reactive_store::persistent::PMap;
 
@@ -45,7 +45,15 @@ where
         PMap::new()
     }
 
-    fn define(storage: &Self::Storage, key: &dyn reactive_core::key::AnyKey, value: Value) -> Self::Storage {
+    fn len(storage: &Self::Storage) -> Option<usize> {
+        Some(storage.len())
+    }
+
+    fn define(
+        storage: &Self::Storage,
+        key: &dyn reactive_core::key::AnyKey,
+        value: Value,
+    ) -> Self::Storage {
         let Some(key) = key.as_any().downcast_ref::<K>() else {
             return storage.clone();
         };
@@ -151,7 +159,10 @@ where
     /// Reads the map's key set, recording one structural observation.
     #[must_use]
     pub fn keys(&self) -> Vec<K> {
-        self.structure().iter().map(|(key, ())| key.clone()).collect()
+        self.structure()
+            .iter()
+            .map(|(key, ())| key.clone())
+            .collect()
     }
 
     /// Number of entries.
@@ -180,8 +191,9 @@ where
         if !self.contains_key(key) {
             return None;
         }
-        let value: V =
-            read_unit_value(self.value_key(key), |content| (self.content)(content).get(key).cloned());
+        let value: V = read_unit_value(self.value_key(key), |content| {
+            (self.content)(content).get(key).cloned()
+        });
         Some(value)
     }
 
@@ -337,12 +349,8 @@ where
         if !was_present {
             self.edit.set(membership, true);
         }
-        let value_key = UnitKey::entity(
-            self.view,
-            self.field,
-            UnitKind::Value,
-            any_key(key.clone()),
-        );
+        let value_key =
+            UnitKey::entity(self.view, self.field, UnitKind::Value, any_key(key.clone()));
         self.edit.set(value_key, value);
     }
 
@@ -363,8 +371,13 @@ where
     }
 
     fn stage_structure(&mut self) {
-        let structure: PMap<K, ()> = self.storage.iter().map(|(key, _)| (key.clone(), ())).collect();
-        self.edit.set(structure_unit(self.view, self.field), structure);
+        let structure: PMap<K, ()> = self
+            .storage
+            .iter()
+            .map(|(key, _)| (key.clone(), ()))
+            .collect();
+        self.edit
+            .set(structure_unit(self.view, self.field), structure);
     }
 }
 

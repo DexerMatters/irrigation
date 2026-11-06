@@ -5,11 +5,11 @@
 //! and several demands can run concurrently. A caller that is itself a worker
 //! executes inline, which keeps nested demand from deadlocking on its own pool.
 
+use parking_lot::{Condvar, Mutex};
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -152,7 +152,14 @@ impl Pool {
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        self.inner.shutdown.store(true, Ordering::Release);
+        // Store the flag while holding the queue lock. A worker checks the flag
+        // and then waits under that same lock, so this ordering closes the
+        // lost-wakeup window that would otherwise leave a worker parked and
+        // make `join` hang for ever.
+        {
+            let _queue = self.inner.queue.lock();
+            self.inner.shutdown.store(true, Ordering::Release);
+        }
         self.inner.wake.notify_all();
         let mut handles = self.handles.lock();
         for handle in handles.drain(..) {

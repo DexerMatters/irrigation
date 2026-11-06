@@ -10,6 +10,7 @@
 //! workers, or because it is nested in an attempt that is already on one —
 //! cannot yield that thread. It is marked inline and its waits park instead.
 
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::sync_channel;
 
 use reactive_core::error::{ComputeError, Result};
@@ -18,23 +19,28 @@ use reactive_core::ids::NodeId;
 
 use crate::inner::{Inner, Waiters};
 use crate::state::{NodeState, State};
-use crate::task::{self, Attempt, Task, TaskId, TaskMode, TaskStatus};
+use crate::task::{self, Attempt, DemandCause, Task, TaskId, TaskMode, TaskStatus};
 
 impl Inner {
     /// Runs one demand as a task and returns its result.
     pub(crate) fn demand<T: Send + 'static>(
         &self,
         cancel: CancelToken,
+        cause: DemandCause,
         body: impl FnMut() -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        let started = std::time::Instant::now();
+        if cause.evaluates() {
+            self.lock().stats.demands.fetch_add(1, Ordering::Relaxed);
+        }
         if crate::scheduler::on_worker() {
             // The enclosing task already holds the gate and the worker.
             let mut body = body;
-            return self.demand_inline(cancel, &mut body, false);
+            return self.demand_inline(cancel, cause, &mut body, false);
         }
         if self.pool.workers() == 0 {
             let mut body = body;
-            return self.demand_inline(cancel, &mut body, true);
+            return self.demand_inline(cancel, cause, &mut body, true);
         }
         let (sender, receiver) = sync_channel(1);
         self.gate.enter_read();
@@ -49,24 +55,54 @@ impl Inner {
         };
         self.set_active_task(Some(id));
         self.submit_task(id);
-        match receiver.recv() {
-            Ok(result) => result,
+        let (result, ok) = match receiver.recv() {
+            Ok(result) => {
+                let ok = result.is_ok();
+                (result, ok)
+            }
             Err(_) => {
                 self.close_task(id);
-                Err(ComputeError::Panicked {
-                    message: String::from("a demand panicked outside its computation"),
-                })
+                (
+                    Err(ComputeError::Panicked {
+                        message: String::from("a demand panicked outside its computation"),
+                    }),
+                    false,
+                )
             }
-        }
+        };
+        self.note_demand_started(id, cause);
+        self.note_demand_finished(id, ok, started);
+        result
+    }
+
+    /// Reports a started demand, after it has an identity.
+    fn note_demand_started(&self, task: TaskId, cause: DemandCause) {
+        #[cfg(feature = "observe")]
+        self.emit(crate::observe::RuntimeEvent::DemandStarted { task, cause });
+        #[cfg(not(feature = "observe"))]
+        let _ = (task, cause);
+    }
+
+    fn note_demand_finished(&self, task: TaskId, ok: bool, started: std::time::Instant) {
+        #[cfg(feature = "observe")]
+        self.emit(crate::observe::RuntimeEvent::DemandFinished {
+            task,
+            ok,
+            duration_ns: started.elapsed().as_nanos() as u64,
+        });
+        #[cfg(not(feature = "observe"))]
+        let _ = (task, ok, started);
     }
 
     /// Runs a demand on the calling thread, parking it when it has to wait.
     fn demand_inline<T>(
         &self,
         cancel: CancelToken,
+        cause: DemandCause,
         body: &mut dyn FnMut() -> Result<T>,
         hold_gate: bool,
     ) -> Result<T> {
+        let started = std::time::Instant::now();
         if hold_gate {
             self.gate.enter_read();
         }
@@ -78,9 +114,12 @@ impl Inner {
             id
         };
         self.set_active_task(Some(id));
+        self.note_demand_started(id, cause);
         let _close = InlineTask { inner: self, id };
         let _enter = task::enter(id);
-        body()
+        let result = body();
+        self.note_demand_finished(id, result.is_ok(), started);
+        result
     }
 
     /// Queues one task for a worker.
@@ -112,6 +151,8 @@ impl Inner {
             slot.status = TaskStatus::Running;
             slot.body.take()
         };
+        #[cfg(feature = "observe")]
+        self.emit(crate::observe::RuntimeEvent::TaskRunning { task: id });
         let Some(mut body) = body else {
             return;
         };
@@ -130,8 +171,7 @@ impl Inner {
         slot.body = Some(body);
         if attempt == Attempt::Suspended {
             debug_assert!(
-                slot.status == TaskStatus::Queued
-                    || matches!(slot.status, TaskStatus::Waiting(_)),
+                slot.status == TaskStatus::Queued || matches!(slot.status, TaskStatus::Waiting(_)),
                 "a suspended attempt must leave its task waiting"
             );
             let requeue = slot.status == TaskStatus::Queued;
@@ -157,7 +197,7 @@ impl Inner {
             let mut slot = state.tasks.remove(&id)?;
             state.wait_graph.remove(&id);
             let held = std::mem::take(&mut slot.held);
-            let waiters = Self::release_claims(&mut state, id, &held);
+            let waiters = self.release_claims(&mut state, id, &held);
             (waiters, slot.gate, slot.body)
         };
         self.clear_active_task(id);
@@ -171,7 +211,7 @@ impl Inner {
     }
 
     /// Releases claims a task still owns after its last attempt.
-    fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Waiters {
+    fn release_claims(&self, state: &mut State, task: TaskId, held: &[NodeId]) -> Waiters {
         let mut waiters = Waiters {
             tasks: Vec::new(),
             wakers: Vec::new(),
@@ -179,7 +219,7 @@ impl Inner {
         for &node in held {
             if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {
                 state.node_mut(node).state = NodeState::Vacant;
-                waiters.merge(Self::wake_waiters(state, node));
+                waiters.merge(self.wake_waiters(state, node));
             }
         }
         waiters

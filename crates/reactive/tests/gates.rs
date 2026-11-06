@@ -1,7 +1,7 @@
 //! Acceptance gates from the plan: randomized oracle comparison, recursion,
 //! mutual recursion, cycle detection, and unique definitions.
 
-use reactive::{reactive, tree_view, view, Runtime};
+use reactive::{Runtime, reactive, tree_view, view};
 
 // ---------------------------------------------------------------------------
 // Randomized edit sequence against a from-scratch oracle
@@ -15,18 +15,14 @@ pub struct Model {
 
 #[reactive]
 mod model_analysis {
-    use super::{Model};
+    use super::Model;
 
     #[component]
     pub fn analyze(model: &Model) -> u64 {
         let numbers = model.numbers();
         let doubled = numbers.map(|n| *n * 2);
         let total = doubled.iter().sum::<u64>();
-        if model.strict() {
-            total + 1
-        } else {
-            total
-        }
+        if model.strict() { total + 1 } else { total }
     }
 }
 
@@ -125,20 +121,12 @@ mod recursion {
 
     #[component]
     pub fn even(n: u32) -> bool {
-        if n == 0 {
-            true
-        } else {
-            odd(n - 1)
-        }
+        if n == 0 { true } else { odd(n - 1) }
     }
 
     #[component]
     pub fn odd(n: u32) -> bool {
-        if n == 0 {
-            false
-        } else {
-            even(n - 1)
-        }
+        if n == 0 { false } else { even(n - 1) }
     }
 
     #[component]
@@ -263,7 +251,9 @@ mod independent_outputs {
 #[test]
 fn changing_one_output_does_not_change_the_other() {
     let runtime = Runtime::new();
-    runtime.install(independent_outputs::Split).expect("install");
+    runtime
+        .install(independent_outputs::Split)
+        .expect("install");
     let (left, right) = runtime
         .read_outputs::<independent_outputs::Split>()
         .expect("outputs");
@@ -288,11 +278,7 @@ fn changing_one_output_does_not_change_the_other() {
 mod deep {
     #[component]
     pub fn countdown(n: u32) -> u64 {
-        if n == 0 {
-            0
-        } else {
-            countdown(n - 1) + 1
-        }
+        if n == 0 { 0 } else { countdown(n - 1) + 1 }
     }
 
     #[component]
@@ -309,7 +295,10 @@ fn deep_recursion_is_stack_safe() {
         ..reactive::RuntimeConfig::default()
     });
     runtime.install(deep::Root).expect("install");
-    assert_eq!(runtime.read_outputs::<deep::Root>().expect("outputs"), 10_000);
+    assert_eq!(
+        runtime.read_outputs::<deep::Root>().expect("outputs"),
+        10_000
+    );
 }
 
 #[reactive]
@@ -343,7 +332,11 @@ fn results_are_invariant_across_worker_counts() {
                 }
             })
             .expect("edit");
-        results.push(runtime.read_outputs::<parallel_sum::Sum>().expect("outputs"));
+        results.push(
+            runtime
+                .read_outputs::<parallel_sum::Sum>()
+                .expect("outputs"),
+        );
     }
     assert_eq!(results, vec![10100, 10100, 10100]);
 }
@@ -487,7 +480,9 @@ mod graph_stats {
         let nodes = graph.node_count() as u64;
         let edges = graph.edge_count() as u64;
         let ids = graph.edges();
-        let weights = ids.iter().map(|edge| graph.edge_weight(*edge).unwrap_or(0) as u64);
+        let weights = ids
+            .iter()
+            .map(|edge| graph.edge_weight(*edge).unwrap_or(0) as u64);
         let total = weights.sum::<u64>();
         (nodes, edges, total)
     }
@@ -518,7 +513,9 @@ fn graph_topology_and_payloads_are_independent() {
         })
         .expect("edit");
     assert_eq!(
-        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        runtime
+            .read_outputs::<graph_stats::Stats>()
+            .expect("outputs"),
         (3, 2, 12)
     );
     let before = graph_unit_versions(&runtime);
@@ -538,7 +535,9 @@ fn graph_topology_and_payloads_are_independent() {
         })
         .expect("edit");
     assert_eq!(
-        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        runtime
+            .read_outputs::<graph_stats::Stats>()
+            .expect("outputs"),
         (3, 2, 57)
     );
     let after = graph_unit_versions(&runtime);
@@ -558,7 +557,9 @@ fn graph_topology_and_payloads_are_independent() {
         })
         .expect("edit");
     assert_eq!(
-        runtime.read_outputs::<graph_stats::Stats>().expect("outputs"),
+        runtime
+            .read_outputs::<graph_stats::Stats>()
+            .expect("outputs"),
         (2, 0, 0)
     );
     let snapshot = runtime.read().expect("read");
@@ -582,7 +583,9 @@ fn graph_neighbours_follow_edges() {
             links.add_edge(2, 3, 1);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<graph_stats::Stats>().expect("outputs");
+    let _ = runtime
+        .read_outputs::<graph_stats::Stats>()
+        .expect("outputs");
 }
 
 // ---------------------------------------------------------------------------
@@ -660,7 +663,10 @@ fn abandoned_branches_are_reclaimed_without_changing_results() {
             view.set_right(20);
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 11);
+    assert_eq!(
+        runtime.read_outputs::<branching::Pick>().expect("outputs"),
+        11
+    );
     let before = runtime.memory_report();
     assert!(before.nodes > 0);
     assert!(before.trace_edges > 0);
@@ -671,7 +677,10 @@ fn abandoned_branches_are_reclaimed_without_changing_results() {
             edit.view::<Toggle>().set_flag(false);
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 22);
+    assert_eq!(
+        runtime.read_outputs::<branching::Pick>().expect("outputs"),
+        22
+    );
     let reclaimed = runtime.collect();
     assert!(
         reclaimed.nodes_reclaimed > 0,
@@ -684,7 +693,10 @@ fn abandoned_branches_are_reclaimed_without_changing_results() {
             edit.view::<Toggle>().set_right(30);
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 32);
+    assert_eq!(
+        runtime.read_outputs::<branching::Pick>().expect("outputs"),
+        32
+    );
 
     // Switching back reconstructs the abandoned branch.
     runtime
@@ -692,7 +704,10 @@ fn abandoned_branches_are_reclaimed_without_changing_results() {
             edit.view::<Toggle>().set_flag(true);
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<branching::Pick>().expect("outputs"), 11);
+    assert_eq!(
+        runtime.read_outputs::<branching::Pick>().expect("outputs"),
+        11
+    );
 }
 
 #[test]
@@ -734,7 +749,10 @@ mod table {
 fn missing_key_reads_are_dependencies_and_other_keys_are_isolated() {
     let runtime = Runtime::new();
     runtime.install(table::Lookup).expect("install");
-    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+    assert_eq!(
+        runtime.read_outputs::<table::Lookup>().expect("outputs"),
+        None
+    );
 
     // An unrelated key must not wake the consumer.
     runtime
@@ -745,7 +763,10 @@ fn missing_key_reads_are_dependencies_and_other_keys_are_isolated() {
         })
         .expect("edit");
     let probe = reactive_test::StatsProbe::start(&runtime);
-    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+    assert_eq!(
+        runtime.read_outputs::<table::Lookup>().expect("outputs"),
+        None
+    );
     let delta = probe.delta(&runtime);
     assert_eq!(
         delta.executions, 0,
@@ -773,7 +794,10 @@ fn missing_key_reads_are_dependencies_and_other_keys_are_isolated() {
             entries.remove(&1);
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<table::Lookup>().expect("outputs"), None);
+    assert_eq!(
+        runtime.read_outputs::<table::Lookup>().expect("outputs"),
+        None
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,7 +1188,10 @@ fn concurrent_host_reads_share_one_execution() {
                     .expect("concurrent read")
             }));
         }
-        let results: Vec<_> = handles.into_iter().map(|handle| handle.join().expect("join")).collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join"))
+            .collect();
         for result in &results {
             assert_eq!(*result, results[0]);
         }
@@ -1539,9 +1566,7 @@ fn a_switched_scope_retires_its_old_dependency() {
         })
         .expect("edit");
     assert_eq!(
-        runtime
-            .read_outputs_general::<Selector>()
-            .expect("outputs"),
+        runtime.read_outputs_general::<Selector>().expect("outputs"),
         20
     );
 
@@ -1553,9 +1578,7 @@ fn a_switched_scope_retires_its_old_dependency() {
         })
         .expect("edit");
     assert_eq!(
-        runtime
-            .read_outputs_general::<Selector>()
-            .expect("outputs"),
+        runtime.read_outputs_general::<Selector>().expect("outputs"),
         20
     );
     assert_eq!(runtime.stats().executions, before);
@@ -1567,9 +1590,7 @@ fn a_switched_scope_retires_its_old_dependency() {
         })
         .expect("edit");
     assert_eq!(
-        runtime
-            .read_outputs_general::<Selector>()
-            .expect("outputs"),
+        runtime.read_outputs_general::<Selector>().expect("outputs"),
         11
     );
 
@@ -1581,9 +1602,7 @@ fn a_switched_scope_retires_its_old_dependency() {
         })
         .expect("edit");
     assert_eq!(
-        runtime
-            .read_outputs_general::<Selector>()
-            .expect("outputs"),
+        runtime.read_outputs_general::<Selector>().expect("outputs"),
         11
     );
     assert_eq!(runtime.stats().executions, before);
@@ -1695,7 +1714,10 @@ fn observers_receive_the_changed_view_version() {
 
     let summaries = seen.lock().expect("lock");
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].view, <Model as reactive::ViewSchema>::view_id());
+    assert_eq!(
+        summaries[0].view,
+        <Model as reactive::ViewSchema>::view_id()
+    );
     assert!(summaries[0].current > summaries[0].previous);
     drop(summaries);
     drop(subscription);
@@ -1782,15 +1804,11 @@ fn explode() -> u64 {
 
 #[reactive]
 mod bomb {
-    use super::{explode, Bomb};
+    use super::{Bomb, explode};
 
     #[component]
     pub fn risky(bomb: &Bomb) -> u64 {
-        if bomb.armed() {
-            explode()
-        } else {
-            7
-        }
+        if bomb.armed() { explode() } else { 7 }
     }
 }
 
@@ -1815,10 +1833,7 @@ fn a_panic_fails_one_scope_and_the_next_revision_recovers() {
             edit.view::<Bomb>().set_armed(false);
         })
         .expect("edit");
-    assert_eq!(
-        runtime.read_outputs::<bomb::Risky>().expect("recovers"),
-        7
-    );
+    assert_eq!(runtime.read_outputs::<bomb::Risky>().expect("recovers"), 7);
 }
 
 #[test]
@@ -1845,15 +1860,11 @@ fn runtimes_are_isolated_namespaces() {
         .expect("edit b");
 
     assert_eq!(
-        first
-            .read_outputs::<model_analysis::Analyze>()
-            .expect("a"),
+        first.read_outputs::<model_analysis::Analyze>().expect("a"),
         2
     );
     assert_eq!(
-        second
-            .read_outputs::<model_analysis::Analyze>()
-            .expect("b"),
+        second.read_outputs::<model_analysis::Analyze>().expect("b"),
         10
     );
     // Revisions are per-runtime, not process-global.
@@ -1876,7 +1887,7 @@ fn parse_number(text: &str) -> Result<u64, String> {
 
 #[reactive]
 mod parser {
-    use super::{parse_number, TextInput};
+    use super::{TextInput, parse_number};
 
     #[component]
     pub fn parse_value(input: &TextInput) -> Result<u64, String> {
@@ -1924,7 +1935,6 @@ fn result_control_flow_is_tracked_like_any_other_value() {
         Ok(10)
     );
 }
-
 
 // ---------------------------------------------------------------------------
 // Supported composition: the branch chooses values, the definition always runs
@@ -1984,7 +1994,6 @@ fn branch_chosen_values_republish_every_execution() {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Branch-scoped definitions are retired with their branch
 // ---------------------------------------------------------------------------
@@ -2021,9 +2030,15 @@ fn a_definition_inside_an_untaken_branch_is_retracted() {
             edit.view::<BranchFlag>().set_on(true);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    let _ = runtime
+        .read_outputs::<branch_scope::Root>()
+        .expect("outputs");
     assert_eq!(
-        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        runtime
+            .read()
+            .expect("snapshot")
+            .view::<BranchSlot>()
+            .field0(),
         vec![(1, 10)]
     );
 
@@ -2032,9 +2047,15 @@ fn a_definition_inside_an_untaken_branch_is_retracted() {
             edit.view::<BranchFlag>().set_on(false);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    let _ = runtime
+        .read_outputs::<branch_scope::Root>()
+        .expect("outputs");
     assert_eq!(
-        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        runtime
+            .read()
+            .expect("snapshot")
+            .view::<BranchSlot>()
+            .field0(),
         Vec::<(u32, u32)>::new(),
         "the retired branch's definition must be retracted"
     );
@@ -2044,9 +2065,15 @@ fn a_definition_inside_an_untaken_branch_is_retracted() {
             edit.view::<BranchFlag>().set_on(true);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<branch_scope::Root>().expect("outputs");
+    let _ = runtime
+        .read_outputs::<branch_scope::Root>()
+        .expect("outputs");
     assert_eq!(
-        runtime.read().expect("snapshot").view::<BranchSlot>().field0(),
+        runtime
+            .read()
+            .expect("snapshot")
+            .view::<BranchSlot>()
+            .field0(),
         vec![(1, 10)],
         "the branch restages its definition when reachable again"
     );
@@ -2203,7 +2230,13 @@ fn a_diamond_tuple_never_mixes_revisions() {
     // (value, (doubled, parity)): `doubled` changes every step; `parity` holds
     // at 0 for 2->4 and changes at 5. A consumer that combined a new `doubled`
     // with a stale `parity` would fail here.
-    for (value, expected) in [(2, (4, 0)), (4, (8, 0)), (5, (10, 1)), (6, (12, 0)), (6, (12, 0))] {
+    for (value, expected) in [
+        (2, (4, 0)),
+        (4, (8, 0)),
+        (5, (10, 1)),
+        (6, (12, 0)),
+        (6, (12, 0)),
+    ] {
         runtime
             .edit(|edit| {
                 edit.view::<DiamondInput>().set_value(value);
@@ -2213,9 +2246,8 @@ fn a_diamond_tuple_never_mixes_revisions() {
             let handles: Vec<_> = (0..2)
                 .map(|_| {
                     let runtime = &runtime;
-                    scope.spawn(move || {
-                        runtime.read_outputs::<diamond::Combine>().expect("outputs")
-                    })
+                    scope
+                        .spawn(move || runtime.read_outputs::<diamond::Combine>().expect("outputs"))
                 })
                 .collect();
             for handle in handles {
@@ -2235,7 +2267,9 @@ fn a_provider_handover_updates_its_observer() {
             edit.view::<HandoverFlag>().set_on(false);
         })
         .expect("edit");
-    let _ = runtime.read_outputs::<handover::Root>().expect("initial demand");
+    let _ = runtime
+        .read_outputs::<handover::Root>()
+        .expect("initial demand");
 
     type Observed = Vec<Vec<(u32, u32)>>;
     let seen: Arc<Mutex<Observed>> = Arc::new(Mutex::new(Vec::new()));
@@ -2309,21 +2343,30 @@ mod derived_list_provider {
 #[test]
 fn derived_list_live_reads_match_the_snapshot() {
     let runtime = Runtime::new();
-    runtime.install(derived_list_provider::Root).expect("install");
+    runtime
+        .install(derived_list_provider::Root)
+        .expect("install");
     runtime
         .edit(|edit| edit.view::<DerivedListFlag>().set_on(true))
         .expect("edit");
     assert_eq!(
-        runtime.read_outputs::<derived_list_provider::Root>().expect("live read"),
+        runtime
+            .read_outputs::<derived_list_provider::Root>()
+            .expect("live read"),
         (1, vec![1, 2, 3], 3, Some(3))
     );
-    assert_eq!(runtime.snapshot().view::<DerivedSlot>().field0(), vec![1, 2, 3]);
+    assert_eq!(
+        runtime.snapshot().view::<DerivedSlot>().field0(),
+        vec![1, 2, 3]
+    );
 
     runtime
         .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
         .expect("edit");
     assert_eq!(
-        runtime.read_outputs::<derived_list_provider::Root>().expect("live read"),
+        runtime
+            .read_outputs::<derived_list_provider::Root>()
+            .expect("live read"),
         (2, vec![4], 1, None)
     );
     assert_eq!(runtime.snapshot().view::<DerivedSlot>().field0(), vec![4]);
@@ -2387,7 +2430,9 @@ fn a_source_only_edit_notifies_its_observer() {
 #[test]
 fn an_edit_is_not_failed_by_a_failing_root() {
     let runtime = Runtime::new();
-    runtime.install_general(BrokenRoot).expect("install general");
+    runtime
+        .install_general(BrokenRoot)
+        .expect("install general");
     runtime
         .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
         .expect("seed");
@@ -2442,7 +2487,9 @@ mod conditional_definition {
 #[test]
 fn a_retracted_whole_field_definition_reverts_to_empty() {
     let runtime = Runtime::new();
-    runtime.install(conditional_definition::Root).expect("install");
+    runtime
+        .install(conditional_definition::Root)
+        .expect("install");
     for (on, expected) in [(true, (1, 42)), (false, (2, 0)), (true, (1, 42))] {
         runtime
             .edit(|edit| edit.view::<RetractFlag>().set_on(on))
@@ -2651,7 +2698,8 @@ fn two_called_components_cannot_define_one_unit() {
     let runtime = Runtime::new();
     let first = runtime.call::<call_conflict::__FirstSpec>(call_conflict::__FirstArgs { tag: 0 });
     assert_eq!(first.expect("first call"), 1);
-    let second = runtime.call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 });
+    let second =
+        runtime.call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 });
     let error = second.expect_err("expected a duplicate definition");
     assert!(matches!(
         error,
@@ -2735,10 +2783,7 @@ fn absence_cells_are_reclaimed_with_their_consumers() {
         "expected the 100 absence cells to be reclaimed, got {stats:?}"
     );
     let after = runtime.memory_report().units;
-    assert!(
-        after + 100 <= before,
-        "units before={before} after={after}"
-    );
+    assert!(after + 100 <= before, "units before={before} after={after}");
 
     // The same query recreates its cells and still answers correctly.
     runtime
@@ -2843,11 +2888,7 @@ mod structure_map {
 fn derived_map_structure_follows_definition_changes() {
     let runtime = Runtime::new();
     runtime.install(structure_map::Root).expect("install");
-    let read = |runtime: &Runtime| {
-        runtime
-            .read_outputs::<structure_map::Root>()
-            .expect("read")
-    };
+    let read = |runtime: &Runtime| runtime.read_outputs::<structure_map::Root>().expect("read");
     assert_eq!(read(&runtime), (Vec::new(), 0, Vec::new()));
 
     runtime
@@ -3379,11 +3420,7 @@ mod keyed_lists {
 fn keyed_list_identity_survives_reorder_and_removal() {
     let runtime = Runtime::new();
     runtime.install(keyed_lists::Root).expect("install");
-    let read = |runtime: &Runtime| {
-        runtime
-            .read_outputs::<keyed_lists::Root>()
-            .expect("read")
-    };
+    let read = |runtime: &Runtime| runtime.read_outputs::<keyed_lists::Root>().expect("read");
     runtime
         .edit(|edit| edit.view::<KeyedMode>().set_mode(0))
         .expect("edit");
@@ -3406,10 +3443,7 @@ fn keyed_list_identity_survives_reorder_and_removal() {
         .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
         .expect("edit");
     let revision = runtime.revision();
-    assert_eq!(
-        read(&runtime),
-        (vec![1], vec![10], Some(10), None)
-    );
+    assert_eq!(read(&runtime), (vec![1], vec![10], Some(10), None));
     let units = runtime.dump();
     let membership = |id: &str| {
         units
@@ -3419,9 +3453,7 @@ fn keyed_list_identity_survives_reorder_and_removal() {
                     && node
                         .unit
                         .as_deref()
-                        .is_some_and(|unit| {
-                            unit.contains("Membership") && unit.contains(id)
-                        })
+                        .is_some_and(|unit| unit.contains("Membership") && unit.contains(id))
             })
             .expect("membership unit")
     };
@@ -3477,10 +3509,7 @@ fn derived_list_map_reuses_members_after_reorder_and_value_edit() {
         runtime.read_outputs::<keyed_map::Root>().expect("read"),
         vec![20, 40]
     );
-    assert_eq!(
-        KEYED_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
-        2
-    );
+    assert_eq!(KEYED_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst), 2);
 
     // A reorder re-runs the map call but reuses both member results.
     runtime
@@ -3541,25 +3570,15 @@ mod keyed_sets {
 fn keyed_set_membership_is_per_member() {
     let runtime = Runtime::new();
     runtime.install(keyed_sets::Root).expect("install");
-    let read = |runtime: &Runtime| {
-        runtime
-            .read_outputs::<keyed_sets::Root>()
-            .expect("read")
-    };
-    assert_eq!(
-        read(&runtime),
-        (true, true, false, vec![1, 2])
-    );
+    let read = |runtime: &Runtime| runtime.read_outputs::<keyed_sets::Root>().expect("read");
+    assert_eq!(read(&runtime), (true, true, false, vec![1, 2]));
 
     // Adding a third member changes only that member's membership unit.
     runtime
         .edit(|edit| edit.view::<KeyedMode>().set_mode(1))
         .expect("edit");
     let revision = runtime.revision();
-    assert_eq!(
-        read(&runtime),
-        (true, true, true, vec![1, 2, 3])
-    );
+    assert_eq!(read(&runtime), (true, true, true, vec![1, 2, 3]));
     let units = runtime.dump();
     let membership = |id: &str| {
         units
@@ -3569,9 +3588,7 @@ fn keyed_set_membership_is_per_member() {
                     && node
                         .unit
                         .as_deref()
-                        .is_some_and(|unit| {
-                            unit.contains("Membership") && unit.contains(id)
-                        })
+                        .is_some_and(|unit| unit.contains("Membership") && unit.contains(id))
             })
             .expect("membership unit")
     };
@@ -3583,10 +3600,7 @@ fn keyed_set_membership_is_per_member() {
         .edit(|edit| edit.view::<KeyedMode>().set_mode(2))
         .expect("edit");
     let removal = runtime.revision();
-    assert_eq!(
-        read(&runtime),
-        (false, true, false, vec![2])
-    );
+    assert_eq!(read(&runtime), (false, true, false, vec![2]));
     let units = runtime.dump();
     let membership = |id: &str| {
         units
@@ -3596,9 +3610,7 @@ fn keyed_set_membership_is_per_member() {
                     && node
                         .unit
                         .as_deref()
-                        .is_some_and(|unit| {
-                            unit.contains("Membership") && unit.contains(id)
-                        })
+                        .is_some_and(|unit| unit.contains("Membership") && unit.contains(id))
             })
             .expect("membership unit")
     };
@@ -3795,9 +3807,9 @@ mod map_to_list_gate {
     pub fn root(table: &CrossTable) -> (Vec<u64>, Option<u64>, Option<u64>) {
         reactive::ensure_view(<CrossList as reactive::ViewSchema>::DESCRIPTOR);
         let target = CrossList.field0();
-        table.entries().to_list(&target, |key, value| {
-            Some((u64::from(*key), *value * 2))
-        });
+        table
+            .entries()
+            .to_list(&target, |key, value| Some((u64::from(*key), *value * 2)));
         (target.ids().to_vec(), target.get_key(1), target.get_key(2))
     }
 }
@@ -3841,14 +3853,11 @@ fn map_to_list_preserves_key_identity() {
         .into_iter()
         .find(|node| {
             node.kind == "Unit"
-                && node
-                    .unit
-                    .as_deref()
-                    .is_some_and(|unit| {
-                        unit.contains(&view)
-                            && unit.contains("Membership")
-                            && unit.contains("Some(\"2\")")
-                    })
+                && node.unit.as_deref().is_some_and(|unit| {
+                    unit.contains(&view)
+                        && unit.contains("Membership")
+                        && unit.contains("Some(\"2\")")
+                })
         })
         .expect("list membership unit");
     assert!(
@@ -3870,7 +3879,9 @@ mod list_to_map_gate {
             KeyedList.define_keyed([(1u64, 10u64), (2, 20)]);
         }
         let target = CrossMap.field0();
-        KeyedList.field0().to_map(&target, |id, value| Some((id as u32, *value)));
+        KeyedList
+            .field0()
+            .to_map(&target, |id, value| Some((id as u32, *value)));
         (target.to_vec(), target.get(&1), target.get(&2))
     }
 }
@@ -3924,17 +3935,11 @@ mod derived_graph {
         Vec<(u64, u64)>,
     ) {
         if mode.mode() == 1 {
-            DerivedGraph.define_graph(
-                &[(1u64, 11u64), (2, 20)],
-                &[(10u64, 1, 2, 100u64)],
-            );
+            DerivedGraph.define_graph(&[(1u64, 11u64), (2, 20)], &[(10u64, 1, 2, 100u64)]);
         } else if mode.mode() == 2 {
             DerivedGraph.define_graph(&[(1u64, 10u64)], &[]);
         } else {
-            DerivedGraph.define_graph(
-                &[(1u64, 10u64), (2, 20)],
-                &[(10u64, 1, 2, 100u64)],
-            );
+            DerivedGraph.define_graph(&[(1u64, 10u64), (2, 20)], &[(10u64, 1, 2, 100u64)]);
         }
         (
             DerivedGraph.nodes(),
@@ -3965,7 +3970,10 @@ fn derived_graph_topology_and_payloads_are_separate() {
         )
     );
     let topology_version = |runtime: &Runtime| {
-        let view = format!("{:?}", <DerivedGraph as reactive::ViewSchema>::DESCRIPTOR.id);
+        let view = format!(
+            "{:?}",
+            <DerivedGraph as reactive::ViewSchema>::DESCRIPTOR.id
+        );
         runtime
             .dump()
             .into_iter()
@@ -4113,9 +4121,7 @@ fn join_view_updates_only_changed_keys() {
             .find(|node| {
                 node.kind == "Unit"
                     && node.unit.as_deref().is_some_and(|unit| {
-                        unit.contains(&view)
-                            && unit.contains("Value")
-                            && unit.contains(id)
+                        unit.contains(&view) && unit.contains("Value") && unit.contains(id)
                     })
             })
             .expect("target value unit")
@@ -4135,17 +4141,11 @@ mod graph_node_map_gate {
     pub fn root(mode: &GraphMode) -> (Vec<(u64, u64)>, Option<u64>, Option<u64>) {
         reactive::ensure_view(<GraphNodeMap as reactive::ViewSchema>::DESCRIPTOR);
         if mode.mode() == 1 {
-            DerivedGraph.define_graph(
-                &[(1u64, 11u64), (2, 20)],
-                &[(10u64, 1, 2, 100u64)],
-            );
+            DerivedGraph.define_graph(&[(1u64, 11u64), (2, 20)], &[(10u64, 1, 2, 100u64)]);
         } else if mode.mode() == 2 {
             DerivedGraph.define_graph(&[(1u64, 10u64)], &[]);
         } else {
-            DerivedGraph.define_graph(
-                &[(1u64, 10u64), (2, 20)],
-                &[(10u64, 1, 2, 100u64)],
-            );
+            DerivedGraph.define_graph(&[(1u64, 10u64), (2, 20)], &[(10u64, 1, 2, 100u64)]);
         }
         let target = GraphNodeMap.field0();
         DerivedGraph.field0().node_map(&target);
@@ -4173,7 +4173,10 @@ fn graph_node_map_updates_one_node() {
             .expect("read"),
         (vec![(1, 11), (2, 20)], Some(11), Some(20))
     );
-    let view = format!("{:?}", <GraphNodeMap as reactive::ViewSchema>::DESCRIPTOR.id);
+    let view = format!(
+        "{:?}",
+        <GraphNodeMap as reactive::ViewSchema>::DESCRIPTOR.id
+    );
     let unit = |id: &str| {
         runtime
             .dump()
@@ -4181,9 +4184,7 @@ fn graph_node_map_updates_one_node() {
             .find(|node| {
                 node.kind == "Unit"
                     && node.unit.as_deref().is_some_and(|unit| {
-                        unit.contains(&view)
-                            && unit.contains("Value")
-                            && unit.contains(id)
+                        unit.contains(&view) && unit.contains("Value") && unit.contains(id)
                     })
             })
             .expect("node-map value unit")
@@ -4216,13 +4217,9 @@ fn a_per_key_observer_ignores_other_keys() {
     let seen = Arc::new(AtomicUsize::new(0));
     let sink = Arc::clone(&seen);
     let subscription = runtime
-        .observe_entry::<ConsumerTable, u32>(
-            reactive::FieldId(0),
-            1u32,
-            move |_snapshot| {
-                sink.fetch_add(1, Ordering::SeqCst);
-            },
-        )
+        .observe_entry::<ConsumerTable, u32>(reactive::FieldId(0), 1u32, move |_snapshot| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
         .expect("observe entry");
 
     runtime
@@ -4266,9 +4263,7 @@ fn collect_reclaims_unreachable_scopes() {
     let runtime = Runtime::new();
     for tag in 0..32u64 {
         let _ = runtime
-            .call::<call_projection_gate::__PairSpec>(
-                call_projection_gate::__PairArgs { tag },
-            )
+            .call::<call_projection_gate::__PairSpec>(call_projection_gate::__PairArgs { tag })
             .expect("call");
     }
     let before = runtime.memory_report().scopes;
@@ -4383,7 +4378,9 @@ mod routing_generation_gate {
 #[test]
 fn a_provider_handover_advances_the_routing_generation() {
     let runtime = Runtime::new();
-    runtime.install(routing_generation_gate::Root).expect("install");
+    runtime
+        .install(routing_generation_gate::Root)
+        .expect("install");
     runtime
         .edit(|edit| edit.view::<RouteFlag>().set_on(true))
         .expect("seed");
@@ -4610,10 +4607,7 @@ fn argument_churn_stays_within_the_retention_policy() {
         runtime
             .edit(|edit| edit.view::<ChurnKey>().set_value(value))
             .expect("edit");
-        assert_eq!(
-            runtime.read_outputs::<churn::Root>().expect("read"),
-            value
-        );
+        assert_eq!(runtime.read_outputs::<churn::Root>().expect("read"), value);
     }
     let stats = runtime.collect();
     assert!(stats.invocations_reclaimed > 0, "{stats:?}");
@@ -4672,9 +4666,7 @@ fn collect_reuses_arena_slots_and_detects_stale_ids() {
     let runtime = Runtime::new();
     for tag in 0..32u64 {
         let _ = runtime
-            .call::<call_projection_gate::__PairSpec>(
-                call_projection_gate::__PairArgs { tag },
-            )
+            .call::<call_projection_gate::__PairSpec>(call_projection_gate::__PairArgs { tag })
             .expect("call");
     }
     let before = runtime.memory_report().nodes;
@@ -4690,9 +4682,7 @@ fn collect_reuses_arena_slots_and_detects_stale_ids() {
 
     for tag in 100..132u64 {
         let _ = runtime
-            .call::<call_projection_gate::__PairSpec>(
-                call_projection_gate::__PairArgs { tag },
-            )
+            .call::<call_projection_gate::__PairSpec>(call_projection_gate::__PairArgs { tag })
             .expect("call");
     }
     let after = runtime.memory_report().nodes;
@@ -4833,7 +4823,10 @@ fn signed_weight_join_applies_the_bilinear_rule() {
         .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
         .expect("read");
     assert!(!joined.contains_key(&2));
-    eprintln!("target: {:?}", runtime.snapshot().view::<JoinedWeights>().field0());
+    eprintln!(
+        "target: {:?}",
+        runtime.snapshot().view::<JoinedWeights>().field0()
+    );
     assert!(!joined.contains_key(&2));
     assert_eq!(
         runtime.snapshot().view::<JoinedWeights>().field0(),
@@ -4964,10 +4957,7 @@ fn automatic_collection_reclaims_on_demand_entry() {
         runtime
             .edit(|edit| edit.view::<ChurnKey>().set_value(value))
             .expect("edit");
-        assert_eq!(
-            runtime.read_outputs::<churn::Root>().expect("read"),
-            value
-        );
+        assert_eq!(runtime.read_outputs::<churn::Root>().expect("read"), value);
     }
     assert!(
         runtime.stats().auto_collects > 0,
@@ -5388,10 +5378,7 @@ fn invocation_cap_bounds_the_cache() {
         runtime
             .edit(|edit| edit.view::<ChurnKey>().set_value(value))
             .expect("edit");
-        assert_eq!(
-            runtime.read_outputs::<churn::Root>().expect("read"),
-            value
-        );
+        assert_eq!(runtime.read_outputs::<churn::Root>().expect("read"), value);
         assert!(
             runtime.memory_report().invocations <= 3,
             "the cache must stay bounded at step {value}: {}",
@@ -5612,7 +5599,7 @@ fn perturb(value: u32) -> u64 {
 
 #[reactive]
 mod perturb_map {
-    use super::{perturb, PerturbSeeds};
+    use super::{PerturbSeeds, perturb};
 
     #[component]
     pub fn total(seeds: &PerturbSeeds) -> u64 {
@@ -5675,7 +5662,13 @@ fn joining_two_empty_source_maps_is_empty() {
         .read_outputs_general::<reactive::EquiJoin<WeightJoin>>()
         .expect("read");
     assert!(joined.is_empty());
-    assert!(runtime.snapshot().view::<JoinedWeights>().field0().is_empty());
+    assert!(
+        runtime
+            .snapshot()
+            .view::<JoinedWeights>()
+            .field0()
+            .is_empty()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -5749,7 +5742,10 @@ fn definitions_require_a_declared_view() {
     runtime
         .edit(|edit| edit.view::<CapFlag>().set_on(true))
         .expect("seed");
-    assert_eq!(runtime.read_outputs::<cap_allowed::Root>().expect("read"), 0);
+    assert_eq!(
+        runtime.read_outputs::<cap_allowed::Root>().expect("read"),
+        0
+    );
     assert_eq!(
         runtime.snapshot().view::<CapSlot>().field0(),
         7,
@@ -5871,7 +5867,10 @@ fn snapshots_carry_routing_certificates() {
     let _ = runtime
         .read_outputs::<routing_generation_gate::Root>()
         .expect("read");
-    assert!(!runtime.validate_routing(&stamp), "the old snapshot is stale");
+    assert!(
+        !runtime.validate_routing(&stamp),
+        "the old snapshot is stale"
+    );
     let fresh = runtime
         .snapshot()
         .routing_stamp(view)
@@ -5985,18 +5984,12 @@ fn routing_recipes_select_their_provider() {
     let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
     let recipe = runtime.routing_recipe(view).expect("recipe");
     assert!(runtime.validate_routing(&recipe.stamp));
-    let unit = reactive::UnitKey::field(
-        view,
-        reactive::FieldId(0),
-        reactive::UnitKind::Value,
-    );
+    let unit = reactive::UnitKey::field(view, reactive::FieldId(0), reactive::UnitKind::Value);
     assert!(
         recipe.providers.iter().any(|(key, _)| *key == unit),
         "the recipe names the installed unit"
     );
-    runtime.set_route_selector(std::sync::Arc::new(
-        reactive::RecipeSelector::new(&recipe),
-    ));
+    runtime.set_route_selector(std::sync::Arc::new(reactive::RecipeSelector::new(&recipe)));
     assert_eq!(
         runtime
             .call::<call_conflict::__SecondSpec>(call_conflict::__SecondArgs { tag: 0 })
@@ -6041,11 +6034,7 @@ fn identity_report_summarizes_reuse() {
 fn planned_routes_authorize_one_component() {
     let runtime = Runtime::new();
     let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
-    let unit = reactive::UnitKey::field(
-        view,
-        reactive::FieldId(0),
-        reactive::UnitKind::Value,
-    );
+    let unit = reactive::UnitKey::field(view, reactive::FieldId(0), reactive::UnitKind::Value);
     runtime.plan_route([(
         unit,
         <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID,
@@ -6081,11 +6070,7 @@ fn planning_a_route_advances_the_routing_generation() {
     let runtime = Runtime::new();
     runtime.register_view(<CallSlot as reactive::ViewSchema>::DESCRIPTOR);
     let view = <CallSlot as reactive::ViewSchema>::DESCRIPTOR.id;
-    let unit = reactive::UnitKey::field(
-        view,
-        reactive::FieldId(0),
-        reactive::UnitKind::Value,
-    );
+    let unit = reactive::UnitKey::field(view, reactive::FieldId(0), reactive::UnitKind::Value);
     let before = runtime.routing_stamp(view).expect("region stamp");
     runtime.plan_route([(
         unit.clone(),
@@ -6099,13 +6084,10 @@ fn planning_a_route_advances_the_routing_generation() {
     assert!(runtime.validate_routing(&after));
     let recipe = runtime.routing_recipe(view).expect("recipe");
     assert!(
-        recipe
-            .planned
-            .iter()
-            .any(|(planned, component)| {
-                *planned == unit
-                    && *component == <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID
-            }),
+        recipe.planned.iter().any(|(planned, component)| {
+            *planned == unit
+                && *component == <call_conflict::__FirstSpec as reactive::ComponentSpec>::ID
+        }),
         "the recipe names the planned component"
     );
 }

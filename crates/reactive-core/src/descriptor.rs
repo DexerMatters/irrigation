@@ -79,35 +79,33 @@ pub struct ContentVtable {
     /// Creates the empty content value.
     pub empty: fn() -> Content,
     /// Installs one unit into the content.
-    pub define: fn(
-        &Content,
-        &UnitKey,
-        crate::value::Value,
-    ) -> Content,
+    pub define: fn(&Content, &UnitKey, crate::value::Value) -> Content,
     /// Retracts one unit from the content.
-    pub retract: fn(
-        &Content,
-        &UnitKey,
-    ) -> Content,
+    pub retract: fn(&Content, &UnitKey) -> Content,
     /// Reports whether a unit is present.
-    pub contains: fn(
-        &Content,
-        &UnitKey,
-    ) -> bool,
+    pub contains: fn(&Content, &UnitKey) -> bool,
     /// Reads the current value of a unit out of the content.
-    pub get: fn(
-        &Content,
-        &UnitKey,
-    ) -> Option<crate::value::Value>,
+    pub get: fn(&Content, &UnitKey) -> Option<crate::value::Value>,
     /// Projects a field's structure, when the family has one.
     pub structure: fn(&Content, FieldId) -> Option<Structure>,
+    /// Counts a field's display elements, when that is cheap.
+    pub len: fn(&Content, FieldId) -> Option<usize>,
     /// Compares two content values semantically.
-    pub eq: fn(
-        &Content,
-        &Content,
-    ) -> bool,
+    pub eq: fn(&Content, &Content) -> bool,
     /// Formats the content for diagnostics.
     pub debug: fn(&Content) -> String,
+    /// Spells one element value for the board, when the View's types can.
+    ///
+    /// A projection that draws a View without a host renderer calls this with
+    /// the unit's value; `None` means the projection asked a value it cannot
+    /// spell (a tree's own kinds, a View that opted out) and the row should show
+    /// identity only.
+    pub describe: fn(&crate::value::Value) -> Option<String>,
+    /// Names a tree node's declared variant, for a drawing with no renderer.
+    ///
+    /// Only tree Views fill this in; anything else reports `None` and the
+    /// projection falls back to the type index it has.
+    pub variant_label: fn(u32, u16) -> Option<&'static str>,
 }
 
 /// Describes a registered View namespace.
@@ -176,12 +174,7 @@ impl UnitKey {
 
     /// A unit for one entity inside a field.
     #[must_use]
-    pub fn entity(
-        view: ViewId,
-        field: FieldId,
-        kind: UnitKind,
-        entity: Arc<dyn AnyKey>,
-    ) -> Self {
+    pub fn entity(view: ViewId, field: FieldId, kind: UnitKind, entity: Arc<dyn AnyKey>) -> Self {
         Self {
             view,
             field,
@@ -233,10 +226,7 @@ impl fmt::Debug for UnitKey {
             .field("view", &self.view)
             .field("field", &self.field)
             .field("kind", &self.kind)
-            .field(
-                "entity",
-                &self.entity.as_ref().map(|key| key.key_display()),
-            )
+            .field("entity", &self.entity.as_ref().map(|key| key.key_display()))
             .finish()
     }
 }

@@ -4,7 +4,7 @@
 //! nodes are entities, tags and fields are separate observations, and edits
 //! preserve identity.
 
-use reactive::{reactive, tree_view, Runtime};
+use reactive::{Runtime, reactive, tree_view};
 
 #[tree_view(root = Document, view = Syntax)]
 pub mod syntax {
@@ -17,8 +17,15 @@ pub mod syntax {
     pub enum Expr {
         Literal(Literal),
         Name(String),
-        Call { callee: Box<Expr>, args: Vec<Expr> },
-        Let { name: String, value: Box<Expr>, body: Box<Expr> },
+        Call {
+            callee: Box<Expr>,
+            args: Vec<Expr>,
+        },
+        Let {
+            name: String,
+            value: Box<Expr>,
+            body: Box<Expr>,
+        },
     }
 
     #[derive(Clone, Debug, PartialEq)]
@@ -97,7 +104,10 @@ fn tree_reads_walk_kinds_and_fields() {
             tree.set_root(&document());
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 4);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        4
+    );
 
     let snapshot = runtime.read().expect("read");
     let view = snapshot.view::<syntax::Syntax>();
@@ -131,14 +141,20 @@ fn a_replaced_node_keeps_its_identity_and_repairs_consumers() {
             tree.replace_expr(literal, &syntax::Expr::Literal(syntax::Literal::Int(20)));
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 22);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        22
+    );
 
     // The replacement preserved the node identity.
     let snapshot = runtime.read().expect("read");
     let root = snapshot.view::<syntax::Syntax>().root().expect("root");
     let items = root.items();
     assert_eq!(items[1].raw(), literal_id);
-    assert_eq!(items[1].literal().and_then(|literal| literal.int()), Some(20));
+    assert_eq!(
+        items[1].literal().and_then(|literal| literal.int()),
+        Some(20)
+    );
 }
 
 #[test]
@@ -159,7 +175,10 @@ fn moving_a_subtree_preserves_identities() {
             assert!(tree.move_subtree(moved.raw(), call.raw(), 1, 0));
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 4);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        4
+    );
 
     let snapshot = runtime.read().expect("read");
     let root = snapshot.view::<syntax::Syntax>().root().expect("root");
@@ -184,7 +203,10 @@ fn removing_a_subtree_retracts_its_nodes() {
             tree.remove_expr(items[0].clone());
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 2);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        2
+    );
     let snapshot = runtime.read().expect("read");
     let view = snapshot.view::<syntax::Syntax>();
     assert_eq!(view.node_count(), 3);
@@ -200,7 +222,10 @@ fn leaf_field_edits_do_not_invalidate_other_projections() {
             tree.set_root(&document());
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 4);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        4
+    );
 
     let before = runtime.memory_report();
     runtime
@@ -212,7 +237,10 @@ fn leaf_field_edits_do_not_invalidate_other_projections() {
             tree.replace_expr(literal, &syntax::Expr::Literal(syntax::Literal::Int(3)));
         })
         .expect("edit");
-    assert_eq!(runtime.read_outputs::<analysis::Total>().expect("outputs"), 5);
+    assert_eq!(
+        runtime.read_outputs::<analysis::Total>().expect("outputs"),
+        5
+    );
     // Replacing one leaf does not allocate a whole new tree.
     let after = runtime.memory_report();
     assert!(
@@ -288,10 +316,7 @@ fn replacing_a_variant_reuses_unchanged_children() {
         .edit(|edit| {
             let mut tree = edit.view::<syntax::Syntax>();
             let items = tree.root().items();
-            tree.replace_expr(
-                items[1].clone(),
-                &syntax::Expr::Name(String::from("x")),
-            );
+            tree.replace_expr(items[1].clone(), &syntax::Expr::Name(String::from("x")));
         })
         .expect("edit");
     let snapshot = runtime.snapshot();
