@@ -90,6 +90,58 @@ let subscription = runtime.observe::<Squares>(|snapshot| {
    invocation. Definitions commit atomically with the node's value and trace;
    two providers for one unit produce a deterministic diagnostic.
 
+## Observatory: watching the runtime work
+
+The workspace ships an optional observation path and a page for it. The runtime
+emits compact events into a bounded recorder; a projection layer turns those
+events and the committed Views into one live board.
+
+```sh
+cd web/observatory && npm install && npm run build && cd ../..
+cargo run --example observatory -p reactive --features observatory
+# Observatory listening on http://127.0.0.1:7777
+```
+
+The board is a single zoomable surface. Every View is a plate, drawn in its own
+idiom — a syntax tree as an outline, a token stream or a value map as rows, a
+reduction as one figure — and every component is a plate of its own, between the
+Views it reads and the Views it defines, with an ink that also marks the plates
+that produce or consume it. The layout is the runtime's own structure: ranks from
+the longest path, ordered by their neighbours, folded into as many columns as the
+window needs. A plate drags; `Tidy` puts the board back. Reading the page never
+demands computation.
+
+Edit a source View in place: double-click the plate, type, and the change commits
+as you type. The host parses the text, the runtime stages only the units that
+differ, and the board says what moved: the plate takes a signal bar, each changed
+row takes a mark and a `changed at r<rev>` title, the footer counts the rows
+(`3 of 33 rows at r2`) or says `whole value` when the View has no per-row
+identity, a component that ran says `ran at r2`, and one that ran without
+changing anything says `same content`. Selecting an older revision on the tape
+re-annotates the board from the journal.
+
+Three hosts ship with the workspace:
+
+```sh
+# JSON: lexer and parser as general components, plus a sink that walks the
+# published tree and writes a keyed table of JSON paths.
+cargo run --example observatory_json -p reactive --features observatory -- --bind 127.0.0.1:7791
+
+# The same pipeline over a smaller grammar, with no sink.
+cargo run --example observatory_syntax -p reactive --features observatory -- --bind 127.0.0.1:7790
+
+# The demo above: a program text and a weight list, both editable, feeding a
+# root and five invoked components.
+cargo run --example observatory -p reactive --features observatory
+```
+
+`cargo run --release --example observe_cost` reports what recording costs on the
+scaling workload, and `--example observe_board` puts ten Views on one board, one
+per module kind.
+
+Design and delivery notes: [`plans/runtime-visualization-plan.md`](plans/runtime-visualization-plan.md)
+and [`plans/runtime-visualization-status.md`](plans/runtime-visualization-status.md).
+
 ## What is implemented
 
 | Plan area | Status |
