@@ -304,11 +304,6 @@ impl Journal {
         self.last_noop.as_ref()
     }
 
-    /// Clears the no-op notice; the page calls this after showing it.
-    pub fn clear_noop(&mut self) {
-        self.last_noop = None;
-    }
-
     fn open_mut(&mut self) -> Option<&mut RevisionRecord> {
         let revision = self.records.keys().next_back().copied()?;
         self.records.get_mut(&revision)

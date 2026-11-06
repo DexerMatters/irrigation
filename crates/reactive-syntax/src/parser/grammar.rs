@@ -1,6 +1,6 @@
 //! Parser grammar specification, EBNF lowering, and compiled grammar IR.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::lexer::spec::{self, DslKind, DslToken};
 use crate::lexer::{LexError, LexerSpec, TokenKindId};
@@ -127,17 +127,6 @@ impl Production {
     }
 }
 
-/// Policy for a grammar-declared error class.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ErrorPolicy {
-    /// Publish diagnostics and charge normal recovery cost.
-    #[default]
-    Report,
-    /// Keep the error explicit in the tree/token stream without publishing a
-    /// diagnostic or charging recovery cost.
-    Ignore,
-}
-
 /// A compiled grammar plus its parse table.
 #[derive(Clone, Debug)]
 pub struct Grammar {
@@ -153,9 +142,6 @@ pub struct Grammar {
     pub(crate) table_mode: TableMode,
     pub(crate) eof_terminal: TerminalId,
     pub(crate) error_terminal: Option<TerminalId>,
-    pub(crate) lex_error_policy: ErrorPolicy,
-    pub(crate) node_error_policy: ErrorPolicy,
-    pub(crate) ignored_lex_error_kinds: FxHashSet<TokenKindId>,
 }
 
 impl Grammar {
@@ -236,69 +222,6 @@ impl Grammar {
         &self.conflicts
     }
 
-    /// Nullable nonterminals as a fixed-point vector.
-    #[must_use]
-    pub fn nullable_nonterminals(&self) -> Vec<bool> {
-        let mut nullable = vec![false; self.nonterminals.len()];
-        loop {
-            let mut changed = false;
-            for production in &self.productions {
-                if nullable[production.lhs] {
-                    continue;
-                }
-                if production.rhs.iter().all(|symbol| match symbol {
-                    Symbol::Terminal(_) => false,
-                    Symbol::Nonterminal(id) => nullable[*id],
-                }) {
-                    nullable[production.lhs] = true;
-                    changed = true;
-                }
-            }
-            if !changed {
-                return nullable;
-            }
-        }
-    }
-
-    /// All productions with at least one right-nullable reduction prefix.
-    #[must_use]
-    pub fn rnglr_reductions(&self) -> Vec<(ProductionId, Vec<usize>)> {
-        self.productions
-            .iter()
-            .filter_map(|production| {
-                let prefixes = self.rn_reduction_prefixes(production.id);
-                (prefixes.len() > 1).then_some((production.id, prefixes))
-            })
-            .collect()
-    }
-
-    /// Prefix lengths whose remaining suffix is nullable.
-    #[must_use]
-    pub fn rn_reduction_prefixes(&self, production_id: ProductionId) -> Vec<usize> {
-        let Some(production) = self.productions.get(production_id) else {
-            return Vec::new();
-        };
-        (0..=production.rhs.len())
-            .filter(|prefix| self.is_right_nullable(production_id, *prefix))
-            .collect()
-    }
-
-    /// Whether the suffix after `prefix` is nullable for one production.
-    #[must_use]
-    pub fn is_right_nullable(&self, production_id: ProductionId, prefix: usize) -> bool {
-        let Some(production) = self.productions.get(production_id) else {
-            return false;
-        };
-        if prefix > production.rhs.len() {
-            return false;
-        }
-        let nullable = self.nullable_nonterminals();
-        production.rhs[prefix..].iter().all(|symbol| match symbol {
-            Symbol::Terminal(_) => false,
-            Symbol::Nonterminal(id) => nullable[*id],
-        })
-    }
-
     /// Parse table.
     #[must_use]
     pub fn table(&self) -> &Table {
@@ -321,33 +244,6 @@ impl Grammar {
     #[must_use]
     pub fn error_terminal(&self) -> Option<TerminalId> {
         self.error_terminal
-    }
-
-    /// Diagnostic policy for lexical errors.
-    #[must_use]
-    pub fn lex_error_policy(&self) -> ErrorPolicy {
-        self.lex_error_policy
-    }
-
-    /// Whether a lexical error kind has `ignore` policy.
-    #[must_use]
-    pub fn is_lex_error_ignored(&self, kind: TokenKindId) -> bool {
-        self.ignored_lex_error_kinds.contains(&kind)
-    }
-
-    /// Diagnostic policy for parser recovery nodes.
-    #[must_use]
-    pub fn node_error_policy(&self) -> ErrorPolicy {
-        self.node_error_policy
-    }
-
-    /// Finds a nonterminal by source name.
-    #[must_use]
-    pub fn nonterminal_by_name(&self, name: &str) -> Option<NonterminalId> {
-        self.nonterminals
-            .iter()
-            .find(|nonterminal| nonterminal.name == name)
-            .map(|nonterminal| nonterminal.id)
     }
 }
 
@@ -386,9 +282,6 @@ struct DslGrammar {
     conflicts: Vec<(String, String)>,
     table_mode: TableMode,
     error_token: Option<String>,
-    lex_error_policy: ErrorPolicy,
-    node_error_policy: ErrorPolicy,
-    ignored_lex_errors: FxHashSet<String>,
 }
 
 struct RawRule {
@@ -403,12 +296,11 @@ struct RawAlt {
     ast_action: Option<AstAction>,
 }
 
-#[allow(dead_code)]
 enum RawElem {
-    Ref(String, usize),
+    Ref(String),
     Literal(String, usize),
-    Group(Vec<RawAlt>, usize),
-    Repeat(Box<RawElem>, char, usize),
+    Group(Vec<RawAlt>),
+    Repeat(Box<RawElem>, char),
     Field(String, Box<RawElem>),
 }
 
@@ -433,9 +325,6 @@ impl DslGrammar {
                 conflicts: Vec::new(),
                 table_mode: TableMode::Lalr,
                 error_token: None,
-                lex_error_policy: ErrorPolicy::Report,
-                node_error_policy: ErrorPolicy::Report,
-                ignored_lex_errors: FxHashSet::default(),
             },
         };
         parser.parse_top()?;
@@ -540,17 +429,12 @@ impl DslGrammarParser<'_> {
             match class.as_str() {
                 "token" => {
                     let name = self.expect_name("error token name")?;
-                    self.grammar.error_token = Some(name.clone());
-                    let policy = self.parse_error_policy()?;
-                    if policy == ErrorPolicy::Ignore {
-                        self.grammar.ignored_lex_errors.insert(name);
-                    } else {
-                        self.grammar.ignored_lex_errors.remove(&name);
-                    }
+                    self.grammar.error_token = Some(name);
+                    self.parse_error_policy()?;
                 }
                 "node" => {
                     let _ = self.expect_name("error node name")?;
-                    self.grammar.node_error_policy = self.parse_error_policy()?;
+                    self.parse_error_policy()?;
                 }
                 other => {
                     return Err(self.error(format!("unknown error class `{other}`")));
@@ -579,11 +463,10 @@ impl DslGrammarParser<'_> {
         Err(self.error("unterminated recovery block"))
     }
 
-    fn parse_error_policy(&mut self) -> Result<ErrorPolicy, GrammarError> {
+    fn parse_error_policy(&mut self) -> Result<(), GrammarError> {
         let policy = self.expect_ident("error policy (`report` or `ignore`)")?;
         match policy.as_str() {
-            "report" => Ok(ErrorPolicy::Report),
-            "ignore" => Ok(ErrorPolicy::Ignore),
+            "report" | "ignore" => Ok(()),
             other => Err(self.error(format!("unknown error policy `{other}`"))),
         }
     }
@@ -680,7 +563,6 @@ impl DslGrammarParser<'_> {
     }
 
     fn parse_element(&mut self) -> Result<RawElem, GrammarError> {
-        let offset = self.peek_offset();
         let mut element = if let (
             Some(DslToken {
                 kind: DslKind::Ident(name),
@@ -700,7 +582,7 @@ impl DslGrammarParser<'_> {
         while let Some(c) = self.peek_char() {
             if c == '*' || c == '+' || c == '?' {
                 self.bump();
-                element = RawElem::Repeat(Box::new(element), c, offset);
+                element = RawElem::Repeat(Box::new(element), c);
             } else {
                 break;
             }
@@ -716,7 +598,7 @@ impl DslGrammarParser<'_> {
                 ..
             }) => {
                 self.bump();
-                Ok(RawElem::Ref(name, offset))
+                Ok(RawElem::Ref(name))
             }
             Some(DslToken {
                 kind: DslKind::Str(value),
@@ -732,7 +614,7 @@ impl DslGrammarParser<'_> {
                 self.bump();
                 let alternatives = self.parse_alternatives(&[DslKind::Symbol(')')])?;
                 self.expect_symbol(')')?;
-                Ok(RawElem::Group(alternatives, offset))
+                Ok(RawElem::Group(alternatives))
             }
             _ => Err(self.error("expected a symbol, string, or group")),
         }
@@ -1107,20 +989,6 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
             terminals[*terminal].precedence = Some(level);
         }
     }
-    let mut ignored_lex_error_kinds = FxHashSet::default();
-    for name in &raw.ignored_lex_errors {
-        let kind = if name == "error" || name == "$error" {
-            Some(lexer.error_kind())
-        } else {
-            lexer
-                .kinds()
-                .iter()
-                .find(|kind| kind.name == *name || kind.id.0.to_string() == *name)
-                .map(|kind| kind.id)
-        }
-        .unwrap_or_else(|| lexer.error_kind());
-        ignored_lex_error_kinds.insert(kind);
-    }
     reject_nullable_cycles(&nonterminals, &productions)?;
     let start_production = 0;
     let table = lr::build(
@@ -1147,9 +1015,6 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
         table_mode: raw.table_mode,
         eof_terminal,
         error_terminal,
-        lex_error_policy: raw.lex_error_policy,
-        node_error_policy: raw.node_error_policy,
-        ignored_lex_error_kinds,
     })
 }
 
@@ -1268,7 +1133,7 @@ fn lower_element(
     field_by_name: &mut FxHashMap<String, FieldId>,
 ) -> Result<(Symbol, Option<FieldId>, Vec<Production>), GrammarError> {
     match element {
-        RawElem::Ref(name, _) => {
+        RawElem::Ref(name) => {
             if let Some(terminal) = terminal_by_name.get(name).copied() {
                 Ok((Symbol::Terminal(terminal), None, Vec::new()))
             } else if let Some(nonterminal) = by_name.get(name).copied() {
@@ -1310,7 +1175,7 @@ fn lower_element(
             )?;
             Ok((symbol, Some(field), productions))
         }
-        RawElem::Group(alternatives, _) => {
+        RawElem::Group(alternatives) => {
             let id = nonterminals.len();
             nonterminals.push(Nonterminal {
                 id,
@@ -1342,7 +1207,7 @@ fn lower_element(
             }
             Ok((Symbol::Nonterminal(id), None, extra))
         }
-        RawElem::Repeat(inner, kind, _) => {
+        RawElem::Repeat(inner, kind) => {
             let id = nonterminals.len();
             nonterminals.push(Nonterminal {
                 id,

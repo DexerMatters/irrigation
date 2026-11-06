@@ -68,26 +68,10 @@ pub enum TableMode {
 
 /// Compiled LR table.
 #[derive(Clone, Debug)]
-pub struct RnReduction {
-    /// State containing the prefix item.
-    pub state: usize,
-    /// Production being reduced.
-    pub production: ProductionId,
-    /// Number of RHS symbols consumed by the prefix.
-    pub prefix: usize,
-    /// Number of nullable RHS symbols represented by the prebuilt empty suffix.
-    pub suffix_len: usize,
-    /// Lookahead terminal.
-    pub lookahead: TerminalId,
-}
-
-/// Compiled LR table.
-#[derive(Clone, Debug)]
 pub struct Table {
     states: Vec<State>,
     actions: Vec<Vec<Vec<Action>>>,
     gotos: Vec<Vec<Option<usize>>>,
-    rn_reductions: Vec<RnReduction>,
     terminal_count: usize,
     nonterminal_count: usize,
     eof_terminal: TerminalId,
@@ -112,12 +96,6 @@ impl Table {
         self.gotos[state][nonterminal]
     }
 
-    /// Number of states.
-    #[must_use]
-    pub fn state_count(&self) -> usize {
-        self.states.len()
-    }
-
     /// Number of terminals, including EOF.
     #[must_use]
     pub fn terminal_count(&self) -> usize {
@@ -128,12 +106,6 @@ impl Table {
     #[must_use]
     pub fn nonterminal_count(&self) -> usize {
         self.nonterminal_count
-    }
-
-    /// Right-nullable table reduction entries.
-    #[must_use]
-    pub fn rn_reductions(&self) -> &[RnReduction] {
-        &self.rn_reductions
     }
 
     /// EOF terminal.
@@ -203,7 +175,6 @@ pub fn build(
     make_table(
         states,
         terminals,
-        nonterminals,
         productions,
         precedence,
         conflicts,
@@ -342,7 +313,6 @@ fn merge_lalr(canonical: Vec<State>) -> Vec<State> {
 fn make_table(
     states: Vec<State>,
     terminals: &[Terminal],
-    nonterminals: &[super::grammar::Nonterminal],
     productions: &[Production],
     precedence: &[PrecedenceLevel],
     conflicts: &[(String, String)],
@@ -406,48 +376,10 @@ fn make_table(
         }
     }
 
-    let mut rn_reductions = Vec::new();
-    let nullable = nullable(nonterminals, productions);
-    for (state_id, state) in states.iter().enumerate() {
-        for item in &state.items {
-            let production = &productions[item.production];
-            if item.dot < production.rhs.len()
-                && production.rhs[item.dot..]
-                    .iter()
-                    .all(|symbol| match symbol {
-                        Symbol::Terminal(_) => false,
-                        Symbol::Nonterminal(id) => nullable[*id],
-                    })
-            {
-                rn_reductions.push(RnReduction {
-                    state: state_id,
-                    production: item.production,
-                    prefix: item.dot,
-                    suffix_len: production.rhs.len() - item.dot,
-                    lookahead: item.lookahead,
-                });
-            }
-        }
-    }
-    rn_reductions.sort_by_key(|reduction| {
-        (
-            reduction.state,
-            reduction.production,
-            reduction.prefix,
-            reduction.lookahead,
-        )
-    });
-    rn_reductions.dedup_by(|a, b| {
-        a.state == b.state
-            && a.production == b.production
-            && a.prefix == b.prefix
-            && a.lookahead == b.lookahead
-    });
     Ok(Table {
         states,
         actions,
         gotos,
-        rn_reductions,
         terminal_count,
         nonterminal_count,
         eof_terminal,

@@ -224,34 +224,11 @@ impl TreeBuild {
         }
     }
 
-    /// Assigns a stable node identity.
-    #[must_use]
-    pub fn with_id(mut self, id: TreeNodeId) -> Self {
-        self.id = Some(id);
-        self
-    }
-
     /// Adds a leaf payload.
     #[must_use]
     pub fn with_field(mut self, value: TreeValue) -> Self {
         self.fields.push(value);
         self
-    }
-
-    /// Adds a child slot.
-    #[must_use]
-    pub fn with_child(mut self, slot: BuildSlot) -> Self {
-        self.children.push(slot);
-        self
-    }
-
-    /// Materializes this build into immutable Tree content.
-    #[must_use]
-    pub fn to_storage(&self) -> TreeStorage {
-        let mut storage = TreeStorage::default();
-        let root = build_tree_node(self, None, &mut storage);
-        storage.root = Some(root);
-        storage
     }
 }
 
@@ -1407,102 +1384,6 @@ impl TreeOutputTxn<'_> {
             }
         }
         root
-    }
-
-    /// Updates a tree from `previous`, staging only changed nodes and slots.
-    pub fn set_root_diff(&mut self, build: &TreeBuild, previous: &TreeBuild) {
-        let mut old = TreeStorage::default();
-        let old_root = build_tree_node(previous, None, &mut old);
-        old.root = Some(old_root);
-        let mut storage = TreeStorage::default();
-        let root = build_tree_node(build, None, &mut storage);
-        storage.root = Some(root);
-        self.cx.set_content(self.view, Arc::new(storage.clone()));
-        let mut output = self.cx.output();
-        output.define(
-            UnitKey::field(self.view, FieldId(slots::ROOT), UnitKind::Value),
-            Some(root),
-        );
-        for (id, _) in old.nodes.iter() {
-            if !storage.nodes.contains_key(id) {
-                output.define(
-                    UnitKey::entity(
-                        self.view,
-                        FieldId(slots::MEMBERSHIP),
-                        UnitKind::Membership,
-                        any_key(*id),
-                    ),
-                    false,
-                );
-            }
-        }
-        for (id, node) in storage.nodes.iter() {
-            if old.nodes.get(id) == Some(node) {
-                continue;
-            }
-            output.define(
-                UnitKey::entity(
-                    self.view,
-                    FieldId(slots::MEMBERSHIP),
-                    UnitKind::Membership,
-                    any_key(*id),
-                ),
-                true,
-            );
-            output.define(
-                UnitKey::entity(
-                    self.view,
-                    FieldId(slots::TAG),
-                    UnitKind::Value,
-                    any_key(*id),
-                ),
-                (node.type_index, node.variant),
-            );
-            output.define(
-                UnitKey::entity(
-                    self.view,
-                    FieldId(slots::PARENT),
-                    UnitKind::Value,
-                    any_key(*id),
-                ),
-                node.parent,
-            );
-            for (slot, value) in node.fields.iter().enumerate() {
-                output.define(
-                    UnitKey::entity(
-                        self.view,
-                        FieldId(slots::FIELD),
-                        UnitKind::Value,
-                        any_key((*id, slot as u16)),
-                    ),
-                    value.clone(),
-                );
-            }
-            for (slot, value) in node.children.iter().enumerate() {
-                output.define(
-                    UnitKey::entity(
-                        self.view,
-                        FieldId(slots::CHILDREN),
-                        UnitKind::Structure,
-                        any_key((*id, slot as u16)),
-                    ),
-                    value.clone(),
-                );
-            }
-            if let Some(old_node) = old.nodes.get(id) {
-                for slot in node.children.len()..old_node.children.len() {
-                    output.define(
-                        UnitKey::entity(
-                            self.view,
-                            FieldId(slots::CHILDREN),
-                            UnitKind::Structure,
-                            any_key((*id, slot as u16)),
-                        ),
-                        ChildSlot::None,
-                    );
-                }
-            }
-        }
     }
 }
 

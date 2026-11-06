@@ -62,11 +62,4 @@ impl Diagnostic {
         self.token_kind = Some(kind);
         self
     }
-
-    /// Adds a note.
-    #[must_use]
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.notes.push(note.into());
-        self
-    }
 }

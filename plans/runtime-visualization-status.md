@@ -44,14 +44,14 @@ The plan's §9 gates, with the evidence that closes them:
 | G9 security | met | loopback default, token test, no unformatted payloads |
 | G10 scale | met | `cargo run --example observe_board -p reactive --features observatory` renders ten Views across all module kinds; `tests/scale.rs` builds a 50 000-node runtime and asserts the graph is capped with an exact `total_nodes`, a scoped query returns exactly its scope, a cap-ignoring renderer is cut at 200 rows with the real total, and the workspace payload stays under 8 KB. Tree/list virtualization is replaced by row caps (250/200), which is the bound the plan asked for |
 | G11 failure | met | render errors and dropped unit claims are visible per module; capped/incomplete activity is stated on the tape |
-| G12 build | met | 394 Rust tests, 5 example tests, `npm test`, `npm run build`, `node scripts/editor-smoke.mjs`, `node scripts/a11y.mjs` |
+| G12 build | met | 331 Rust tests, 5 example tests, `npm test`, `npm run build`, `node scripts/editor-smoke.mjs`, `node scripts/a11y.mjs` |
 | G13 native | met | `every_model_kind_keeps_its_own_tag` plus a renderer per kind |
 | G14 granularity | met | `granularity_follows_installed_units`, `views_report_identity_and_granularity`, the server drops whole-value claims |
 | G15 modular | met | collapse/expand/rail with persisted layout, `Collapse all`, headers keep reporting state |
 
 ## Verification evidence
 
-- `cargo test --workspace --no-fail-fast`: 391 tests pass, 0 failures.
+- `cargo test --workspace --no-fail-fast`: 331 tests pass, 0 failures.
 - `cargo test --example observatory -p reactive --features observatory`: 5 source
   language tests pass (round trip, line-numbered errors, nested calls, comments,
   empty program).

@@ -231,15 +231,6 @@ impl fmt::Debug for UnitKey {
     }
 }
 
-/// Formats a unit for diagnostics.
-#[must_use]
-pub fn unit_label(view_name: &str, field_name: &str, key: &UnitKey) -> String {
-    match &key.entity {
-        Some(entity) => format!("{view_name}.{field_name}[{}]", entity.key_display()),
-        None => format!("{view_name}.{field_name}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

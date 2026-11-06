@@ -12,11 +12,10 @@ pub use ast::{
 };
 pub use engine::{AstParser, EngineOptions, ParseToken, SpliceEntry, SpliceSource};
 pub use grammar::{
-    Associativity, AstAction, ErrorPolicy, Field, FieldId as GrammarFieldId, Grammar, GrammarError,
-    Nonterminal, NonterminalId, PrecedenceLevel, Production, ProductionId, Symbol, Terminal,
-    TerminalId,
+    Associativity, AstAction, Field, FieldId as GrammarFieldId, Grammar, GrammarError, Nonterminal,
+    NonterminalId, PrecedenceLevel, Production, ProductionId, Symbol, Terminal, TerminalId,
 };
-pub use lr::{Action, Item, RnReduction, State, Table, TableError, TableMode};
+pub use lr::{Action, Item, State, Table, TableError, TableMode};
 pub use state::{AstState, AstTable, AstUpdate, NodeMeta, significant_tokens};
 
 /// Lower-case alias for the LR table submodule.

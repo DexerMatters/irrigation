@@ -30,14 +30,6 @@ pub trait Delta: Clone + Send + Sync + 'static {
     fn compose(&self, later: &Self) -> Self;
 }
 
-/// Normalizes a delta against a concrete base state.
-///
-/// Implementations drop operations that cannot change the final value. The
-/// default keeps the delta unchanged, which is always lawful.
-pub fn normalize<D: Delta>(delta: &D, _base: &D::Target) -> D {
-    delta.clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +82,5 @@ mod tests {
             d1.apply(&base)
         );
         assert_eq!(d2.apply(&d1.apply(&base)), d1.compose(&d2).apply(&base));
-        assert_eq!(normalize(&d1, &base).apply(&base), d1.apply(&base));
     }
 }

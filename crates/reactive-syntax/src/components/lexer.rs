@@ -30,12 +30,6 @@ impl Tokens {
         UnitKey::field(Self::view_id(), FieldId(1), UnitKind::Structure)
     }
 
-    /// One ordered entry.
-    #[must_use]
-    pub fn order_entry(id: u64) -> UnitKey {
-        UnitKey::entity(Self::view_id(), FieldId(1), UnitKind::Value, any_key(id))
-    }
-
     /// The latest delta.
     #[must_use]
     pub fn delta_unit() -> UnitKey {

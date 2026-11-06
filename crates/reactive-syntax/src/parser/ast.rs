@@ -25,7 +25,6 @@
 
 use std::sync::Arc;
 
-use crate::diagnostic::Diagnostic;
 use crate::lexer::TokenId;
 use crate::text::TextAnchor;
 
@@ -158,44 +157,11 @@ pub struct AstNodeRecord {
 }
 
 impl AstNodeRecord {
-    /// Resolves this node's span against a snapshot.
-    #[must_use]
-    pub fn resolve_span(
-        &self,
-        snapshot: &Arc<crate::TextSnapshot>,
-    ) -> Option<std::ops::Range<usize>> {
-        let start = snapshot.resolve(self.span_start)?;
-        let end = snapshot.resolve(self.span_end)?;
-        (start <= end).then_some(start..end)
-    }
-
     /// Whether this record describes a recovery node.
     #[must_use]
     pub fn is_recovery(&self) -> bool {
         self.category.is_some()
     }
-}
-
-/// A parsed AST: the root plus the nodes an edit added and removed.
-///
-/// The build is a delta against the previous AST, so publication touches only
-/// the edited region. `added` holds the nodes this parse created or replaced,
-/// `removed` holds identities that no longer exist, and a node in neither is
-/// untouched.
-#[derive(Clone, Debug, Default)]
-pub struct AstBuild {
-    /// Root identity.
-    pub root: u64,
-    /// Nodes created or replaced by this parse.
-    pub added: Vec<AstNodeRecord>,
-    /// Identities that no longer exist.
-    pub removed: Vec<u64>,
-    /// Parser diagnostics.
-    pub diagnostics: Vec<Diagnostic>,
-    /// Recovery cost of the accepted parse.
-    pub recovery_cost: u32,
-    /// Locality measurements.
-    pub stats: BuildStats,
 }
 
 /// Where one parse did its work.

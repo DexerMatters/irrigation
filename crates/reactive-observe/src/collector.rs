@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reactive_core::ids::{NodeId, Revision, ViewId};
-use reactive_runtime::observe::{GraphQuery, GraphScope, NodeFacts, RuntimeEvent, ViewFacts};
+use reactive_runtime::observe::{GraphQuery, GraphScope, RuntimeEvent, ViewFacts};
 use reactive_runtime::{Runtime, RuntimeObserver};
 
 use crate::journal::Journal;
@@ -338,21 +338,6 @@ impl Collector {
             edge_limit: self.caps.edge_limit,
         });
         wire::graph_wire(&facts)
-    }
-
-    /// Node facts for one node, for range/type checks in handlers.
-    #[must_use]
-    pub fn node_facts(&self, node: NodeId) -> Option<NodeFacts> {
-        self.runtime
-            .probe(&GraphQuery {
-                scope: GraphScope::Node(node),
-                include_sites: true,
-                node_limit: 1,
-                edge_limit: 0,
-            })
-            .nodes
-            .into_iter()
-            .next()
     }
 
     /// The most recent no-op transaction, when one is pending.

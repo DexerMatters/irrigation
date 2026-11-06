@@ -28,7 +28,7 @@ use std::time::Duration;
 use reactive_core::descriptor::{UnitKey, UnitKind, ViewDescriptor};
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::{self, CancelToken, Dep, Frame, FrameGuard};
-use reactive_core::hash::{FxHashMap, hash_one};
+use reactive_core::hash::FxHashMap;
 use reactive_core::ids::{
     ComponentId, FieldId, NodeId, Revision, ScopeId, SiteId, Version, ViewId,
 };
@@ -2953,12 +2953,6 @@ fn membership_key(unit: &UnitKey) -> UnitKey {
         kind: UnitKind::Membership,
         ..unit.clone()
     }
-}
-
-/// Computes the argument hash used for invocation interning.
-#[must_use]
-pub fn arguments_hash<T: std::hash::Hash>(args: &T) -> u64 {
-    hash_one(args)
 }
 
 /// Returns the component that owns a scope, walking member scopes to the body.

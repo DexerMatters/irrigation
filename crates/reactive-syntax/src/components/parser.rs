@@ -124,17 +124,6 @@ impl AstMeta {
             any_key(id),
         )
     }
-
-    /// One rule-name unit.
-    #[must_use]
-    pub fn rule_unit(rule: u64) -> UnitKey {
-        UnitKey::entity(
-            Self::view_id(),
-            AstMetaField::RULES,
-            UnitKind::Value,
-            any_key(rule),
-        )
-    }
 }
 
 /// Retained parser state.

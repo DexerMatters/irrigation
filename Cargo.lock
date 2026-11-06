@@ -161,7 +161,6 @@ dependencies = [
  "reactive-core",
  "reactive-macros",
  "reactive-observe",
- "reactive-plan",
  "reactive-runtime",
  "reactive-store",
  "reactive-syntax",
@@ -206,14 +205,6 @@ dependencies = [
  "reactive-store",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "reactive-plan"
-version = "0.1.0"
-dependencies = [
- "reactive-core",
- "reactive-store",
 ]
 
 [[package]]

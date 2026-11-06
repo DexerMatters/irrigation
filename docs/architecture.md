@@ -263,13 +263,6 @@ Definition staging captures the caller location through `#[track_caller]` on the
 generated view/handle define methods. A duplicate-definition error names both
 providers with their `file:line:column` sites instead of only view labels.
 
-## Lowering vocabulary
-
-`reactive::plan` publishes the site/projection/generator vocabulary used to
-describe lowered components (`Site`, `SiteShape`, `Projection`, `Generator`).
-The compiler still lowers to direct builder calls; the vocabulary exists for
-diagnostics, tooling, and future backends.
-
 ## Explanation
 
 Site identity reuse is counted (`site_creations`/`site_reuses`) in runtime

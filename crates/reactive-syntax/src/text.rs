@@ -201,12 +201,6 @@ impl TextSnapshot {
         &self.text
     }
 
-    /// The text as a shared string.
-    #[must_use]
-    pub fn shared_text(&self) -> Arc<str> {
-        Arc::clone(&self.text)
-    }
-
     /// Byte length.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -386,12 +380,6 @@ impl TextDocument {
         Self {
             snapshot: Arc::new(TextSnapshot::new(text)),
         }
-    }
-
-    /// Creates a document from an existing snapshot.
-    #[must_use]
-    pub fn from_snapshot(snapshot: Arc<TextSnapshot>) -> Self {
-        Self { snapshot }
     }
 
     /// The current snapshot.

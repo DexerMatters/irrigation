@@ -153,12 +153,6 @@ pub const fn const_hash(s: &str) -> u64 {
     hash
 }
 
-/// Folds two hashes into one, used for composite identities.
-#[must_use]
-pub const fn hash_combine(a: u64, b: u64) -> u64 {
-    a.rotate_left(5) ^ b.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

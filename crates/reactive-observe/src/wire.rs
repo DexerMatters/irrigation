@@ -7,11 +7,11 @@
 
 use serde::Serialize;
 
-use reactive_core::ids::{FieldId, NodeId, Revision, Version, ViewId};
+use reactive_core::ids::{NodeId, Revision, Version, ViewId};
 use reactive_runtime::observe::{FieldFacts, GraphFacts, NodeFacts, ViewFacts};
 use reactive_runtime::runtime::{Explanation, RuntimeStats};
 
-use crate::journal::{Activity, RevisionRecord};
+use crate::journal::RevisionRecord;
 
 /// Wire protocol version. Bumped when a field changes meaning.
 pub const PROTOCOL: u32 = 1;
@@ -721,26 +721,6 @@ pub struct EventsWire {
     pub events: Vec<EventWire>,
 }
 
-/// A resynchronisation notice.
-#[derive(Clone, Debug, Serialize)]
-pub struct ResyncWire {
-    /// Why the session fell behind.
-    pub reason: &'static str,
-    /// Events lost, when known.
-    pub dropped: u64,
-    /// Sequence to resume from.
-    pub seq: u64,
-}
-
-/// A heartbeat.
-#[derive(Clone, Debug, Serialize)]
-pub struct HeartbeatWire {
-    /// Sequence.
-    pub seq: u64,
-    /// Revision.
-    pub revision: Revision,
-}
-
 /// Header state for a View, from its facts and the selected revision's activity.
 #[must_use]
 pub fn view_state(
@@ -1012,12 +992,6 @@ pub fn revision_wire(record: &RevisionRecord) -> RevisionWire {
     }
 }
 
-/// Empty activity, used when a revision has no journal record.
-#[must_use]
-pub fn empty_activity() -> Activity {
-    Activity::default()
-}
-
 /// Projects a projection revision into the wire form used by `/snapshot`.
 #[must_use]
 pub fn graph_wire(facts: &GraphFacts) -> GraphWire {
@@ -1059,10 +1033,4 @@ pub struct GraphWire {
     pub total_nodes: usize,
     /// Whether the cap excluded nodes.
     pub truncated: bool,
-}
-
-/// Projects a field id.
-#[must_use]
-pub fn field_index(field: FieldId) -> u16 {
-    field.0
 }

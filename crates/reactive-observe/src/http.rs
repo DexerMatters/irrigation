@@ -615,23 +615,6 @@ fn stream_events(stream: &mut TcpStream, collector: &Arc<Collector>, window: usi
     collector.unsubscribe(subscription.id);
 }
 
-/// Convenience for tests: a client that issues one request and returns its body.
-///
-/// # Errors
-///
-/// Returns the IO error, or an empty body when the server closed early.
-pub fn request_text(addr: SocketAddr, path: &str) -> std::io::Result<String> {
-    let mut stream = TcpStream::connect(addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(
-        format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes(),
-    )?;
-    let mut response = String::new();
-    let mut reader = BufReader::new(stream);
-    let _ = reader.read_to_string(&mut response)?;
-    Ok(response)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

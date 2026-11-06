@@ -18,7 +18,6 @@ pub mod delta;
 pub mod field;
 pub mod graph;
 pub mod persistent;
-pub mod tree;
 
 pub use aggregate::AggSeq;
 pub use delta::{ListDelta, ListEdit, MapDelta, MapEdit, SetDelta, SetEdit};
@@ -28,4 +27,3 @@ pub use persistent::{PMap, PSeq, PSet};
 pub use reactive_core::descriptor::{
     ContentVtable, FieldDescriptor, FieldKind, UnitKey, UnitKind, ViewDescriptor, ViewKind,
 };
-pub use tree::{ChildSlot, TreeNode, TreeNodeId, TreeStore};

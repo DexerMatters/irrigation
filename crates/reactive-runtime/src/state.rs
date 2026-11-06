@@ -179,12 +179,6 @@ impl NodeRecord {
         }
     }
 
-    /// Returns `true` when the node has a committed value for `revision`.
-    #[must_use]
-    pub fn is_verified(&self, revision: Revision) -> bool {
-        self.verified_at == revision && self.value.is_some()
-    }
-
     /// Returns `true` when a worker currently owns the node.
     #[must_use]
     pub fn is_running(&self) -> bool {

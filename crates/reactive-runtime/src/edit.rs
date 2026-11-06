@@ -58,11 +58,6 @@ impl Edit {
         }
     }
 
-    /// Labels the transaction for diagnostics.
-    pub fn set_label(&mut self, label: impl Into<String>) {
-        self.label = label.into();
-    }
-
     /// The label of this transaction.
     #[must_use]
     pub fn label(&self) -> &str {
@@ -146,21 +141,6 @@ impl Edit {
     /// Allocates a fresh entity identity for a source collection.
     pub fn alloc_entity(&mut self) -> u64 {
         self.inner.alloc_entity()
-    }
-
-    /// Descriptions of the staged unit updates, for diagnostics and tests.
-    #[must_use]
-    pub fn staged_units(&self) -> Vec<String> {
-        self.updates
-            .iter()
-            .map(|update| format!("{:?}", update.key))
-            .collect()
-    }
-
-    /// The number of staged updates.
-    #[must_use]
-    pub fn update_count(&self) -> usize {
-        self.updates.len()
     }
 
     /// Applies the transaction, returning whether a new revision was published.

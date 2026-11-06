@@ -445,12 +445,6 @@ where
     pub fn neighbors(&self, node: u64) -> Vec<u64> {
         self.outgoing(node).into_iter().map(|(_, to)| to).collect()
     }
-
-    /// Number of outgoing edges.
-    #[must_use]
-    pub fn out_degree(&self, node: u64) -> usize {
-        self.outgoing(node).len()
-    }
 }
 
 impl<N, E> ViewFieldHandle for Graph<N, E>

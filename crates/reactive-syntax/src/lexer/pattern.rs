@@ -57,12 +57,6 @@ impl Pattern {
         &self.capture_names
     }
 
-    /// Finds the capture index for a name.
-    #[must_use]
-    pub fn capture_index(&self, name: &str) -> Option<usize> {
-        self.capture_names.iter().position(|item| item == name)
-    }
-
     /// Returns the exact literal text for patterns that have no operators or
     /// captures. The lexer uses this as a fast path.
     #[must_use]

@@ -64,11 +64,6 @@ impl CancelToken {
     pub fn generation(&self) -> u64 {
         self.0.generation.load(Ordering::Acquire)
     }
-
-    /// Updates the generation, invalidating older commits.
-    pub fn set_generation(&self, generation: u64) {
-        self.0.generation.store(generation, Ordering::Release);
-    }
 }
 
 /// One execution context: who is computing, in which identity scope, and what

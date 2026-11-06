@@ -119,15 +119,6 @@ impl LexerSpec {
         self.kind_by_name.get(name).copied()
     }
 
-    /// Looks up a mode by source name.
-    #[must_use]
-    pub fn mode_by_name(&self, name: &str) -> Option<ModeId> {
-        self.modes
-            .iter()
-            .position(|mode| mode.name == name)
-            .map(|index| ModeId(index as u32))
-    }
-
     /// Rules of one mode.
     #[must_use]
     pub fn rules(&self, mode: ModeId) -> &[Rule] {
@@ -766,8 +757,6 @@ pub(crate) enum DslKind {
 pub(crate) struct DslToken {
     pub(crate) kind: DslKind,
     pub(crate) start: usize,
-    #[allow(dead_code)]
-    pub(crate) end: usize,
 }
 
 pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
@@ -817,7 +806,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Arrow,
                 start: index,
-                end: index + 2,
             });
             index += 2;
             continue;
@@ -836,7 +824,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Ident(source[start..index].to_string()),
                 start,
-                end: index,
             });
             continue;
         }
@@ -858,7 +845,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Number(value),
                 start,
-                end: index,
             });
             continue;
         }
@@ -868,7 +854,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Str(value),
                 start,
-                end: next,
             });
             index = next;
             continue;
@@ -879,7 +864,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Regex(value),
                 start,
-                end: next,
             });
             index = next;
             continue;
@@ -888,7 +872,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Symbol(c),
                 start: index,
-                end: index + c.len_utf8(),
             });
             index += c.len_utf8();
             continue;
@@ -897,7 +880,6 @@ pub(crate) fn tokenize(source: &str) -> Result<Vec<DslToken>, LexError> {
             tokens.push(DslToken {
                 kind: DslKind::Symbol(c),
                 start: index,
-                end: index + c.len_utf8(),
             });
             index += c.len_utf8();
             continue;

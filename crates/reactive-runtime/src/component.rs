@@ -15,7 +15,7 @@ use reactive_core::ids::ComponentId;
 use reactive_core::ops::panic_engine;
 use reactive_core::value::Value;
 
-use crate::inner::arguments_hash;
+use reactive_core::hash::hash_one;
 
 /// A registered component generator.
 ///
@@ -86,7 +86,7 @@ pub trait RootComponent: Send + Sync + 'static {
 pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) -> Value {
     let frame = current_or_engine_panic("component call");
     let runtime = Arc::clone(frame.runtime());
-    let hash = arguments_hash(&args);
+    let hash = hash_one(&args);
     let args_eq = |left: &dyn Any, right: &dyn Any| match (
         left.downcast_ref::<S::Args>(),
         right.downcast_ref::<S::Args>(),
@@ -148,7 +148,7 @@ pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) 
 pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
     let frame = current_or_engine_panic("component call");
     let runtime = Arc::clone(frame.runtime());
-    let hash = arguments_hash(&args);
+    let hash = hash_one(&args);
     let args_eq = |left: &dyn Any, right: &dyn Any| match (
         left.downcast_ref::<S::Args>(),
         right.downcast_ref::<S::Args>(),

@@ -183,18 +183,3 @@ pub fn observe_clone<T: Clone>(node: reactive_core::ids::NodeId, value: &T) -> T
     observe_local(node);
     value.clone()
 }
-
-/// Reads a node by identity, recording the observation.
-pub fn read_node<T: Clone + Any>(node: reactive_core::ids::NodeId) -> T {
-    let frame = current_or_engine_panic("node read");
-    let value = frame
-        .runtime()
-        .read_unit(node)
-        .unwrap_or_else(|error| panic_engine(error));
-    match value.downcast_ref::<T>() {
-        Some(value) => value.clone(),
-        None => panic_engine(ComputeError::TypeMismatch {
-            expected: std::any::type_name::<T>(),
-        }),
-    }
-}

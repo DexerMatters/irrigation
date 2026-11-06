@@ -516,69 +516,6 @@ impl OutputTxn<'_> {
         );
     }
 
-    /// Defines one ordered-list element and its membership.
-    pub fn list_entry<T>(&mut self, view: ViewId, field: FieldId, id: u64, value: T)
-    where
-        T: PartialEq + Send + Sync + 'static,
-    {
-        self.define(
-            UnitKey::entity(view, field, UnitKind::Value, any_key(id)),
-            value,
-        );
-        self.define(
-            UnitKey::entity(view, field, UnitKind::Membership, any_key(id)),
-            true,
-        );
-    }
-
-    /// Defines the ordered identity projection of a list field.
-    pub fn list_structure(
-        &mut self,
-        view: ViewId,
-        field: FieldId,
-        ids: impl IntoIterator<Item = u64>,
-    ) {
-        let ids: reactive_store::persistent::PSeq<u64> = ids.into_iter().collect();
-        self.define(UnitKey::field(view, field, UnitKind::Structure), ids);
-    }
-
-    /// Removes one map/list entity membership.
-    pub fn remove_membership<K>(&mut self, view: ViewId, field: FieldId, key: K)
-    where
-        K: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
-    {
-        self.membership(view, field, key, false);
-    }
-
-    /// Inserts one set member.
-    pub fn set_insert<T>(&mut self, view: ViewId, field: FieldId, value: T)
-    where
-        T: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
-    {
-        self.membership(view, field, value, true);
-    }
-
-    /// Removes one set member.
-    pub fn set_remove<T>(&mut self, view: ViewId, field: FieldId, value: T)
-    where
-        T: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
-    {
-        self.membership(view, field, value, false);
-    }
-
-    /// Inserts or replaces one ordered-list element.
-    pub fn list_replace<T>(&mut self, view: ViewId, field: FieldId, id: u64, value: T)
-    where
-        T: PartialEq + Send + Sync + 'static,
-    {
-        self.list_entry(view, field, id, value);
-    }
-
-    /// Removes one ordered-list element membership.
-    pub fn list_remove(&mut self, view: ViewId, field: FieldId, id: u64) {
-        self.membership(view, field, id, false);
-    }
-
     /// Retracts one unit this component previously defined.
     ///
     /// Absence is not a retraction: a unit keeps its committed value until it

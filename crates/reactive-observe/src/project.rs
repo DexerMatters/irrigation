@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use reactive_core::descriptor::{UnitKey, ViewKind};
+use reactive_core::descriptor::UnitKey;
 use reactive_core::ids::{FieldId, Revision, ViewId};
 use reactive_runtime::Runtime;
 use reactive_runtime::observe::{FieldFacts, Granularity, ViewFacts};
@@ -519,28 +519,6 @@ pub fn node_detail(
         });
     }
     Some(detail)
-}
-
-/// The display model for a field with no renderer.
-#[must_use]
-pub fn fallback_model(facts: &FieldFacts) -> ModelWire {
-    ModelWire::Opaque {
-        type_name: format!(
-            "{} ({})",
-            crate::wire::field_kind(facts.kind),
-            facts.granularity.as_str()
-        ),
-        summary: match facts.elements {
-            Some(elements) => format!("{elements} elements, no renderer"),
-            None => String::from("no renderer"),
-        },
-    }
-}
-
-/// Whether a View is source-backed.
-#[must_use]
-pub fn is_source(kind: ViewKind) -> bool {
-    kind == ViewKind::Source
 }
 
 #[cfg(test)]

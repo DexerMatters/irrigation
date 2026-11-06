@@ -103,11 +103,6 @@ fn general_component_producer_is_demanded_by_output_view() {
     );
 }
 
-#[reactive::view(source)]
-pub struct RootInput {
-    pub value: u64,
-}
-
 #[reactive::reactive]
 mod app {
     use super::Produced;

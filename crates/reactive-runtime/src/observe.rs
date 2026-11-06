@@ -300,23 +300,6 @@ pub struct EntityFacts {
     pub changed: bool,
 }
 
-/// One node of a tree field, in preorder.
-#[derive(Clone, Debug)]
-pub struct TreeEntityFacts {
-    /// The tag unit that names the node's variant.
-    pub unit: reactive_core::descriptor::UnitKey,
-    /// Node identity, for diagnostics.
-    pub node: u64,
-    /// Depth from the root.
-    pub depth: u16,
-    /// The node's own text, when its tag carries one.
-    pub label: Option<String>,
-    /// Revision the node last changed at.
-    pub version: Version,
-    /// Whether it changed at the current revision.
-    pub changed: bool,
-}
-
 /// One registered View.
 #[derive(Clone, Debug)]
 pub struct ViewFacts {

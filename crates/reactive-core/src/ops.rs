@@ -352,12 +352,6 @@ pub fn revision() -> Revision {
     frame::current().map_or(0, |frame| frame.runtime().revision())
 }
 
-/// Returns the current runtime handle, if a computation is running.
-#[must_use]
-pub fn current_runtime() -> Option<Arc<dyn RuntimeOps>> {
-    frame::current().map(|frame| Arc::clone(frame.runtime()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

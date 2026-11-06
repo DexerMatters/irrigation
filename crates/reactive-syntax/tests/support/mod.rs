@@ -1,5 +1,7 @@
 //! Shared test helpers: a JSON pipeline, its edits, and AST readers.
 
+// Three test binaries include this module, so a helper used by only one of
+// them is still used; dead-code analysis runs per binary and reports the rest.
 #![allow(dead_code)]
 
 use std::sync::Arc;
@@ -8,8 +10,8 @@ use reactive::{
     ComponentId, DependencyUpdates, FieldId, GeneralCx, Runtime, UnitKey, UnitKind, ViewSchema,
 };
 use reactive_syntax::{
-    AstMeta, Diagnostic, Grammar, Lexer, LexerComponent, ParserComponent, SourceFile, StatId,
-    StatsSnapshot, Text, TextDocument, TextEdit, TokenFlags, Tokens,
+    AstMeta, Diagnostic, Grammar, LexerComponent, ParserComponent, SourceFile, StatId,
+    StatsSnapshot, Text, TextDocument, TextEdit, Tokens,
 };
 
 /// The JSON grammar used by every pipeline test.
@@ -316,16 +318,6 @@ impl Session {
         out
     }
 
-    /// Paths of AST nodes whose span equals `range`.
-    #[must_use]
-    pub fn nodes_at(&self, range: std::ops::Range<usize>) -> Vec<u64> {
-        self.spans()
-            .into_iter()
-            .filter(|(_, span)| *span == range)
-            .map(|(id, _)| id)
-            .collect()
-    }
-
     /// Parser diagnostics published with the AST.
     #[must_use]
     pub fn ast_diagnostics(&self) -> Vec<Diagnostic> {
@@ -420,24 +412,6 @@ impl Session {
         let ast: std::collections::HashSet<u64> = self.ast_tokens().into_iter().collect();
         significant == ast
     }
-}
-
-/// Lexes `text` from scratch and returns its significant token count.
-#[must_use]
-pub fn token_count(grammar: &Grammar, text: &str) -> usize {
-    let lexer = Lexer::new(grammar.lexer().clone());
-    let lexed = lexer.lex(&TextDocument::new(text));
-    lexed
-        .tokens
-        .iter()
-        .filter(|token| !token.flags.contains(TokenFlags::TRIVIA))
-        .count()
-}
-
-/// Offset of `needle` in `text`.
-#[must_use]
-pub fn offset_of(text: &str, needle: &str) -> usize {
-    text.find(needle).expect("needle in text")
 }
 
 /// A component identity that does not collide with the pipeline's.

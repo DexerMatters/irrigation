@@ -17,7 +17,6 @@ observatory = ["reactive-runtime/observe"]
 [dependencies]
 reactive-core.workspace = true
 reactive-store.workspace = true
-reactive-plan.workspace = true
 reactive-collections.workspace = true
 reactive-runtime.workspace = true
 reactive-macros.workspace = true

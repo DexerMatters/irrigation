@@ -798,15 +798,14 @@ Ordinary component users never implement this trait. It is the deliberate algori
 
 ```text
 reactive-core       schemas, typed handles, change contracts, erased descriptors
-reactive-store      revisioned units, sequence/map/graph/tree storage, identity
-reactive-plan       typed IR and generator/control-region representation
+reactive-store      revisioned units, sequence/map/graph storage, identity
 reactive-runtime    demand, validation, worker scheduling, publication, progress
 reactive-collections incremental collection operators and indexes
 reactive-macros     view/component/tree-group lowering and diagnostics
 reactive-test       from-scratch oracle hooks, event traces, property generators
 ```
 
-These are responsibility boundaries, not a demand to publish seven packages immediately. Start in one workspace and split crates only where dependencies and compile times justify it. The macro crate must be separate because Rust requires a `proc-macro` crate.
+These are responsibility boundaries, not a demand to publish seven packages immediately. Start in one workspace and split crates only where dependencies and compile times justify it. The macro crate must be separate because Rust requires a `proc-macro` crate. Two consumers sit outside the kernel and are not boundaries it must preserve: `reactive-observe` (the observation path and its server) and `reactive-syntax` (an incremental text/lexer/parser pipeline).
 
 ### 11.2 Heterogeneous tuples and type erasure
 

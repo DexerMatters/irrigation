@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Fields, GenericArgument, Ident, Item, ItemMod, PathArguments, Result, Type, Visibility};
+use syn::{Fields, GenericArgument, Ident, Item, ItemMod, PathArguments, Result, Type};
 
 /// A field of one enum variant.
 enum FieldShape {
@@ -1063,6 +1063,3 @@ fn leaf_name(ty: &Type) -> Result<String> {
         )),
     }
 }
-
-#[allow(dead_code)]
-fn unused(_: Visibility) {}

@@ -7,7 +7,7 @@ use reactive_core::descriptor::ViewDescriptor;
 use reactive_core::error::{ComputeError, Result};
 use reactive_core::frame::CancelToken;
 use reactive_core::hash::FxHashMap;
-use reactive_core::ids::{ComponentId, Revision, Version, ViewId};
+use reactive_core::ids::{Revision, Version, ViewId};
 use reactive_core::ops::catch_engine;
 use reactive_core::value::Value;
 
@@ -1106,16 +1106,6 @@ impl Runtime {
             .collect()
     }
 
-    /// Number of installed units in a View region.
-    #[must_use]
-    pub fn region_unit_count(&self, view: ViewId) -> usize {
-        self.inner
-            .lock()
-            .regions
-            .get(&view)
-            .map_or(0, |region| region.units.len())
-    }
-
     /// Explains why one node changed: which observations moved and which are
     /// still certified.
     ///
@@ -1187,16 +1177,6 @@ impl Runtime {
                     .map(|value| format!("{} bytes", std::mem::size_of_val(value.as_ref()))),
             })
             .collect()
-    }
-
-    /// Cancels the demand currently running, if any.
-    ///
-    /// Cancelled work never publishes.
-    pub fn cancel_current(&self) {
-        // Demand-scoped cancellation is installed by the scheduler; this is the
-        // cooperative hook used by observers and hosts.
-        let state = self.inner.lock();
-        drop(state);
     }
 
     fn notify_subscribers(&self) -> Result<()> {
@@ -1476,13 +1456,6 @@ impl RecipeSelector {
             fallback_second: true,
         }
     }
-
-    /// Falls back to the earlier claim for unlisted units.
-    #[must_use]
-    pub fn with_fallback_first(mut self) -> Self {
-        self.fallback_second = false;
-        self
-    }
 }
 
 impl std::fmt::Debug for RecipeSelector {
@@ -1643,10 +1616,4 @@ fn root_body_eq<R: RootComponent>(left: &Value, right: &Value) -> bool {
         (Some(left), Some(right)) => left == right,
         _ => false,
     }
-}
-
-/// Component identity of a registered descriptor.
-#[must_use]
-pub fn component_id<S: ComponentSpec>() -> ComponentId {
-    S::ID
 }

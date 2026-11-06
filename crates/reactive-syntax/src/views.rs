@@ -94,20 +94,6 @@ pub struct TokenPayload {
     pub error: Option<Arc<str>>,
 }
 
-impl TokenPayload {
-    /// Whether the token is trivia.
-    #[must_use]
-    pub fn is_trivia(&self) -> bool {
-        self.flags.contains(TokenFlags::TRIVIA)
-    }
-
-    /// Whether the token carries a lexical error.
-    #[must_use]
-    pub fn is_error(&self) -> bool {
-        self.flags.contains(TokenFlags::ERROR)
-    }
-}
-
 /// Token stream View emitted by the lexer component.
 #[reactive::view(derived)]
 pub struct Tokens {
