@@ -6,6 +6,57 @@
 
 use super::*;
 
+/// Adds a row for every entity the content order names that no cell backs.
+///
+/// The board draws one row per entity and spells each row's value through the content
+/// projection, so an entity the content defines must be listed even when nothing has
+/// materialised a cell for it; `unit_version_of` -- the single owner -- answers its version
+/// from the content revision. Rows came from materialized cells alone, so such an entity was
+/// given a position in this order and then dropped.
+///
+/// Only fields whose order decodes reach here, which is currently `PSeq<u64>`: a **list**. A
+/// set, map or graph spells its keys as typed values and `Structure` carries only a type-erased
+/// value, so those need a vtable capability rather than a decode.
+fn fill_entities_without_cells(
+    state: &State,
+    view: irrigation_core::ids::ViewId,
+    field: irrigation_core::ids::FieldId,
+    declared: Option<&irrigation_core::descriptor::FieldDescriptor>,
+    order: &[u64],
+    revision: Revision,
+    rows: &mut Vec<crate::observe::EntityFacts>,
+) {
+    if declared.is_some_and(|field| field.kind == irrigation_core::descriptor::FieldKind::Scalar) {
+        return;
+    }
+    let seen: std::collections::HashSet<u64> = rows
+        .iter()
+        .filter_map(|row| {
+            row.unit
+                .entity
+                .as_ref()
+                .and_then(|entity| entity.as_any().downcast_ref::<u64>().copied())
+        })
+        .collect();
+    for id in order {
+        if seen.contains(id) {
+            continue;
+        }
+        let unit = UnitKey::entity(
+            view,
+            field,
+            UnitKind::Membership,
+            irrigation_core::key::any_key(*id),
+        );
+        let version = crate::state::unit_version_of(state, &unit).unwrap_or(0);
+        rows.push(crate::observe::EntityFacts {
+            unit,
+            version,
+            changed: version == revision,
+        });
+    }
+}
+
 impl Inner {
     /// Every component the runtime knows, with the Views it reads and defines.
     ///
@@ -286,45 +337,7 @@ impl Inner {
             }
         }
         if let Some(order) = &order {
-            // An entity the content spells but that has no cell yet is still an entity: the
-            // board reads its value through the content projection, and `unit_version_of` --
-            // the single owner -- answers for it from the content revision. Rows came from
-            // materialized cells alone, so such an entity was given a position in this order
-            // and then dropped from the list.
-            //
-            // This only reaches fields whose order decodes, which is `PSeq<u64>`: a **list**.
-            // A set, map or graph spells its structure as typed keys, and `Structure` carries
-            // only a type-erased value, so enumerating those needs a vtable capability
-            // (`ContentVtable` with an `entities` method, implemented per family). Until then
-            // a map or set with content-spelled entities and no cells still lists none of them.
-            if declared.is_some_and(|field| field.kind != FieldKind::Scalar) {
-                let seen_ids: std::collections::HashSet<u64> = rows
-                    .iter()
-                    .filter_map(|row| {
-                        row.unit
-                            .entity
-                            .as_ref()
-                            .and_then(|entity| entity.as_any().downcast_ref::<u64>().copied())
-                    })
-                    .collect();
-                for id in order {
-                    if seen_ids.contains(id) {
-                        continue;
-                    }
-                    let unit = UnitKey::entity(
-                        view,
-                        field,
-                        UnitKind::Membership,
-                        irrigation_core::key::any_key(*id),
-                    );
-                    let version = crate::state::unit_version_of(&state, &unit).unwrap_or(0);
-                    rows.push(crate::observe::EntityFacts {
-                        unit,
-                        version,
-                        changed: version == revision,
-                    });
-                }
-            }
+            fill_entities_without_cells(&state, view, field, declared, order, revision, &mut rows);
         }
         if let Some(order) = order {
             // A list answers in sequence order: the ids are the entities.
@@ -813,5 +826,75 @@ fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::InvocationOutput => "output",
         NodeKind::Operator => "operator",
         NodeKind::RegionContent => "content",
+    }
+}
+
+#[cfg(all(test, feature = "observe"))]
+mod entity_row_tests {
+    use super::*;
+
+    fn row_ids(rows: &[crate::observe::EntityFacts]) -> Vec<u64> {
+        let mut ids: Vec<u64> = rows
+            .iter()
+            .filter_map(|row| {
+                row.unit
+                    .entity
+                    .as_ref()
+                    .and_then(|entity| entity.as_any().downcast_ref::<u64>().copied())
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// An entity the content order names but no cell backs still becomes a row.
+    ///
+    /// This is the branch the board needs: it spells each row's value through the content, so the
+    /// row list must not be limited to cells that happen to exist. The function is unit-tested here
+    /// because no integration fixture produces the shape -- a seeded list creates a cell per item,
+    /// and a seeded map cannot be ordered.
+    #[test]
+    fn content_named_entities_become_rows() {
+        let state = State::default();
+        let declared = irrigation_core::descriptor::FieldDescriptor {
+            name: "items",
+            kind: irrigation_core::descriptor::FieldKind::List,
+        };
+        let mut rows = Vec::new();
+        fill_entities_without_cells(
+            &state,
+            irrigation_core::ids::ViewId(7),
+            irrigation_core::ids::FieldId(0),
+            Some(&declared),
+            &[3, 1, 2],
+            5,
+            &mut rows,
+        );
+        assert_eq!(row_ids(&rows), vec![1, 2, 3], "every named id is a row");
+        assert!(
+            rows.iter().all(|row| row.version == 0),
+            "an entity with no cell takes the content fallback, which is zero on an empty state"
+        );
+    }
+
+    /// A scalar field has one unit and no per-entity rows, so the order must not add any.
+    #[test]
+    fn a_scalar_field_adds_no_entity_rows() {
+        let state = State::default();
+        let declared = irrigation_core::descriptor::FieldDescriptor {
+            name: "value",
+            kind: irrigation_core::descriptor::FieldKind::Scalar,
+        };
+        let mut rows = Vec::new();
+        fill_entities_without_cells(
+            &state,
+            irrigation_core::ids::ViewId(7),
+            irrigation_core::ids::FieldId(0),
+            Some(&declared),
+            &[1, 2],
+            5,
+            &mut rows,
+        );
+        assert!(rows.is_empty(), "a scalar field has no entities");
     }
 }
