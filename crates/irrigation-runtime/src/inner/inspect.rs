@@ -189,18 +189,6 @@ impl Inner {
         facts.sort_by_key(|component| (component.name, component.id.0));
         facts
     }
-    /// Returns a unit's change version and presence, when the runtime defines
-    /// it.
-    ///
-    /// Read-only: it never demands the unit. The answer is
-    /// [`crate::state::unit_version`]'s owner: a cell's stamp, or the committed
-    /// content's revision while no cell exists.
-    #[cfg(feature = "observe")]
-    #[must_use]
-    pub fn unit_facts(&self, unit: &UnitKey) -> Option<(Version, u32)> {
-        let state = self.lock();
-        crate::state::unit_version_of(&state, unit).map(|version| (version, 0))
-    }
     /// Returns several units' change versions under one lock.
     ///
     /// A unit installed by a host edit lives in the global table, one installed
