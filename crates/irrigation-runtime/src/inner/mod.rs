@@ -316,7 +316,13 @@ fn observed_changes(
             unit: unit.clone(),
             previous: dep.version,
             current: record.value_version,
-            routing_changed: record.value_version == dep.version,
+            // "The unit's provider changed while its value stayed equal" is a
+            // routing question, and `Dep::routing` is the generation the previous
+            // run recorded. Comparing value versions answered a different
+            // question and inverted it -- unchanged values report as `false` --
+            // so this field could never be true, which is exactly what the
+            // explain path's own spelling of the same fact reports correctly.
+            routing_changed: record.routing_at != dep.routing,
         });
     }
     changes
