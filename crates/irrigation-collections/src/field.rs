@@ -93,6 +93,26 @@ impl<H> Field<H> {
         UnitKey::field(self.view(), self.id(), UnitKind::Structure)
     }
 
+    /// The membership unit of one member of a collection field.
+    ///
+    /// This is the unit a set's `contains` answer is published on: presence, with no
+    /// payload. A caller building it by hand has to name `UnitKind::Membership` and
+    /// carry the entity, so the two things that make it correct were spelled at the call
+    /// site rather than taken from the field.
+    #[must_use]
+    pub fn member_unit(&self, member: std::sync::Arc<dyn irrigation_core::key::AnyKey>) -> UnitKey {
+        UnitKey::entity(self.view(), self.id(), UnitKind::Membership, member)
+    }
+
+    /// The entity-bearing `Value` unit of one entry of a collection field.
+    ///
+    /// A map or graph publishes one such unit per entry; the whole-field [`Self::unit`]
+    /// is what a whole-field definition uses instead.
+    #[must_use]
+    pub fn entry_unit(&self, entry: std::sync::Arc<dyn irrigation_core::key::AnyKey>) -> UnitKey {
+        UnitKey::entity(self.view(), self.id(), UnitKind::Value, entry)
+    }
+
     /// The underlying family handle.
     #[must_use]
     pub const fn handle(&self) -> &H {

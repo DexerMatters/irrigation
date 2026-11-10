@@ -135,3 +135,36 @@ fn a_typed_handle_is_the_field_its_descriptor_declares() {
         );
     }
 }
+
+/// An entity-bearing unit can be named from the field handle, without the caller spelling
+/// the kind or the entity's shape. It must be the same unit the framework builds internally.
+#[test]
+fn a_membership_unit_is_named_from_the_field_handle() {
+    use std::sync::Arc;
+
+    let member = irrigation::any_key(7u64);
+    let from_handle = Pair::LEFT.member_unit(Arc::clone(&member));
+    let built_by_hand = irrigation::UnitKey::entity(
+        <Pair as ViewSchema>::view_id(),
+        Pair::LEFT.id(),
+        irrigation::UnitKind::Membership,
+        Arc::clone(&member),
+    );
+    assert_eq!(from_handle, built_by_hand, "the handle names the same unit");
+
+    let entry = Pair::LEFT.entry_unit(member);
+    assert_eq!(
+        entry.kind,
+        irrigation::UnitKind::Value,
+        "the entry unit carries a payload"
+    );
+    assert!(
+        from_handle.entity.is_some(),
+        "the membership unit names its member"
+    );
+    assert_eq!(
+        from_handle.field,
+        Pair::LEFT.id(),
+        "the unit names the field whose handle built it"
+    );
+}
