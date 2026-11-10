@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use irrigation::{Runtime, UnitKey, ViewSchema, irrigation, view};
+use irrigation::{FieldId, Runtime, UnitKey, ViewSchema, irrigation, view};
 
 // ---------------------------------------------------------------------------
 // A source Map seeded through its content, and the helpers the gates share
@@ -1156,5 +1156,43 @@ fn a_workerless_runtime_reports_zero_workers_and_still_runs() {
     assert_eq!(
         runtime.read_outputs::<ledger_verbs::Keys>().expect("read"),
         (vec![1], 1)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The entity list follows the content order, for a list
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct Attendance {
+    items: List<u32>,
+}
+
+/// A list's items are listed by `field_entities`.
+///
+/// This is a behaviour check, not a gate on the content-order branch: the edit path creates a
+/// cell per item, so the row list would include them with or without that branch (verified by
+/// deleting the branch and watching this still pass). The branch is for entities the content
+/// spells *without* cells, and no fixture in the suite produces that shape for any family --
+/// which is what keeps the finding open.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_list_lists_the_items_its_content_spells() {
+    let runtime = Runtime::new();
+    runtime
+        .edit(|edit| {
+            let mut attendance = edit.view::<Attendance>();
+            let mut roster = attendance.items();
+            roster.push(1);
+            roster.push(2);
+            roster.push(3);
+        })
+        .expect("seed");
+
+    let entities = runtime.field_entities(<Attendance as ViewSchema>::view_id(), FieldId(0));
+    assert_eq!(
+        entities.len(),
+        3,
+        "the three items the content defines are listed"
     );
 }
