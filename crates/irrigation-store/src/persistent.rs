@@ -864,6 +864,7 @@ impl<T: Ord> PSet<T> {
 
 impl<T: Ord + Clone> PSet<T> {
     /// Inserts a member, returning the new set and whether it was new.
+    #[must_use]
     pub fn insert(&self, value: T) -> (Self, bool) {
         if self.contains(&value) {
             return (self.clone(), false);
@@ -873,6 +874,7 @@ impl<T: Ord + Clone> PSet<T> {
     }
 
     /// Removes a member, returning the new set and whether it was present.
+    #[must_use]
     pub fn remove(&self, value: &T) -> (Self, bool) {
         let (map, removed) = self.map.remove(value);
         (Self { map }, removed.is_some())

@@ -1753,6 +1753,7 @@ impl TreeOutputTxn<'_> {
 
 impl TreeOutputTxn<'_> {
     /// Applies a local patch to `previous` content and stages only changed units.
+    #[must_use]
     pub fn apply_patch(&mut self, previous: &TreeStorage, patch: &TreePatch) -> TreeStorage {
         self.cx.claim_scope(
             irrigation_core::descriptor::WriteScope::View(self.view),
