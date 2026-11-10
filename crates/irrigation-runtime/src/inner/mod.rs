@@ -316,13 +316,15 @@ fn observed_changes(
             unit: unit.clone(),
             previous: dep.version,
             current: record.value_version,
-            // "The unit's provider changed while its value stayed equal" is a
-            // routing question, and `Dep::routing` is the generation the previous
-            // run recorded. Comparing value versions answered a different
-            // question and inverted it -- unchanged values report as `false` --
-            // so this field could never be true, which is exactly what the
-            // explain path's own spelling of the same fact reports correctly.
-            routing_changed: record.routing_at != dep.routing,
+            // The documented answer -- "the provider changed while the value
+            // stayed equal" -- is the version comparison, not a routing one, and
+            // only because of the `continue` above: an entry is in this list
+            // because the value or the routing moved, so an unchanged value
+            // implies a changed provider. Written as
+            // `record.routing_at != dep.routing` it would disagree with that
+            // sentence for a unit whose value and provider both moved, which is
+            // why the two spellings are not interchangeable here.
+            routing_changed: record.value_version == dep.version,
         });
     }
     changes
@@ -1672,6 +1674,101 @@ pub struct MemoryReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A handover with an equal value is a routing change, and the change batch
+    /// has to say so: that is the only way a consumer can learn its provider was
+    /// swapped for one publishing the same answer.
+    #[test]
+    fn a_handover_with_an_equal_value_reports_a_routing_change() {
+        let mut state = State::default();
+        let unit = UnitKey::field(ViewId(7), FieldId(0), UnitKind::Value);
+        let mut record = NodeRecord::unit("handed over", unit);
+        record.value_version = 3;
+        record.routing_at = 9;
+        let node = state.alloc(record);
+        // The previous run observed value version 3 under routing generation 4:
+        // the value did not move, the provider did.
+        let dep = Dep {
+            node,
+            version: 3,
+            routing: 4,
+            validity: 0,
+        };
+        let changes = observed_changes(
+            &state,
+            std::slice::from_ref(&dep),
+            &FxHashMap::default(),
+            &FxHashSet::default(),
+        );
+        assert_eq!(changes.len(), 1, "a routing move is a change to report");
+        assert!(changes[0].routing_changed, "the provider changed");
+        assert_eq!(changes[0].previous, 3);
+        assert_eq!(changes[0].current, 3);
+    }
+
+    /// A mere value move is not a routing change, so the flag cannot be
+    /// satisfied by the version comparison it used to perform.
+    #[test]
+    fn a_value_move_alone_is_not_a_routing_change() {
+        let mut state = State::default();
+        let unit = UnitKey::field(ViewId(8), FieldId(0), UnitKind::Value);
+        let mut record = NodeRecord::unit("republished", unit);
+        record.value_version = 5;
+        record.routing_at = 2;
+        let node = state.alloc(record);
+        let dep = Dep {
+            node,
+            version: 4,
+            routing: 2,
+            validity: 0,
+        };
+        let changes = observed_changes(
+            &state,
+            std::slice::from_ref(&dep),
+            &FxHashMap::default(),
+            &FxHashSet::default(),
+        );
+        assert_eq!(changes.len(), 1);
+        assert!(
+            !changes[0].routing_changed,
+            "the value moved but the provider did not"
+        );
+    }
+
+    /// When the value and the provider both moved, the answer is "no": the doc
+    /// says *while the value stayed equal*, and the value did not. This is the
+    /// only case where the version comparison and a routing comparison disagree,
+    /// so it is the one that pins which is meant.
+    #[test]
+    fn a_value_move_with_a_handover_is_not_a_routing_change() {
+        let mut state = State::default();
+        let unit = UnitKey::field(ViewId(9), FieldId(0), UnitKind::Value);
+        let mut record = NodeRecord::unit("moved twice", unit);
+        record.value_version = 5;
+        record.routing_at = 9;
+        let node = state.alloc(record);
+        let dep = Dep {
+            node,
+            version: 4,
+            routing: 2,
+            validity: 0,
+        };
+        let changes = observed_changes(
+            &state,
+            std::slice::from_ref(&dep),
+            &FxHashMap::default(),
+            &FxHashSet::default(),
+        );
+        assert_eq!(
+            changes.len(),
+            1,
+            "the entry is reported, the flag explains why"
+        );
+        assert!(
+            !changes[0].routing_changed,
+            "the provider moved, but so did the value, so this is not a routing-only change"
+        );
+    }
 
     /// Host code the runtime invokes with the metadata lock held must not be
     /// able to wait on that lock: a `parking_lot::Mutex` has no reentrancy, so
