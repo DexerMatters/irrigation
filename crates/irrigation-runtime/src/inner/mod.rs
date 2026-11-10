@@ -140,17 +140,21 @@ pub struct RuntimeConfig {
     /// How long an inline wait parks before re-checking a node.
     ///
     /// Pooled tasks do not poll: they suspend and are queued when the node
-    /// completes. Only nested and workerless demands use this slice.
+    /// completes. Only nested and workerless demands use this slice, which is the
+    /// condvar timeout -- so `Duration::ZERO` does not mean "check immediately and
+    /// then park", it means the wait never parks and the calling thread spins.
     pub wait_slice: Duration,
     /// Automatically reclaim after this many revisions on demand entry.
     ///
-    /// `None` keeps reclamation manual.
+    /// `None` keeps reclamation manual, and `Some(0)` does the same: the interval
+    /// check treats zero as "never elapsed" rather than "every revision".
     pub auto_collect_every: Option<u64>,
     /// Optional cap on retained component invocations.
     ///
     /// When exceeded, the least recently used invocations whose bodies are not
     /// referenced by any live trace are evicted. `None` keeps the
-    /// reachability-only policy.
+    /// reachability-only policy, and `Some(0)` evicts every unreferenced
+    /// invocation on every pass -- a legal but pathological setting.
     pub max_invocations: Option<usize>,
     /// Maximum times one demand may restart because its trace was invalidated
     /// before it could publish.
