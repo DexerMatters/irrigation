@@ -1677,15 +1677,7 @@ fn push_producer(state: &State, producers: &mut Vec<irrigation_core::ids::NodeId
 fn demand_producer(task: &Inner, producer: irrigation_core::ids::NodeId) -> Result<()> {
     let eq = {
         let state = task.lock();
-        let general = state
-            .node(producer)
-            .general
-            .map(|index| Arc::clone(&state.generals[index]));
-        move |left: &Value, right: &Value| {
-            general
-                .as_ref()
-                .is_some_and(|general| general.output_eq(left, right))
-        }
+        crate::inner::general_output_eq(&state, producer)
     };
     let mut compute = || {
         Err(ComputeError::internal(

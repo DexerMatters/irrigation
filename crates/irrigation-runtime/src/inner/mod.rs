@@ -1629,15 +1629,7 @@ fn ensure_view_current_inner(
     }
     let eq = {
         let state = inner.lock();
-        let general = state
-            .node(node)
-            .general
-            .map(|index| Arc::clone(&state.generals[index]));
-        move |left: &Value, right: &Value| {
-            general
-                .as_ref()
-                .is_some_and(|general| general.output_eq(left, right))
-        }
+        general_output_eq(&state, node)
     };
     let mut compute = || {
         Err(ComputeError::internal(
@@ -1690,6 +1682,26 @@ pub struct MemoryReport {
     pub tasks: usize,
     /// Structure units (collection identity projections).
     pub structure_units: usize,
+}
+
+/// The equality a general producer's output is compared with.
+///
+/// A general component compares through its own `output_eq`, so every path that
+/// evaluates one has to build this closure the same way. It lived twice, once per
+/// path, which meant a change to the comparison could reach one and miss the other.
+pub(crate) fn general_output_eq(
+    state: &State,
+    node: irrigation_core::ids::NodeId,
+) -> impl Fn(&Value, &Value) -> bool + 'static {
+    let general = state
+        .node(node)
+        .general
+        .map(|index| Arc::clone(&state.generals[index]));
+    move |left: &Value, right: &Value| {
+        general
+            .as_ref()
+            .is_some_and(|general| general.output_eq(left, right))
+    }
 }
 
 #[cfg(test)]
