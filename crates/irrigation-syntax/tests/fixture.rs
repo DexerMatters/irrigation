@@ -172,6 +172,23 @@ fn fixture_work_is_proportional_to_the_edit() {
         let bound = baseline
             .get(&script.name)
             .unwrap_or_else(|| panic!("{}: no baseline entry", script.name));
+        if std::env::var_os("FIXTURE_REPORT").is_some() {
+            // What the module doc promises: the table a human compares across changes.
+            // Only the pass/fail verdict used to exist, so a change that improved
+            // reactivity inside the bounds was invisible.
+            println!(
+                "{}: tokens_relexed={} tokens_reparsed={} nodes_added={} \
+                 token_units_read={} meta_units_written={} invalidations={} content_commits={}",
+                script.name,
+                counters.tokens_relexed,
+                counters.tokens_reparsed,
+                counters.nodes_added,
+                counters.token_units_read,
+                counters.meta_units_written,
+                counters.invalidations,
+                counters.content_commits
+            );
+        }
         if counters.tokens_relexed > bound.tokens_relexed
             || counters.tokens_reparsed > bound.tokens_reparsed
             || counters.nodes_added > bound.nodes_added

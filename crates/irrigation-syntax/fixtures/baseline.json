@@ -2,7 +2,7 @@
   "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone (E_v); `content_commits` counts whole-content values that were actually published, one per field a write group really moved. It is 6-9 for every script regardless of how much the edit touches (it was 7,051 for one byte and 6,518 for a deleted region), which is the property the plan asks for.",
   "scripts": {
     "backspace": {
-      "tokens_relexed": 8,
+      "tokens_relexed": 1,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
@@ -11,7 +11,7 @@
       "content_commits": 9
     },
     "delete-member": {
-      "tokens_relexed": 62,
+      "tokens_relexed": 22,
       "tokens_reparsed": 23,
       "nodes_added": 41,
       "meta_units_written": 282,
@@ -20,7 +20,7 @@
       "content_commits": 9
     },
     "delete": {
-      "tokens_relexed": 513,
+      "tokens_relexed": 182,
       "tokens_reparsed": 200,
       "nodes_added": 306,
       "meta_units_written": 2178,
@@ -29,7 +29,7 @@
       "content_commits": 9
     },
     "paste": {
-      "tokens_relexed": 513,
+      "tokens_relexed": 177,
       "tokens_reparsed": 177,
       "nodes_added": 272,
       "meta_units_written": 1934,
@@ -38,7 +38,7 @@
       "content_commits": 6
     },
     "rename-key": {
-      "tokens_relexed": 4,
+      "tokens_relexed": 1,
       "tokens_reparsed": 2,
       "nodes_added": 8,
       "meta_units_written": 50,
@@ -47,7 +47,7 @@
       "content_commits": 9
     },
     "typing-end": {
-      "tokens_relexed": 12,
+      "tokens_relexed": 1,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
@@ -56,7 +56,7 @@
       "content_commits": 9
     },
     "typing-mid": {
-      "tokens_relexed": 11,
+      "tokens_relexed": 1,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
