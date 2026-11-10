@@ -1549,11 +1549,6 @@ impl ListOutputExt for irrigation_runtime::general::GeneralCx {
                 value.clone(),
                 "output.list.value",
             );
-            self.define(
-                UnitKey::entity(view, field, UnitKind::Membership, any_key(*id)),
-                true,
-                "output.list.membership",
-            );
         }
         self.define(
             UnitKey::field(view, field, UnitKind::Value),
