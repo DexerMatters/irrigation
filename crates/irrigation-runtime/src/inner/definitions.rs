@@ -158,6 +158,17 @@ impl Inner {
             .map(owner_key)
             .chain(withdrawn.iter().cloned())
             .collect();
+        // Cloned on purpose, and it is the largest per-commit allocation in the
+        // pipeline for a provider with a big output (135,280 records for the
+        // syntax fixture's AST view), so taking it looks like an easy win. It is
+        // kept because this set is the only record of what the provider owns and
+        // the commit can unwind -- a panicking host equality in the content
+        // vtable is re-thrown -- which would leave the provider owning nothing
+        // until it runs again. That window is not reachable through the public
+        // API today (a read of one of its units demands the producer and gets the
+        // cached failure), so the clone is a precaution rather than a proven
+        // requirement; taking it measured 41 s -> 39.8 s on the fixture suite,
+        // which is not worth trading the invariant for.
         let old: Vec<DefinitionRecord> = state.node(provider).definitions.clone();
         let restaged: FxHashSet<UnitKey> = drafts
             .iter()
