@@ -73,6 +73,12 @@ pub struct EdgePayload<E> {
     pub value: E,
 }
 
+/// Prints the payload alone, **by design**.
+///
+/// The observation wire uses this as a graph edge's canvas label, so printing the
+/// endpoints here would put `EdgePayload { from: 1, to: 2, .. }` on the canvas in
+/// place of the edge's own label. The cost is that `assert_eq!` on an edge shows
+/// only the payload; print `from`/`to` explicitly when that matters.
 impl<E: std::fmt::Debug> std::fmt::Debug for EdgePayload<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.value, f)
