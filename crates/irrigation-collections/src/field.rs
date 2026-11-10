@@ -106,6 +106,11 @@ impl<H> Field<H> {
 
     /// The entity-bearing `Value` unit of one entry of a collection field.
     ///
+    /// The `Arc<dyn AnyKey>` is not a type-erased handle: it carries the concrete key, and
+    /// equality on it verifies the real type, so `any_key(7u64)` and `any_key(7u32)` are
+    /// different entries. The runtime's own table keys are built the same way, which is why
+    /// [`Self::member_unit`] can be asserted equal to a hand-built entity unit.
+    ///
     /// A map or graph publishes one such unit per entry; the whole-field [`Self::unit`]
     /// is what a whole-field definition uses instead.
     #[must_use]
