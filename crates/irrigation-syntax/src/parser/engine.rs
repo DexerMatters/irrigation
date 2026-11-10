@@ -462,6 +462,14 @@ impl AstParser {
     /// caller decides whether to try a wider window or to publish a salvage
     /// tree, so a failed attempt never passes for an accepted one.
     ///
+    /// `None` covers two different outcomes, and the caller cannot tell them apart: the search
+    /// exhausted itself without an accepting configuration, or it hit [`EngineOptions::max_steps`]
+    /// or [`EngineOptions::max_configs`] and stopped early. The second is a budget failure, and a
+    /// grammar author chasing it needs to know the search was cut rather than that the grammar
+    /// rejected the input. Separating them needs a wider return type than `Option` -- an
+    /// `Accepted`/`Refused(Budget | NoConfiguration)` outcome -- so the pair is reported as one
+    /// failure until that change is made.
+    ///
     /// # Panics
     ///
     /// Panics when a live configuration's state stack is empty. The engine pushes the
