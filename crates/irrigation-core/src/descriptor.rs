@@ -115,8 +115,6 @@ pub struct ContentVtable {
     pub summary: fn(&Content, FieldId) -> Option<crate::value::Value>,
     /// Compares two content values semantically.
     pub eq: fn(&Content, &Content) -> bool,
-    /// Formats the content for diagnostics.
-    pub debug: fn(&Content) -> String,
     /// Spells one element value for the board, when the View's types can.
     ///
     /// A projection that draws a View without a host renderer calls this with

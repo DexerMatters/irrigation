@@ -107,10 +107,6 @@ fn settings_eq(left: &Arc<dyn Any + Send + Sync>, right: &Arc<dyn Any + Send + S
     left.downcast_ref::<SettingsContent>() == right.downcast_ref::<SettingsContent>()
 }
 
-fn settings_debug(content: &Arc<dyn Any + Send + Sync>) -> String {
-    format!("{:?}", content.downcast_ref::<SettingsContent>())
-}
-
 static SETTINGS_DESC: ViewDescriptor = ViewDescriptor {
     id: SETTINGS,
     name: "Settings",
@@ -130,7 +126,6 @@ static SETTINGS_DESC: ViewDescriptor = ViewDescriptor {
         changed_units_equal: |_, _, _| None,
         summary: |_, _| None,
         eq: settings_eq,
-        debug: settings_debug,
         describe: |_| None,
         variant_label: |_, _| None,
     },

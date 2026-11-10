@@ -1218,15 +1218,6 @@ pub fn tree_eq(left: &Arc<dyn Any + Send + Sync>, right: &Arc<dyn Any + Send + S
     left.downcast_ref::<TreeStorage>() == right.downcast_ref::<TreeStorage>()
 }
 
-/// Formats tree content for diagnostics.
-#[must_use]
-pub fn tree_debug(content: &Arc<dyn Any + Send + Sync>) -> String {
-    match content.downcast_ref::<TreeStorage>() {
-        Some(storage) => format!("tree({} nodes)", storage.len()),
-        None => String::from("tree(?)"),
-    }
-}
-
 fn tree_define_many(content: &Content, drafts: &[(UnitKey, Value)]) -> Content {
     let mut next = Arc::clone(content);
     for (key, value) in drafts {
@@ -1319,7 +1310,6 @@ pub const fn tree_content_vtable() -> ContentVtable {
         changed_units_equal: tree_changed_units_equal,
         summary: |_, _| None,
         eq: tree_eq,
-        debug: tree_debug,
         describe: |_| None,
         variant_label: |_, _| None,
     }
@@ -1626,7 +1616,6 @@ mod tests {
         let key = UnitKey::field(ViewId(1), FieldId(slots::ROOT), UnitKind::Value);
         assert!(tree_get(&content, &key).is_some());
         assert!(tree_eq(&content, &content));
-        assert!(tree_debug(&content).contains("tree"));
     }
 }
 
