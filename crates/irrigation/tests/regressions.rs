@@ -994,3 +994,59 @@ fn a_source_removal_moves_no_routing_generation() {
         "the entity's two cells must agree about whether the provider moved"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A host removal stops the removed entity's payload from being served
+// (collections-seq-04)
+// ---------------------------------------------------------------------------
+
+/// Reads the payload unit of entry 1 straight from the runtime, bypassing the
+/// View's accessors, so the answer depends on the cell alone.
+#[irrigation]
+mod payload_peek {
+    use super::ledger_value;
+
+    #[component]
+    pub fn peek(_tag: u32) -> bool {
+        irrigation::try_read_unit_value::<u64, _>(ledger_value(1), |content| {
+            content.downcast_ref::<u64>().copied()
+        })
+        .is_some()
+    }
+}
+
+#[test]
+fn a_host_removal_stops_serving_the_removed_payload() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_verbs::Keys).expect("install");
+
+    // Materialize the payload cell, so the removal has a generation to close.
+    assert_eq!(
+        runtime
+            .call::<ledger_verbs::__EntrySpec>(ledger_verbs::EntryArgs { _tag: 0 })
+            .expect("entry"),
+        (true, Some(10))
+    );
+    assert!(
+        runtime
+            .call::<payload_peek::__PeekSpec>(payload_peek::PeekArgs { _tag: 0 })
+            .expect("peek"),
+        "the payload is served while the entry is present"
+    );
+
+    let membership = irrigation::UnitKey {
+        kind: irrigation::UnitKind::Membership,
+        ..ledger_value(1)
+    };
+    runtime
+        .edit(|edit| edit.set(membership, false))
+        .expect("remove");
+
+    assert!(
+        !runtime
+            .call::<payload_peek::__PeekSpec>(payload_peek::PeekArgs { _tag: 0 })
+            .expect("peek"),
+        "a removed entry's payload unit must not be served from its old certification"
+    );
+}
