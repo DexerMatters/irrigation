@@ -22,7 +22,6 @@ use crate::views::{DiagnosticId, SourceFile, Text, TokenDelta, TokenPayload, Tok
 pub struct LexerComponentState {
     lex: LexState,
     ids: HashSet<TokenId>,
-    changed: HashSet<TokenId>,
     diagnostic_ids: HashSet<DiagnosticId>,
     version: u64,
 }
@@ -54,7 +53,6 @@ impl LexerComponent {
         lexed: &LexOutput,
         previous_ids: &HashSet<TokenId>,
         previous_diagnostics: &HashSet<DiagnosticId>,
-        previous_changed: &HashSet<TokenId>,
         delta: &TokenDelta,
         full: bool,
     ) {
@@ -75,6 +73,23 @@ impl LexerComponent {
         cx.write(Tokens::TEXT).set(document.clone());
         cx.write(Tokens::DELTA).set(delta.clone());
 
+        // Trivia and error membership are recomputed for the whole stream every
+        // revision, so they are written as one value each. Stated per token they
+        // cost one membership write per token per revision — and, on the revision
+        // after a full parse, one *withdrawal* per token, which the definition
+        // pipeline charges as a whole-field content publish.
+        cx.write(Tokens::TRIVIA).define_all(
+            lexed
+                .tokens
+                .iter()
+                .filter_map(|token| token.flags.contains(TokenFlags::TRIVIA).then_some(token.id)),
+        );
+        cx.write(Tokens::ERRORS).define_all(
+            lexed
+                .tokens
+                .iter()
+                .filter_map(|token| token.flags.contains(TokenFlags::ERROR).then_some(token.id)),
+        );
         // Payloads: only the tokens this revision rebuilt, or all of them on the
         // first parse.
         for token in lexed.tokens.iter() {
@@ -90,14 +105,14 @@ impl LexerComponent {
                     flags: token.flags,
                     error: token.error.clone(),
                 }));
-            cx.write(Tokens::CHANGED).member(token.id).present(true);
-            cx.write(Tokens::TRIVIA)
-                .member(token.id)
-                .present(token.flags.contains(TokenFlags::TRIVIA));
-            cx.write(Tokens::ERRORS)
-                .member(token.id)
-                .present(token.flags.contains(TokenFlags::ERROR));
         }
+        // The changed set is one value for the revision, so it is written as
+        // one. Stating it membership-by-membership made the revision after a
+        // full parse retract one membership per token, and the definition
+        // pipeline takes a whole-field content publish per withdrawal: a
+        // whitespace edit then cost thousands of publishes instead of one.
+        cx.write(Tokens::CHANGED)
+            .define_all(changed.iter().copied());
         // Diagnostics: publish current ones, retract vanished ones.
         for diagnostic in &lexed.diagnostics {
             let id = DiagnosticId::from_diagnostic(diagnostic);
@@ -116,17 +131,9 @@ impl LexerComponent {
                     cx.write(Tokens::DIAGNOSTICS).entry(id.clone()).retract();
                 }
             }
-            for id in previous_changed {
-                if !changed.contains(id) {
-                    cx.write(Tokens::CHANGED).member(*id).present(false);
-                }
-            }
             for id in previous_ids {
                 if !current.contains(id) {
                     cx.write(Tokens::PAYLOADS).entry(*id).retract();
-                    cx.write(Tokens::CHANGED).member(*id).present(false);
-                    cx.write(Tokens::TRIVIA).member(*id).present(false);
-                    cx.write(Tokens::ERRORS).member(*id).present(false);
                 }
             }
         }
@@ -230,7 +237,6 @@ impl GeneralComponent for LexerComponent {
             &lexed,
             &HashSet::new(),
             &HashSet::new(),
-            &HashSet::new(),
             &delta,
             true,
         );
@@ -238,7 +244,6 @@ impl GeneralComponent for LexerComponent {
             LexerComponentState {
                 lex: LexState::from_output(&lexed),
                 ids: lexed.tokens.iter().map(|token| token.id).collect(),
-                changed: delta.changed_set(),
                 diagnostic_ids: lexed
                     .diagnostics
                     .iter()
@@ -272,7 +277,6 @@ impl GeneralComponent for LexerComponent {
             &lexed,
             &state.ids,
             &state.diagnostic_ids,
-            &state.changed,
             &delta,
             false,
         );
@@ -286,7 +290,7 @@ impl GeneralComponent for LexerComponent {
             LexerComponentState {
                 lex: LexState::from_output(&lexed),
                 ids,
-                changed: delta.changed_set(),
+
                 diagnostic_ids: lexed
                     .diagnostics
                     .iter()
