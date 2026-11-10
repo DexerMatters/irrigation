@@ -118,7 +118,7 @@ observe.
 - `update(&self, cx, state, changes: &ChangeBatch)` keeps its signature.
 - `ChangeBatch::changes()` fills once (`OnceCell`), then returns a slice.
 - Deleting `ensure_view_current` and the pre-batch walk in
-  [`inner.rs`](../crates/irrigation-runtime/src/inner.rs) follows.
+  [`inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs) follows.
 
 ### 3.2 Uniform input certification for reuse
 

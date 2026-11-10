@@ -649,7 +649,7 @@ verified slice; unchecked phases remain.
   moved. A provider that restages an equal definition no longer rebuilds the
   content or refreshes the structure for it. New counters
   `content_applies`/`content_restatements` expose the distinction.
-  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Gate:
     `an_equal_definition_restatement_skips_content_application`
     (`crates/irrigation/tests/gates.rs`)
@@ -663,7 +663,7 @@ verified slice; unchecked phases remain.
   units; projection movement is counted separately.
   - Code: [`crates/irrigation-store/src/field.rs`](../crates/irrigation-store/src/field.rs),
     [`crates/irrigation-core/src/descriptor.rs`](../crates/irrigation-core/src/descriptor.rs),
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Counters: `content_applies`, `content_restatements`, `content_projections`.
   - Gates: `map_only_payload_units_move_content`,
     `a_projection_only_unit_skips_content_application`.
@@ -673,7 +673,7 @@ verified slice; unchecked phases remain.
   re-compared whole. Whole-content equality remains on the source-edit and
   whole-region replacement paths, and a field still applies one draft at a time.
   - Code: `commit_content_changed` in
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Gates: the existing cutoff/structure/family gates plus the equal-restatement
     gate remain green.
 - [x] **Changed content is applied as one batch per View commit.**
@@ -683,7 +683,7 @@ verified slice; unchecked phases remain.
   the assembled value through `commit_content_changed`.
   - Code: [`crates/irrigation-core/src/descriptor.rs`](../crates/irrigation-core/src/descriptor.rs),
     [`crates/irrigation-macros/src/view.rs`](../crates/irrigation-macros/src/view.rs),
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Counter: `content_batches` records one application per View commit.
   - Gate: `several_changed_map_entries_share_one_content_batch`
     (two changed entries, one batch).
@@ -746,7 +746,7 @@ verified slice; unchecked phases remain.
   group conflict leaves no partial ownership. `Inner::claim_writes` and the
   public `irrigation::claim_ports` helper expose the group operation.
   - Code: [`crates/irrigation-runtime/src/state.rs`](../crates/irrigation-runtime/src/state.rs),
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs),
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs),
     [`crates/irrigation-runtime/src/helpers.rs`](../crates/irrigation-runtime/src/helpers.rs)
   - Gates: `claim_group_conflicts_without_partial_claims`,
     `a_claim_group_dedupes_the_ownership_pair`,
@@ -760,7 +760,7 @@ verified slice; unchecked phases remain.
   commit. The group is all-or-none, and the large-document syntax fixture keeps
   its no-claim timing.
   - Code: [`crates/irrigation-runtime/src/general.rs`](../crates/irrigation-runtime/src/general.rs),
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Gate: `general_component_producer_is_demanded_by_output_view` asserts
     `write_claims > 0`; the fixture gate stays green.
   - Boundary: claims are acquired after the body has produced its units but
@@ -772,7 +772,7 @@ verified slice; unchecked phases remain.
   reading the previous content. Plans are not claims; they install nothing and
   retire with their owner.
   - Code: [`crates/irrigation-runtime/src/state.rs`](../crates/irrigation-runtime/src/state.rs),
-    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs),
+    [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs),
     [`crates/irrigation-runtime/src/helpers.rs`](../crates/irrigation-runtime/src/helpers.rs)
   - Gates: `a_plan_is_visible_until_its_owner_commits`, plus the two-thread
     integration gate `a_reader_waits_for_a_planned_writer_before_its_claim`
@@ -800,7 +800,7 @@ verified slice; unchecked phases remain.
   `changed_units_equal` first. `Some(true)` skips content; `Some(false)`
   installs without whole-content equality; `None` falls back to the
   single-unit proof or whole-content equality.
-  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Counters: `source_content_applies`, `source_equality_checks`.
   - Definition commits also consult `changed_units_equal` before advancing the
     content value: a set of changed drafts that projects equal content retracts
@@ -865,7 +865,7 @@ verified slice; unchecked phases remain.
   topology projection; whole-field payloads and Membership/Structure/
   Adjacency units still refresh it. The source path filters `delta.installed`
   the same way. Counter: `structure_refreshes`.
-  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner.rs)
+  - Code: [`crates/irrigation-runtime/src/inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)
   - Gate: `a_map_payload_update_keeps_the_key_structure_version`.
 - [x] **`WriteGroup` plan/claim API.**
   `WriteGroup` wraps an ordered scope list with `from_scopes`, `plan`, `claim`,

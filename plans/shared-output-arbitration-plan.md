@@ -159,7 +159,7 @@ that condition". That is the gap this plan addresses.
 
 A **port** is the existing `UnitKey`, or its owner key: for an entity unit, the
 membership/value pair shares one owner
-([`inner.rs`](../crates/irrigation-runtime/src/inner.rs#L2301)). Different map keys
+([`inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)). Different map keys
 are different ports; a scalar field is one port; a whole-field definition covers
 every port under that field.
 
@@ -259,7 +259,7 @@ contradiction, cycle), not a stale value.
 | Different components define disjoint units of one View | supported once writers run before readers | §2.3 probe |
 | Two components define the **same** unit | rejected at the end of the revision with `DuplicateDefinition` naming both sites | `two_providers_cannot_define_the_same_unit`, `two_called_components_cannot_define_one_unit` |
 | Intentional provider handover | supported; selector or end-of-revision reachability decides | `provider_handover_survives_demand_order`, `routing_subscriptions_fire_only_on_provider_changes` |
-| A read waits for a producer of a **GeneralComponent** output View | supported for installed output Views through `state.producers` and `bad_producer` | [`inner.rs`](../crates/irrigation-runtime/src/inner.rs#L219), `#L426` |
+| A read waits for a producer of a **GeneralComponent** output View | supported for installed output Views through `state.producers` and `bad_producer` | [`inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs), `#L426` |
 | A read waits for a generated component that will `define_*` the unit | **not supported** | §2.2 |
 | A late write invalidates a reader already certified in the same revision | **not sound** | §2.2 |
 | Read/write cycle detection | only node waits; no read/write condition graph | `wait_for`, `would_cycle` |
@@ -286,7 +286,7 @@ producer to demand. The read sees whatever content is committed at that moment.
 
 When the unit is first read before it is defined, `unit_node_init` materializes
 it from the current View content and certifies it at `revision`
-([`inner.rs`](../crates/irrigation-runtime/src/inner.rs#L406)). A later definition
+([`inner.rs`](../crates/irrigation-runtime/src/inner/mod.rs)). A later definition
 commits at the same revision and calls `invalidate`, which sets
 `suspect_at = revision` ([`state.rs`](../crates/irrigation-runtime/src/state.rs#L791)).
 The reader's `verified_at` is already `revision`, so the clean predicate
