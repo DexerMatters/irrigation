@@ -307,6 +307,7 @@ impl<K: Ord, V> PMap<K, V> {
 
 impl<K: Ord + Clone, V: Clone> PMap<K, V> {
     /// Inserts or replaces a value, returning the previous value.
+    #[must_use]
     pub fn insert(&self, key: K, value: V) -> (Self, Option<V>) {
         let previous = self.get(&key).cloned();
         let (root, _) = entry_insert(self.root.clone(), key, value);
@@ -324,6 +325,7 @@ impl<K: Ord + Clone, V: Clone> PMap<K, V> {
     }
 
     /// Removes a key, returning the new map and the removed value.
+    #[must_use]
     pub fn remove(&self, key: &K) -> (Self, Option<V>) {
         let (root, removed) = entry_remove(self.root.clone(), key);
         (
