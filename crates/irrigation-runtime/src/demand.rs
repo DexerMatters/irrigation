@@ -245,6 +245,10 @@ impl Inner {
                 slot.retries = retries;
                 slot.status = TaskStatus::Queued;
             }
+            // The abandoned attempt's staged groups are not this retry's: a group
+            // it deferred would otherwise be drained by the next attempt, which
+            // publishes a superseded write set and invalidates its dependents for
+            // work it is about to redo.
             drop(state);
             // The arbitration is host code: emit it once the transition it
             // reports is complete and the metadata lock is released.
@@ -295,22 +299,7 @@ impl Inner {
             // demand, which drains it when it finishes. A group whose demand is
             // over instead has no drain left: it is discarded and its owner
             // reopened, so the next attempt stages it again.
-            let mut pending = Vec::with_capacity(state.pending_writes.len());
-            let mut discarded = Vec::new();
-            for mut write in std::mem::take(&mut state.pending_writes) {
-                if write.task != id {
-                    pending.push(write);
-                } else if let Some(parent) = parent {
-                    write.task = parent;
-                    pending.push(write);
-                } else {
-                    discarded.push(write);
-                }
-            }
-            state.pending_writes = pending;
-            for write in &discarded {
-                Self::discard_pending_write(&mut state, write);
-            }
+            Self::reassign_pending_writes(&mut state, id, parent);
             (waiters, slot.gate, slot.body)
         };
         // The permit releases before the teardown dials any host code below.
@@ -328,6 +317,31 @@ impl Inner {
         waiters.wake();
         self.emit_woken(std::mem::take(&mut waiters.woken));
         body
+    }
+
+    /// Hands a task's staged write groups to `parent`, or discards them when
+    /// there is no parent.
+    ///
+    /// A group is staged by an attempt and drained by whoever owns the demand.
+    /// A terminal attempt hands the group up; an attempt with no parent, and a
+    /// retried attempt, have no drain left for it.
+    fn reassign_pending_writes(state: &mut State, task: TaskId, parent: Option<TaskId>) {
+        let mut pending = Vec::with_capacity(state.pending_writes.len());
+        let mut discarded = Vec::new();
+        for mut write in std::mem::take(&mut state.pending_writes) {
+            if write.task != task {
+                pending.push(write);
+            } else if let Some(parent) = parent {
+                write.task = parent;
+                pending.push(write);
+            } else {
+                discarded.push(write);
+            }
+        }
+        state.pending_writes = pending;
+        for write in &discarded {
+            Self::discard_pending_write(state, write);
+        }
     }
 
     /// Releases claims a task still owns after its last attempt.
@@ -488,6 +502,77 @@ mod tests {
         assert!(
             receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
             "a panicking waker leaked the task's gate permit; no edit can start"
+        );
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use crate::state::{NodeKind, NodeRecord};
+    use irrigation_core::ids::Revision;
+
+    use super::*;
+
+    fn staged(task: u64, owner: NodeId, revision: Revision) -> crate::state::PendingWrite {
+        crate::state::PendingWrite {
+            owner,
+            task,
+            revision,
+            generation: 0,
+            drafts: Vec::new(),
+            retractions: Vec::new(),
+            restate_all: false,
+            enforce_views: false,
+            requirements: Vec::new(),
+            trace: Vec::new(),
+            claims: Vec::new(),
+        }
+    }
+
+    /// A retried attempt has no drain left for the groups it staged, so they are
+    /// discarded rather than handed to the next attempt -- which would publish a
+    /// superseded write set and wake its dependents for work it is about to redo.
+    #[test]
+    fn a_retried_attempt_discards_its_staged_groups() {
+        let mut state = State {
+            revision: 3,
+            ..State::default()
+        };
+        let owner = state.alloc(NodeRecord::empty("owner", NodeKind::Unit));
+        state.pending_writes.push(staged(7, owner, 3));
+        state.pending_writes.push(staged(8, owner, 3));
+
+        Inner::reassign_pending_writes(&mut state, 7, None);
+
+        assert_eq!(
+            state.pending_writes.len(),
+            1,
+            "only the other task's group survives"
+        );
+        assert_eq!(state.pending_writes[0].task, 8);
+        assert!(
+            state.node(owner).suspect_at >= 3,
+            "the discarded group's owner is marked suspect again"
+        );
+    }
+
+    /// A terminal attempt hands its groups to the enclosing demand instead of
+    /// dropping them: that demand is the drain.
+    #[test]
+    fn a_terminal_attempt_hands_its_groups_to_the_parent() {
+        let mut state = State {
+            revision: 2,
+            ..State::default()
+        };
+        let owner = state.alloc(NodeRecord::empty("owner", NodeKind::Unit));
+        state.pending_writes.push(staged(4, owner, 2));
+
+        Inner::reassign_pending_writes(&mut state, 4, Some(9));
+
+        assert_eq!(state.pending_writes.len(), 1);
+        assert_eq!(
+            state.pending_writes[0].task, 9,
+            "the enclosing demand now owns the group"
         );
     }
 }
