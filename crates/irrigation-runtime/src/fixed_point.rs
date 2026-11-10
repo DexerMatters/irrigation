@@ -624,6 +624,49 @@ mod tests {
         assert_eq!(result.dependents(&2), Some(&BTreeSet::from([3])));
     }
 
+    /// `solve_from` claims to extend a settled solve with monotone additions.
+    /// The claim is testable against `solve` itself: for every three-node graph,
+    /// add one edge and the extended answer must equal a from-scratch solve of
+    /// the grown graph.
+    #[test]
+    fn an_add_only_extension_matches_a_from_scratch_solve() {
+        let nodes = 3u32;
+        let possible: Vec<(u32, u32)> = (0..nodes)
+            .flat_map(|from| (0..nodes).map(move |to| (from, to)))
+            .collect();
+        for mask in 0u32..(1 << possible.len()) {
+            let edges: Vec<(u32, u32)> = possible
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, edge)| *edge)
+                .collect();
+            let base = Reachability {
+                edges: edges.clone(),
+                seeds: (0..nodes).collect(),
+            };
+            let settled = solve(&base).expect("base solve");
+            for extra in &possible {
+                if edges.contains(extra) {
+                    continue;
+                }
+                let mut grown = edges.clone();
+                grown.push(*extra);
+                let next = Reachability {
+                    edges: grown.clone(),
+                    seeds: (0..nodes).collect(),
+                };
+                let extended = solve_from(&settled, [extra.0], &next).expect("extension");
+                let fresh = solve(&next).expect("from scratch");
+                assert_eq!(
+                    extended.values(),
+                    fresh.values(),
+                    "adding {extra:?} to {edges:?} must not change the answer"
+                );
+            }
+        }
+    }
+
     #[test]
     fn an_add_only_update_reuses_the_dependency_index() {
         let first = Reachability {
