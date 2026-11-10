@@ -857,8 +857,11 @@ trait LocalSlot {
     fn policy(&self) -> DependencyUpdates;
     fn initialize(&mut self, cx: &mut GeneralCx) -> Result<Value>;
     fn update(&mut self, cx: &mut GeneralCx, changes: &ChangeBatch) -> Result<Value>;
-    /// The node whose run staged the pending state, if any.
-    fn pending_node(&self) -> Option<irrigation_core::ids::NodeId>;
+    /// The runtime and node whose run staged the pending state, if any.
+    ///
+    /// The runtime is part of the identity: the registry is thread-global, and a
+    /// `NodeId` is only unique inside one arena.
+    fn pending_node(&self) -> Option<(u64, irrigation_core::ids::NodeId)>;
     /// Promotes the staged state: the commit that staged it published.
     fn commit(&mut self);
     /// Drops the staged state; the retained state stays valid.
@@ -869,13 +872,13 @@ struct Slot<C: LocalGeneralComponent> {
     component: C,
     state: Option<C::State>,
     staged: Option<C::State>,
-    node: Option<irrigation_core::ids::NodeId>,
+    node: Option<(u64, irrigation_core::ids::NodeId)>,
 }
 
 impl<C: LocalGeneralComponent> Slot<C> {
     /// Records the successor a run produced, tagged with the node that ran it.
     fn stage(&mut self, state: C::State) {
-        self.node = frame::current().map(|frame| frame.node());
+        self.node = frame::current().map(|frame| (frame.runtime().runtime_id(), frame.node()));
         self.staged = Some(state);
     }
 }
@@ -909,7 +912,7 @@ impl<C: LocalGeneralComponent> LocalSlot for Slot<C> {
         Ok(value_of(output))
     }
 
-    fn pending_node(&self) -> Option<irrigation_core::ids::NodeId> {
+    fn pending_node(&self) -> Option<(u64, irrigation_core::ids::NodeId)> {
         self.node
     }
 
@@ -932,21 +935,24 @@ impl<C: LocalGeneralComponent> LocalSlot for Slot<C> {
 /// attempt whose observations moved before its install: that retry reuses the
 /// publication, so the state it staged belongs to it. A cancelled or rejected
 /// attempt published nothing and is discarded instead.
-pub(crate) fn commit_local_state(node: irrigation_core::ids::NodeId) {
-    promote_local_state(node, true);
+pub(crate) fn commit_local_state(runtime: u64, node: irrigation_core::ids::NodeId) {
+    promote_local_state(runtime, node, true);
 }
 
 /// Drops the state a local component staged for `node`.
-pub(crate) fn discard_local_state(node: irrigation_core::ids::NodeId) {
-    promote_local_state(node, false);
+pub(crate) fn discard_local_state(runtime: u64, node: irrigation_core::ids::NodeId) {
+    promote_local_state(runtime, node, false);
 }
 
-fn promote_local_state(node: irrigation_core::ids::NodeId, commit: bool) {
+fn promote_local_state(runtime: u64, node: irrigation_core::ids::NodeId, commit: bool) {
     let keys: Vec<u64> = LOCAL_SLOTS.with(|slots| {
         slots
             .borrow()
             .iter()
-            .filter(|(_, slot)| slot.pending_node() == Some(node))
+            // Both halves: the registry is thread-global and a `NodeId` is only
+            // unique inside one runtime's arena, so matching the node alone let a
+            // commit in one runtime promote the state another had staged.
+            .filter(|(_, slot)| slot.pending_node() == Some((runtime, node)))
             .map(|(key, _)| *key)
             .collect()
     });
@@ -1373,5 +1379,87 @@ impl<T: AsyncGeneralComponent> GeneralComponent for AsyncAdapter<T> {
         changes: &ChangeBatch,
     ) -> Result<(Self::State, Self::Output)> {
         drive(self.0.update(cx, state, changes))
+    }
+}
+
+#[cfg(test)]
+mod local_registry_tests {
+    use super::*;
+
+    #[derive(Debug, Clone)]
+    struct Counter;
+
+    impl LocalGeneralComponent for Counter {
+        type State = u64;
+        type Output = u64;
+
+        const ID: irrigation_core::ComponentId = irrigation_core::ComponentId(0x00C0_00F1);
+        const NAME: &'static str = "general::local_registry_tests::Counter";
+
+        fn initialize(&self, _cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
+            Ok((0, 0))
+        }
+
+        fn update(
+            &self,
+            _cx: &mut GeneralCx,
+            state: &Self::State,
+            _changes: &ChangeBatch,
+        ) -> Result<(Self::State, Self::Output)> {
+            Ok((state + 1, state + 1))
+        }
+    }
+
+    /// Stages one slot for `runtime` at `node`, returning its registry key.
+    fn stage_slot(runtime: u64, node: irrigation_core::ids::NodeId) -> u64 {
+        let key = NEXT_LOCAL_SLOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        LOCAL_SLOTS.with(|slots| {
+            slots.borrow_mut().insert(
+                key,
+                Box::new(Slot {
+                    component: Counter,
+                    state: Some(0),
+                    staged: Some(1),
+                    node: Some((runtime, node)),
+                }),
+            );
+        });
+        key
+    }
+
+    /// Whether the slot still holds a staged, unpromoted state.
+    ///
+    /// The slot itself returns to the registry either way -- `SlotGuard` restores
+    /// it after promoting -- so the observable is whether it still names a
+    /// pending node.
+    fn waiting(key: u64) -> Option<bool> {
+        LOCAL_SLOTS.with(|slots| {
+            let slots = slots.borrow();
+            slots.get(&key).map(|slot| slot.pending_node().is_some())
+        })
+    }
+
+    /// The registry is thread-global and a `NodeId` is only unique inside one
+    /// arena: a commit in one runtime must not promote another's staged state.
+    #[test]
+    fn a_promotion_only_matches_its_own_runtime() {
+        let node = irrigation_core::ids::NodeId::new(7, 1);
+        let key = stage_slot(1, node);
+
+        // Another runtime on this thread commits the same node id: nothing here.
+        promote_local_state(2, node, true);
+        assert_eq!(
+            waiting(key),
+            Some(true),
+            "another runtime's commit must leave this staged state alone"
+        );
+
+        // Its own runtime commits: the slot is consumed.
+        promote_local_state(1, node, true);
+        assert_eq!(
+            waiting(key),
+            Some(false),
+            "the owning runtime's commit promotes it"
+        );
     }
 }

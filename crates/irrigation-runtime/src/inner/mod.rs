@@ -169,8 +169,18 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// Allocates a stable identity for each runtime.
+static NEXT_RUNTIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// The shared runtime state and its synchronization.
 pub struct Inner {
+    /// Identity of this runtime, unique among live runtimes.
+    ///
+    /// The local-component registry is thread-global and its slots name a
+    /// `NodeId`, which is only unique inside one state arena. The slot match uses
+    /// this identity so two runtimes on one thread cannot promote each other's
+    /// staged state.
+    local_key: u64,
     /// Configuration.
     pub config: RuntimeConfig,
     /// Metadata and node arena.
@@ -417,6 +427,7 @@ impl Inner {
         irrigation_core::ops::quiet_engine_panics();
         let pool = crate::scheduler::Pool::new(config.workers, config.stack_size);
         let inner = Arc::new(Self {
+            local_key: NEXT_RUNTIME.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             config,
             state: Mutex::new(State::default()),
             route_selector: Mutex::new(None),

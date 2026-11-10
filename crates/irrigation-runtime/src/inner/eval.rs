@@ -515,11 +515,11 @@ impl Inner {
         // and drops it on every other exit, so a cancelled or retried attempt
         // leaves the previous state valid.
         if frame_cancelled(&parent) {
-            crate::general::discard_local_state(node);
+            crate::general::discard_local_state(self.local_key, node);
             return self.fail(node, ComputeError::Cancelled, revision);
         }
         if let Some(reason) = definition_error {
-            crate::general::discard_local_state(node);
+            crate::general::discard_local_state(self.local_key, node);
             return self.fail(
                 node,
                 ComputeError::DefinitionDenied {
@@ -555,7 +555,7 @@ impl Inner {
                     Ok(CommitOutcome::Published(committed)) => Some(committed),
                     Ok(CommitOutcome::SelfInvalidated) => None,
                     Err(error) => {
-                        crate::general::discard_local_state(node);
+                        crate::general::discard_local_state(self.local_key, node);
                         return Err(error);
                     }
                 };
@@ -564,7 +564,7 @@ impl Inner {
                 // published nothing is discarded; dropping a published run's
                 // state leaves the retry reading the trace of the output it
                 // published against the state before it.
-                crate::general::commit_local_state(node);
+                crate::general::commit_local_state(self.local_key, node);
                 let Some(committed) = published else {
                     return Err(ComputeError::Retry);
                 };
@@ -586,7 +586,7 @@ impl Inner {
                 Ok(committed)
             }
             Ok(Err(error)) | Err(error) => {
-                crate::general::discard_local_state(node);
+                crate::general::discard_local_state(self.local_key, node);
                 if error.is_suspended() || error.is_retry() {
                     return Err(error);
                 }

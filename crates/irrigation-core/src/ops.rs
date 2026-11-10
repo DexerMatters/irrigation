@@ -94,6 +94,13 @@ pub trait RuntimeOps: Send + Sync + 'static {
         location: Option<&'static std::panic::Location<'static>>,
     ) -> Result<()>;
 
+    /// A stable identity for this runtime, unique among live runtimes.
+    ///
+    /// `NodeId` is only unique inside one state arena, so anything keyed on a
+    /// thread-global registry has to match on this too: two runtimes built on one
+    /// thread allocate identical ids for identical shapes.
+    fn runtime_id(&self) -> u64;
+
     /// Records a structural precondition on the current write group.
     ///
     /// The condition was already evaluated by the caller with tracked reads.
