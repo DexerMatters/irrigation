@@ -47,7 +47,7 @@ impl Inner {
         // boundary that drains what its nested demands defer. The slot test is
         // what makes it nested — `current_or_detached` also answers for a
         // parallel region's scoped thread, whose identity no task will close.
-        if let Some(parent) = task::current().filter(|id| self.lock().tasks.contains_key(id)) {
+        if let Some(parent) = task::current_in(self.local_key) {
             let mut body = body;
             return self.demand_inline(cancel, cause, &mut body, Some(parent));
         }
@@ -160,7 +160,7 @@ impl Inner {
         };
         self.set_active_task(Some(id));
         self.note_demand_started(id, cause);
-        let _enter = task::enter(id);
+        let _enter = task::enter(self.local_key, id);
         let mut retries = 0u32;
         let result = loop {
             match body() {
@@ -222,7 +222,7 @@ impl Inner {
             return;
         };
         let attempt = {
-            let _enter = task::enter(id);
+            let _enter = task::enter(self.local_key, id);
             body.attempt()
         };
         self.finish_attempt(id, body, attempt);

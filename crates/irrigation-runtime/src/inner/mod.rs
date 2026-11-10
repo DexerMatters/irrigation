@@ -180,7 +180,7 @@ pub struct Inner {
     /// `NodeId`, which is only unique inside one state arena. The slot match uses
     /// this identity so two runtimes on one thread cannot promote each other's
     /// staged state.
-    local_key: u64,
+    pub(crate) local_key: u64,
     /// Configuration.
     pub config: RuntimeConfig,
     /// Metadata and node arena.
@@ -1873,7 +1873,7 @@ mod tests {
             let task = state.alloc_task(None, TaskMode::Pooled, false, CancelToken::default());
             (node, task)
         };
-        let _enter = task::enter(task);
+        let _enter = task::enter(inner.local_key, task);
         assert!(inner.suspend_request(node));
         {
             let state = inner.lock();

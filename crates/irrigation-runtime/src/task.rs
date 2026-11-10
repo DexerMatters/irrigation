@@ -166,6 +166,8 @@ impl<T: Send + 'static> Task for Body<T> {
 }
 
 struct Frame {
+    /// The runtime whose task this is.
+    runtime: u64,
     task: TaskId,
     active: Vec<NodeId>,
 }
@@ -219,9 +221,10 @@ impl Drop for Enter {
 
 /// Makes `task` the current task for the calling thread.
 #[must_use]
-pub fn enter(task: TaskId) -> Enter {
+pub fn enter(runtime: u64, task: TaskId) -> Enter {
     STACK.with(|stack| {
         stack.borrow_mut().push(Frame {
+            runtime,
             task,
             active: Vec::new(),
         });
@@ -233,6 +236,23 @@ pub fn enter(task: TaskId) -> Enter {
 #[must_use]
 pub fn current() -> Option<TaskId> {
     STACK.with(|stack| stack.borrow().last().map(|frame| frame.task))
+}
+
+/// The current task, when this thread is executing one of `runtime`'s.
+///
+/// `TaskId` is allocated per runtime, so the top frame's id may belong to a
+/// different runtime used on the same thread. A caller that asks "am I inside one
+/// of *my* tasks" has to say which runtime it is, or a task of the same number in
+/// another runtime answers for it.
+#[must_use]
+pub fn current_in(runtime: u64) -> Option<TaskId> {
+    STACK.with(|stack| {
+        stack
+            .borrow()
+            .last()
+            .filter(|frame| frame.runtime == runtime)
+            .map(|frame| frame.task)
+    })
 }
 
 /// The current task, or a per-thread identity for evaluation that runs outside
@@ -251,6 +271,10 @@ pub fn current_or_detached() -> TaskId {
             // tasks: a detached computation can still re-enter its own node.
             STACK.with(|stack| {
                 stack.borrow_mut().push(Frame {
+                    // A detached identification belongs to no runtime, so no
+                    // runtime's `current_in` answers for it -- which is the point:
+                    // a slot-less evaluation is never an enclosing task.
+                    runtime: 0,
                     task,
                     active: Vec::new(),
                 });
@@ -359,13 +383,28 @@ pub(crate) fn take_detached_claims_since(mark: u64) -> Vec<NodeId> {
 mod tests {
     use super::*;
 
+    /// `TaskId` is allocated per runtime, so the thread's current task can be
+    /// another runtime's. A caller asking "am I inside one of my tasks" must not be
+    /// answered by a task of the same number in a different runtime.
+    #[test]
+    fn a_task_id_from_another_runtime_does_not_answer() {
+        let _enter = enter(1, 7);
+        assert_eq!(current_in(1), Some(7));
+        assert_eq!(current_in(2), None, "another runtime's stack is not mine");
+        assert_eq!(
+            current(),
+            Some(7),
+            "the unkeyed reading still reports the thread's task"
+        );
+    }
+
     #[test]
     fn nested_tasks_restore_the_enclosing_one() {
-        let outer = enter(1);
+        let outer = enter(1, 1);
         assert_eq!(current(), Some(1));
         active_push(NodeId(1));
         {
-            let _inner = enter(2);
+            let _inner = enter(1, 2);
             assert_eq!(current(), Some(2));
             assert!(active_snapshot().is_empty());
             active_push(NodeId(2));

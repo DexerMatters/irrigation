@@ -442,7 +442,7 @@ impl Inner {
     /// for the demands it belongs to without waiting for itself, so it skips the
     /// pass and reports none.
     fn reclaim(&self) -> Option<ReclaimStats> {
-        if task::current().is_some() {
+        if task::current_in(self.local_key).is_some() {
             return None;
         }
         let _permit = self.gate.write();
