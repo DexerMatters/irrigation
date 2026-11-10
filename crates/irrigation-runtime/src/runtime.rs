@@ -168,7 +168,8 @@ impl Runtime {
         &self,
         component: T,
     ) -> Result<()> {
-        self.install_general(crate::general::TypedAdapter::new(component))
+        self.install_general_root(crate::general::TypedAdapter::new(component))
+            .map(|_| ())
     }
 
     /// Installs a local (non-`Send` state) algorithm as the runtime's root.
@@ -186,16 +187,8 @@ impl Runtime {
                 "local components require a workerless runtime (`workers = 0`)",
             ));
         }
-        self.install_general(crate::general::LocalAdapter::new(component))
-    }
-
-    /// Installs a custom incremental algorithm as the runtime's root.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a root is already installed.
-    pub fn install_general<T: crate::general::GeneralComponent>(&self, component: T) -> Result<()> {
-        self.install_general_root(component).map(|_| ())
+        self.install_general_root(crate::general::LocalAdapter::new(component))
+            .map(|_| ())
     }
 
     /// Installs a general component as the root and returns its handle.
@@ -264,13 +257,6 @@ impl Runtime {
     /// normal graph participant, evaluated lazily when a consumer reads one of
     /// its output units. It is not a root and does not block root installation.
     /// Output Views must be derived, and exactly one producer may own a View.
-    pub fn install_general_component<T: crate::general::GeneralComponent>(
-        &self,
-        component: T,
-    ) -> Result<()> {
-        self.install_general_producer(component).map(|_| ())
-    }
-
     /// Installs a general component producer and returns its handle.
     ///
     /// # Errors

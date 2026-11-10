@@ -375,7 +375,9 @@ fn a_general_component_is_a_first_class_node() {
     let recorder = recorder(ObserveLevel::Summary);
     let observer: Arc<dyn irrigation_observe::RuntimeObserver> = Arc::clone(&recorder) as Arc<_>;
     let runtime = Runtime::with_observer(RuntimeConfig::default(), observer);
-    runtime.install_general(Watcher).expect("install general");
+    runtime
+        .install_general_root(Watcher)
+        .expect("install general");
     runtime
         .edit(|edit| {
             edit.view::<Ticks>().set_value(7);

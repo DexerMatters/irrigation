@@ -87,9 +87,9 @@ impl GeneralComponent for Consumer {
 fn general_component_producer_is_demanded_by_output_view() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer)
+        .install_general_producer(Producer)
         .expect("producer");
-    runtime.install_general(Consumer).expect("consumer");
+    runtime.install_general_root(Consumer).expect("consumer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(7))
         .expect("edit");
@@ -121,7 +121,7 @@ mod app {
 fn ordinary_root_component_demands_a_general_producer() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer)
+        .install_general_producer(Producer)
         .expect("producer");
     runtime.install(app::Consume).expect("root");
     runtime
@@ -133,8 +133,8 @@ fn ordinary_root_component_demands_a_general_producer() {
 #[test]
 fn a_view_has_exactly_one_general_producer() {
     let runtime = Runtime::new();
-    runtime.install_general_component(Producer).expect("first");
-    assert!(runtime.install_general_component(Producer).is_err());
+    runtime.install_general_producer(Producer).expect("first");
+    assert!(runtime.install_general_producer(Producer).is_err());
 }
 
 struct NoOutput;
@@ -163,7 +163,7 @@ impl GeneralComponent for NoOutput {
 #[test]
 fn non_root_general_component_requires_an_output_view() {
     let runtime = Runtime::new();
-    assert!(runtime.install_general_component(NoOutput).is_err());
+    assert!(runtime.install_general_producer(NoOutput).is_err());
 }
 
 #[irrigation::view(source)]
@@ -201,7 +201,7 @@ fn source_views_cannot_be_produced_by_general_components() {
     let runtime = Runtime::new();
     assert!(
         runtime
-            .install_general_component(SourceOutputProducer)
+            .install_general_producer(SourceOutputProducer)
             .is_err()
     );
 }
@@ -243,9 +243,9 @@ impl GeneralComponent for BadProducer {
 fn definitions_outside_output_views_fail_as_component_errors() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(BadProducer)
+        .install_general_producer(BadProducer)
         .expect("producer");
-    runtime.install_general(Consumer).expect("consumer");
+    runtime.install_general_root(Consumer).expect("consumer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(1))
         .expect("edit");
@@ -303,9 +303,9 @@ impl GeneralComponent for PreservingProducer {
 fn a_unit_not_restaged_is_kept() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(PreservingProducer)
+        .install_general_producer(PreservingProducer)
         .expect("producer");
-    runtime.install_general(Consumer).expect("consumer");
+    runtime.install_general_root(Consumer).expect("consumer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(5))
         .expect("edit");
@@ -389,7 +389,7 @@ mod tree_reader {
 fn a_failing_tree_producer_is_not_reported_as_an_absent_root() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(FailingTreeProducer)
+        .install_general_producer(FailingTreeProducer)
         .expect("producer");
     runtime.install(tree_reader::RootPresent).expect("root");
     runtime
@@ -444,7 +444,7 @@ mod produced_reader {
 #[test]
 fn an_absent_unit_is_observed_and_invalidated_by_its_definition() {
     let runtime = Runtime::new();
-    runtime.install_general(AbsentReader).expect("reader");
+    runtime.install_general_root(AbsentReader).expect("reader");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(5))
         .expect("seed");
@@ -457,7 +457,7 @@ fn an_absent_unit_is_observed_and_invalidated_by_its_definition() {
     );
 
     runtime
-        .install_general_component(Producer)
+        .install_general_producer(Producer)
         .expect("producer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(6))
@@ -552,7 +552,9 @@ impl GeneralComponent for UnregisteredContent {
 fn content_replacement_stays_inside_the_output_views() {
     let runtime = Runtime::new();
     runtime.register_view(<ContentSlot as ViewSchema>::DESCRIPTOR);
-    runtime.install_general(ForeignContent).expect("install");
+    runtime
+        .install_general_root(ForeignContent)
+        .expect("install");
     let error = runtime
         .read_outputs_general::<ForeignContent>()
         .expect_err("a foreign View's content is not this component's to write");
@@ -571,7 +573,7 @@ fn content_replacement_stays_inside_the_output_views() {
 fn content_replacement_requires_a_registered_view() {
     let runtime = Runtime::new();
     runtime
-        .install_general(UnregisteredContent)
+        .install_general_root(UnregisteredContent)
         .expect("install");
     let error = runtime
         .read_outputs_general::<UnregisteredContent>()
@@ -621,7 +623,7 @@ impl GeneralComponent for HalfAppliedContent {
 fn a_rejected_install_does_not_publish_view_content() {
     let runtime = Runtime::new();
     runtime
-        .install_general(HalfAppliedContent)
+        .install_general_root(HalfAppliedContent)
         .expect("install");
     let error = runtime
         .read_outputs_general::<HalfAppliedContent>()
@@ -821,9 +823,9 @@ fn a_route_selector_may_call_back_into_the_runtime() {
     SELECTOR_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
     let runtime = std::sync::Arc::new(Runtime::new());
     runtime
-        .install_general_component(Producer)
+        .install_general_producer(Producer)
         .expect("producer");
-    runtime.install_general(Consumer).expect("consumer");
+    runtime.install_general_root(Consumer).expect("consumer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(4))
         .expect("seed");
@@ -915,7 +917,9 @@ impl GeneralComponent for DeferredGeneral {
 #[test]
 fn a_deferred_definition_from_a_general_root_is_resolved() {
     let runtime = Runtime::new();
-    runtime.install_general(DeferredGeneral).expect("install");
+    runtime
+        .install_general_root(DeferredGeneral)
+        .expect("install");
     let error = runtime
         .read_outputs_general::<DeferredGeneral>()
         .expect_err("a deferred definition that can never hold must fail the demand");
@@ -1061,9 +1065,11 @@ impl GeneralComponent for FlakyConsumer {
 fn a_panicking_host_equality_leaves_the_view_intact() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(FlakyProducer)
+        .install_general_producer(FlakyProducer)
         .expect("producer");
-    runtime.install_general(FlakyConsumer).expect("consumer");
+    runtime
+        .install_general_root(FlakyConsumer)
+        .expect("consumer");
     runtime
         .edit(|edit| edit.view::<Input>().set_value(1))
         .expect("seed");
@@ -1230,7 +1236,7 @@ impl GeneralComponent for ContentOnly {
 #[test]
 fn a_content_only_publication_notifies_and_versions_the_view() {
     let runtime = Runtime::new();
-    runtime.install_general(ContentOnly).expect("install");
+    runtime.install_general_root(ContentOnly).expect("install");
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = std::sync::Arc::clone(&seen);
     let _subscription = runtime
@@ -1433,7 +1439,7 @@ fn a_local_component_keeps_the_state_its_own_publication_staged() {
         workers: 0,
         ..irrigation::RuntimeConfig::default()
     });
-    runtime.install_general_component(SlotProd).expect("slot");
+    runtime.install_general_producer(SlotProd).expect("slot");
     runtime.install_local_general(LocalRetry).expect("local");
     runtime
         .edit(|edit| {
@@ -1599,10 +1605,10 @@ fn a_local_component_may_demand_a_nested_local_component() {
         ..irrigation::RuntimeConfig::default()
     });
     runtime
-        .install_general_component(irrigation::LocalAdapter::new(LocalFeed))
+        .install_general_producer(irrigation::LocalAdapter::new(LocalFeed))
         .expect("feed");
     runtime
-        .install_general_component(irrigation::LocalAdapter::new(LocalSink))
+        .install_general_producer(irrigation::LocalAdapter::new(LocalSink))
         .expect("sink");
     runtime.install(local_chain::Root).expect("root");
     runtime

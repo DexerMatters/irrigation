@@ -182,9 +182,11 @@ fn producer_failure_releases_the_claim(workers: usize) {
         ..RuntimeConfig::default()
     });
     runtime
-        .install_general_component(FragileProducer)
+        .install_general_producer(FragileProducer)
         .expect("producer");
-    runtime.install_general(DerivedConsumer).expect("consumer");
+    runtime
+        .install_general_root(DerivedConsumer)
+        .expect("consumer");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(7))
         .expect("seed");
@@ -260,10 +262,10 @@ impl AsyncGeneralComponent for AsyncDerivedConsumer {
 fn an_async_receipt_demands_and_follows_the_derived_producer() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(DerivedProducer)
+        .install_general_producer(DerivedProducer)
         .expect("producer");
     runtime
-        .install_general(AsyncAdapter::new(AsyncDerivedConsumer))
+        .install_general_root(AsyncAdapter::new(AsyncDerivedConsumer))
         .expect("consumer");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(7))
@@ -397,10 +399,10 @@ mod scoped {
 fn every_installed_component_owns_its_own_scope() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(FirstProducer)
+        .install_general_producer(FirstProducer)
         .expect("first");
     runtime
-        .install_general_component(SecondProducer)
+        .install_general_producer(SecondProducer)
         .expect("second");
     // Each producer may define only its own View, which the runtime checks
     // against the planned provider component taken from the producer's scope.
@@ -500,7 +502,7 @@ mod unwritten_read {
 fn a_receipt_materializes_the_committed_content_of_untouched_units() {
     let runtime = Runtime::new();
     runtime
-        .install_general(AsyncAdapter::new(RequestUnwritten))
+        .install_general_root(AsyncAdapter::new(RequestUnwritten))
         .expect("consumer");
     assert_eq!(
         runtime
@@ -562,7 +564,7 @@ fn a_failing_parallel_member_releases_its_claim() {
         ..RuntimeConfig::default()
     });
     runtime
-        .install_general_component(FragileProducer)
+        .install_general_producer(FragileProducer)
         .expect("producer");
     runtime.install(parallel_members::Total).expect("root");
     runtime
@@ -804,10 +806,10 @@ mod adapted_producers {
 fn typed_and_async_adapters_publish_their_declared_output_views() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(TypedAdapter::new(TypedProducer))
+        .install_general_producer(TypedAdapter::new(TypedProducer))
         .expect("a typed adapter declares its output views");
     runtime
-        .install_general_component(AsyncAdapter::new(AsyncProducer))
+        .install_general_producer(AsyncAdapter::new(AsyncProducer))
         .expect("an async adapter declares its output views");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(7))
@@ -964,10 +966,10 @@ impl GeneralComponent for ForeignRetractor {
 fn a_retraction_outside_the_output_views_is_denied() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(VictimProducer)
+        .install_general_producer(VictimProducer)
         .expect("victim producer");
     runtime
-        .install_general(ForeignRetractor)
+        .install_general_root(ForeignRetractor)
         .expect("retractor");
     let error = runtime
         .read_outputs_general::<ForeignRetractor>()
@@ -1078,7 +1080,9 @@ impl GeneralComponent for DeferredGeneral {
 #[test]
 fn a_general_write_group_is_never_deferred() {
     let runtime = Runtime::new();
-    runtime.install_general(DeferredGeneral).expect("install");
+    runtime
+        .install_general_root(DeferredGeneral)
+        .expect("install");
     let first = runtime
         .read_outputs_general::<DeferredGeneral>()
         .expect_err("the requirement can never hold");
@@ -1153,7 +1157,7 @@ impl GeneralComponent for NestedDemandRoot {
 fn a_nested_demand_restores_the_enclosing_cancel_target() {
     let runtime = Runtime::new();
     runtime
-        .install_general(NestedDemandRoot {
+        .install_general_root(NestedDemandRoot {
             runtime: runtime.clone(),
         })
         .expect("root");
@@ -1362,7 +1366,7 @@ fn nested_deferral_resolves(workers: usize) {
     });
     runtime.register_view(<NestedSlot as ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(NestedDeferralRoot {
+        .install_general_root(NestedDeferralRoot {
             runtime: runtime.clone(),
         })
         .expect("root");
@@ -1478,7 +1482,7 @@ fn a_teardown_reopens_the_owner_of_its_pending_group() {
     let runtime = Runtime::new();
     runtime.register_view(<CancelSlot as ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(CancelAfterStage {
+        .install_general_root(CancelAfterStage {
             runtime: runtime.clone(),
         })
         .expect("root");

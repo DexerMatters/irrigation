@@ -982,7 +982,7 @@ impl irrigation::GeneralComponent for Resetter {
 #[test]
 fn general_components_initialize_update_and_commit_state() {
     let runtime = Runtime::new();
-    runtime.install_general(Tracker).expect("install");
+    runtime.install_general_root(Tracker).expect("install");
     assert_eq!(
         runtime.read_outputs_general::<Tracker>().expect("outputs"),
         (0, 1, 0)
@@ -1026,7 +1026,7 @@ fn general_components_initialize_update_and_commit_state() {
 #[test]
 fn general_components_default_to_reset_on_invalidation() {
     let runtime = Runtime::new();
-    runtime.install_general(Resetter).expect("install");
+    runtime.install_general_root(Resetter).expect("install");
     assert_eq!(
         runtime.read_outputs_general::<Resetter>().expect("outputs"),
         (0, 1)
@@ -1046,7 +1046,7 @@ fn general_components_default_to_reset_on_invalidation() {
 #[test]
 fn general_components_publish_definitions_atomically() {
     let runtime = Runtime::new();
-    runtime.install_general(Tracker).expect("install");
+    runtime.install_general_root(Tracker).expect("install");
     let snapshot = runtime.read().expect("snapshot");
     assert_eq!(snapshot.revision(), 0);
     assert!(snapshot.contains::<Counter>());
@@ -1145,7 +1145,7 @@ fn incremental_join_matches_from_scratch_and_touches_only_changed_keys() {
     runtime.register_view(<LeftTable as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<RightTable as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<PairJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<PairJoin>::new())
         .expect("install");
 
     let mut left: Vec<(u32, u64)> = vec![(1, 10), (2, 20), (3, 30)];
@@ -1516,9 +1516,11 @@ fn an_out_of_range_reduced_definition_is_ignored() {
     let runtime = Runtime::new();
     runtime.register_view(<OutOfRangeTotals as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(ReducedOutOfRange)
+        .install_general_producer(ReducedOutOfRange)
         .expect("install");
-    runtime.install_general(OutOfRangeReader).expect("reader");
+    runtime
+        .install_general_root(OutOfRangeReader)
+        .expect("reader");
     assert_eq!(
         runtime
             .read_outputs_general::<OutOfRangeReader>()
@@ -1849,7 +1851,7 @@ impl irrigation::AsyncGeneralComponent for AsyncTracker {
 fn async_components_are_driven_to_completion() {
     let runtime = Runtime::new();
     runtime
-        .install_general(irrigation::AsyncAdapter::new(AsyncTracker))
+        .install_general_root(irrigation::AsyncAdapter::new(AsyncTracker))
         .expect("install");
     assert_eq!(
         runtime
@@ -1948,7 +1950,7 @@ impl irrigation::GeneralComponent for Selector {
 #[test]
 fn a_switched_scope_retires_its_old_dependency() {
     let runtime = Runtime::new();
-    runtime.install_general(Selector).expect("install");
+    runtime.install_general_root(Selector).expect("install");
     runtime
         .edit(|edit| {
             let mut view = edit.view::<Switch>();
@@ -2823,7 +2825,7 @@ fn a_source_only_edit_notifies_its_observer() {
 fn an_edit_is_not_failed_by_a_failing_root() {
     let runtime = Runtime::new();
     runtime
-        .install_general(BrokenRoot)
+        .install_general_root(BrokenRoot)
         .expect("install general");
     runtime
         .edit(|edit| edit.view::<DerivedListFlag>().set_on(false))
@@ -3035,7 +3037,7 @@ impl irrigation::GeneralComponent for InstallAudit {
 #[test]
 fn a_failed_definition_install_is_atomic() {
     let runtime = Runtime::new();
-    runtime.install_general(InstallAudit).expect("install");
+    runtime.install_general_root(InstallAudit).expect("install");
     runtime
         .edit(|edit| edit.view::<AuditFlag>().set_on(true))
         .expect("edit");
@@ -3485,7 +3487,7 @@ fn a_join_tracks_both_inputs_changing_in_one_transaction() {
     runtime.register_view(<LeftTable as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<RightTable as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<TransactionJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<TransactionJoin>::new())
         .expect("install");
 
     let mut left: Vec<(u32, u64)> = vec![(1, 10), (2, 20), (3, 30)];
@@ -4468,7 +4470,7 @@ fn join_view_updates_only_changed_keys() {
     runtime.register_view(<RightTable as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<JoinTarget as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<TargetJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<TargetJoin>::new())
         .expect("install");
     runtime
         .edit(|edit| {
@@ -4916,7 +4918,7 @@ impl irrigation::GeneralComponent for ScopedReader {
 #[test]
 fn retired_dependency_scopes_filter_notifications() {
     let runtime = Runtime::new();
-    runtime.install_general(ScopedReader).expect("install");
+    runtime.install_general_root(ScopedReader).expect("install");
     runtime
         .edit(|edit| {
             let mut table = edit.view::<ScopedTable>();
@@ -5091,7 +5093,7 @@ impl irrigation::GeneralComponent for RetainedRoot {
 #[test]
 fn collect_keeps_the_trace_of_a_node_retained_for_its_definitions() {
     let runtime = Runtime::new();
-    runtime.install_general(RetainedRoot).expect("install");
+    runtime.install_general_root(RetainedRoot).expect("install");
     assert_eq!(
         runtime
             .read_outputs_general::<RetainedRoot>()
@@ -5275,7 +5277,7 @@ fn signed_weight_join_applies_the_bilinear_rule() {
     runtime.register_view(<RightWeights as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<JoinedWeights as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<WeightJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<WeightJoin>::new())
         .expect("install");
     runtime
         .edit(|edit| {
@@ -5575,7 +5577,7 @@ impl irrigation::AsyncGeneralComponent for AsyncSum {
 fn pending_component_futures_are_driven_to_completion() {
     let runtime = Runtime::new();
     runtime
-        .install_general(irrigation::AsyncAdapter::new(AsyncSum))
+        .install_general_root(irrigation::AsyncAdapter::new(AsyncSum))
         .expect("install");
     runtime
         .edit(|edit| {
@@ -5772,7 +5774,7 @@ impl irrigation::AsyncGeneralComponent for AsyncRequestSum {
 fn request_receipts_are_awaitable() {
     let runtime = Runtime::new();
     runtime
-        .install_general(irrigation::AsyncAdapter::new(AsyncRequestSum))
+        .install_general_root(irrigation::AsyncAdapter::new(AsyncRequestSum))
         .expect("install");
     runtime
         .edit(|edit| {
@@ -6173,7 +6175,7 @@ fn joining_two_empty_source_maps_is_empty() {
     runtime.register_view(<RightWeights as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<JoinedWeights as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<WeightJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<WeightJoin>::new())
         .expect("install");
     let joined = runtime
         .read_outputs_general::<irrigation::EquiJoin<WeightJoin>>()
@@ -6927,7 +6929,7 @@ mod clearable_reader {
 fn a_false_membership_define_clears_the_member() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(SetPublisher)
+        .install_general_producer(SetPublisher)
         .expect("producer");
     runtime.install(clearable_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -7323,7 +7325,7 @@ mod published_reader {
 fn keyed_list_publication_retracts_dropped_ids() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(ListPublisher)
+        .install_general_producer(ListPublisher)
         .expect("producer");
     runtime.install(published_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -8247,7 +8249,7 @@ mod total_map_reader {
 fn a_false_membership_define_clears_a_map_entry() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(MembershipPublisher)
+        .install_general_producer(MembershipPublisher)
         .expect("producer");
     runtime.install(total_map_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -8298,7 +8300,7 @@ mod total_list_reader {
 fn a_false_membership_define_clears_a_list_member() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(MembershipPublisher)
+        .install_general_producer(MembershipPublisher)
         .expect("producer");
     runtime.install(total_list_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -8343,7 +8345,7 @@ mod total_set_reader {
 fn a_false_membership_define_clears_a_set_member() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(MembershipPublisher)
+        .install_general_producer(MembershipPublisher)
         .expect("producer");
     runtime.install(total_set_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -8379,7 +8381,7 @@ mod total_graph_reader {
 fn a_false_membership_define_clears_a_graph_node() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(MembershipPublisher)
+        .install_general_producer(MembershipPublisher)
         .expect("producer");
     runtime.install(total_graph_reader::Root).expect("install");
     let read = |runtime: &Runtime| {
@@ -9758,7 +9760,7 @@ fn a_general_component_total_publisher_retracts_dropped_entries() {
         runtime.register_view(descriptor);
     }
     runtime
-        .install_general_component(ProjectSources)
+        .install_general_producer(ProjectSources)
         .expect("projector");
     runtime.install(projected_reader::Root).expect("root");
     runtime
@@ -10251,7 +10253,7 @@ fn a_general_content_replacement_republishes_the_field_structure() {
     runtime.register_view(<ClearMode as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<PublishedMap as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(MapContentPublisher)
+        .install_general_producer(MapContentPublisher)
         .expect("install producer");
     runtime
         .install(published_map_reader::Keys)
@@ -10456,7 +10458,7 @@ fn a_general_content_replacement_refreshes_a_materialized_entry_value() {
     runtime.register_view(<PublisherCount as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<PublishedMap as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(MapValuePublisher)
+        .install_general_producer(MapValuePublisher)
         .expect("install producer");
     runtime
         .install(published_map_value_reader::Value)
@@ -10613,7 +10615,7 @@ fn a_general_content_replacement_refreshes_a_materialized_scalar_cell() {
     runtime.register_view(<PublisherCount as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<ScaledSlot as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(ScaledSlotPublisher)
+        .install_general_producer(ScaledSlotPublisher)
         .expect("install producer");
     runtime.install(scaled_slot_reader::Value).expect("install");
 
@@ -11954,7 +11956,7 @@ impl irrigation::GeneralComponent for StructurePublisher {
 fn a_general_root_that_replaces_the_content_whose_structure_it_read_is_self_dependent() {
     let runtime = Runtime::new();
     runtime
-        .install_general(StructurePublisher)
+        .install_general_root(StructurePublisher)
         .expect("install");
     let error = runtime
         .read_outputs_general::<StructurePublisher>()
@@ -12034,7 +12036,9 @@ impl irrigation::GeneralComponent for SettledPublisher {
 #[test]
 fn a_general_root_that_stages_the_content_it_already_committed_publishes() {
     let runtime = Runtime::new();
-    runtime.install_general(SettledPublisher).expect("install");
+    runtime
+        .install_general_root(SettledPublisher)
+        .expect("install");
     runtime
         .edit(|edit| {
             edit.set_content(
@@ -12155,7 +12159,7 @@ mod retracted_payload_reader {
 fn a_presence_key_retraction_clears_the_payload_it_removes() {
     let runtime = Runtime::new();
     runtime
-        .install_general(PresenceRetractor)
+        .install_general_root(PresenceRetractor)
         .expect("install the provider");
     runtime
         .read_outputs_general::<PresenceRetractor>()
@@ -12655,7 +12659,7 @@ mod presence_graph_reader {
 fn a_presence_draft_does_not_overwrite_a_boolean_node_payload() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(PresencePublisher)
+        .install_general_producer(PresencePublisher)
         .expect("producer");
     runtime
         .install(presence_graph_reader::Root)
@@ -13402,7 +13406,7 @@ fn a_provider_presence_define_retracts_the_payload_it_removes() {
     let runtime = Runtime::new();
     runtime.register_view(<WithdrawMap as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(WithdrawPublisher)
+        .install_general_root(WithdrawPublisher)
         .expect("install the provider");
 
     // A revision must separate the install from the first demand: at revision
@@ -13472,7 +13476,7 @@ fn a_payload_staged_beside_a_false_presence_is_decided_by_the_presence() {
         let runtime = Runtime::new();
         runtime.register_view(<WithdrawMap as irrigation::ViewSchema>::DESCRIPTOR);
         runtime
-            .install_general(WithdrawPublisher)
+            .install_general_root(WithdrawPublisher)
             .expect("install the provider");
         runtime
             .edit(|edit| edit.view::<WithdrawMode>().set_mode(step))
@@ -13945,7 +13949,9 @@ impl irrigation::GeneralComponent for RestatingGeneral {
 #[test]
 fn an_equal_definition_restatement_skips_content_application() {
     let runtime = Runtime::new();
-    runtime.install_general(RestatingGeneral).expect("install");
+    runtime
+        .install_general_root(RestatingGeneral)
+        .expect("install");
     assert_eq!(
         runtime
             .read_outputs_general::<RestatingGeneral>()
@@ -14021,7 +14027,9 @@ impl irrigation::GeneralComponent for ProjectionGeneral {
 #[test]
 fn a_projection_only_unit_skips_content_application() {
     let runtime = Runtime::new();
-    runtime.install_general(ProjectionGeneral).expect("install");
+    runtime
+        .install_general_root(ProjectionGeneral)
+        .expect("install");
     assert_eq!(
         runtime
             .read_outputs_general::<ProjectionGeneral>()
@@ -14081,7 +14089,9 @@ impl irrigation::GeneralComponent for BatchedGeneral {
 #[test]
 fn several_changed_map_entries_share_one_content_batch() {
     let runtime = Runtime::new();
-    runtime.install_general(BatchedGeneral).expect("install");
+    runtime
+        .install_general_root(BatchedGeneral)
+        .expect("install");
     assert_eq!(
         runtime
             .read_outputs_general::<BatchedGeneral>()

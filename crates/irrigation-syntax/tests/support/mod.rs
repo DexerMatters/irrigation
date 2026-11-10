@@ -173,16 +173,16 @@ impl Session {
         runtime.register_view(<irrigation_syntax::AstTree as ViewSchema>::DESCRIPTOR);
         runtime.register_view(<irrigation_syntax::PipelineStats as ViewSchema>::DESCRIPTOR);
         runtime
-            .install_general_component(irrigation_syntax::TextComponent)
+            .install_general_producer(irrigation_syntax::TextComponent)
             .expect("text component");
         runtime
-            .install_general_component(LexerComponent::new(grammar.lexer().clone()))
+            .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
             .expect("lexer");
         runtime
-            .install_general_component(ParserComponent::new(grammar))
+            .install_general_producer(ParserComponent::new(grammar))
             .expect("parser");
         runtime
-            .install_general(irrigation_syntax::AstConsumer)
+            .install_general_root(irrigation_syntax::AstConsumer)
             .expect("root");
         let document = TextDocument::new(text);
         runtime

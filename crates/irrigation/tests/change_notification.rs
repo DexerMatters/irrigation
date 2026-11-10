@@ -215,21 +215,21 @@ fn setup_with(runtime: Runtime) -> Setup {
     let constant = Arc::new(AtomicU32::new(0));
     let mirror = Arc::new(AtomicU32::new(0));
     runtime
-        .install_general_component(Producer {
+        .install_general_producer(Producer {
             runs: Arc::clone(&producer),
         })
         .expect("producer");
     runtime
-        .install_general_component(ConstantReader {
+        .install_general_producer(ConstantReader {
             runs: Arc::clone(&constant),
         })
         .expect("constant reader");
     runtime
-        .install_general_component(MirrorReader {
+        .install_general_producer(MirrorReader {
             runs: Arc::clone(&mirror),
         })
         .expect("mirror reader");
-    runtime.install_general(Driver).expect("driver");
+    runtime.install_general_root(Driver).expect("driver");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(1))
         .expect("initial edit");
@@ -384,12 +384,12 @@ fn reset_component_reinitializes_when_its_input_moves() {
     let producer_runs = Arc::new(AtomicU32::new(0));
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer {
+        .install_general_producer(Producer {
             runs: Arc::clone(&producer_runs),
         })
         .expect("producer");
     runtime
-        .install_general(ResettingReader {
+        .install_general_root(ResettingReader {
             initializations: Arc::clone(&initializations),
             updates: Arc::clone(&updates),
         })
@@ -505,12 +505,12 @@ fn change_batch_reports_the_moved_units() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer {
+        .install_general_producer(Producer {
             runs: Arc::new(AtomicU32::new(0)),
         })
         .expect("producer");
     runtime
-        .install_general(ChangeRecorder {
+        .install_general_root(ChangeRecorder {
             seen: Arc::clone(&seen),
         })
         .expect("recorder");
@@ -568,7 +568,7 @@ impl irrigation::RootComponent for PlainRoot {
 #[test]
 fn a_general_root_blocks_a_later_root() {
     let runtime = Runtime::new();
-    runtime.install_general(Driver).expect("general root");
+    runtime.install_general_root(Driver).expect("general root");
     assert!(
         runtime.install(PlainRoot).is_err(),
         "a runtime has one root slot, whether the root is general or ordinary"
@@ -579,14 +579,14 @@ fn a_general_root_blocks_a_later_root() {
 fn a_root_blocks_a_later_general_root() {
     let runtime = Runtime::new();
     runtime.install(PlainRoot).expect("root");
-    assert!(runtime.install_general(Driver).is_err());
+    assert!(runtime.install_general_root(Driver).is_err());
 }
 
 #[test]
 fn a_root_cannot_share_a_component_id_with_a_general_component() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer {
+        .install_general_producer(Producer {
             runs: Arc::new(AtomicU32::new(0)),
         })
         .expect("producer");
@@ -1118,10 +1118,10 @@ impl GeneralComponent for PresenceReader {
 fn a_first_false_membership_define_reads_false() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(PresenceProducer)
+        .install_general_producer(PresenceProducer)
         .expect("membership producer");
     runtime
-        .install_general(PresenceReader)
+        .install_general_root(PresenceReader)
         .expect("membership reader");
     assert!(
         !runtime
@@ -1984,7 +1984,7 @@ impl GeneralComponent for TreeProbe {
 fn a_node_id_read_of_a_replaced_tree_cell_answers_the_replacement() {
     let runtime = Runtime::new();
     runtime
-        .install_general(TreeProbe)
+        .install_general_root(TreeProbe)
         .expect("the probe registers its View");
     runtime
         .edit(|edit| edit.view::<script::Script>().set_root(&script_document()))
@@ -2353,7 +2353,7 @@ impl GeneralComponent for Feedback {
 #[test]
 fn a_general_root_that_replaces_the_content_it_read_is_self_dependent() {
     let runtime = Runtime::new();
-    runtime.install_general(Feedback).expect("install");
+    runtime.install_general_root(Feedback).expect("install");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(3))
         .expect("seed");
@@ -2658,7 +2658,9 @@ fn root_owned_unit() -> UnitKey {
 #[test]
 fn a_plan_naming_a_general_root_is_accepted_by_its_own_definitions() {
     let runtime = Runtime::new();
-    runtime.install_general(OwningRoot).expect("general root");
+    runtime
+        .install_general_root(OwningRoot)
+        .expect("general root");
     runtime.plan_route([(root_owned_unit(), <OwningRoot as GeneralComponent>::ID)]);
     assert_eq!(
         runtime
@@ -2676,7 +2678,9 @@ fn a_general_root_claim_is_in_scope_under_strict_arbitration() {
         write_arbitration: WriteArbitration::Strict,
         ..irrigation::RuntimeConfig::default()
     });
-    runtime.install_general(OwningRoot).expect("general root");
+    runtime
+        .install_general_root(OwningRoot)
+        .expect("general root");
     runtime.plan_route([(root_owned_unit(), <OwningRoot as GeneralComponent>::ID)]);
     assert_eq!(
         runtime
@@ -2743,7 +2747,7 @@ fn side_unit() -> UnitKey {
 fn a_unit_subscription_on_a_producer_only_runtime_runs_the_producer() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(SideProducer)
+        .install_general_producer(SideProducer)
         .expect("producer");
     runtime
         .edit(|edit| edit.view::<SideInput>().set_value(1))
@@ -2781,17 +2785,17 @@ fn a_unit_subscription_on_a_producer_only_runtime_runs_the_producer() {
 fn a_unit_subscription_on_a_producer_the_root_never_reads_runs_it() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(Producer {
+        .install_general_producer(Producer {
             runs: Arc::new(AtomicU32::new(0)),
         })
         .expect("producer");
     runtime
-        .install_general(ConstantReader {
+        .install_general_root(ConstantReader {
             runs: Arc::new(AtomicU32::new(0)),
         })
         .expect("root");
     runtime
-        .install_general_component(SideProducer)
+        .install_general_producer(SideProducer)
         .expect("side producer");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(1))
@@ -2828,7 +2832,7 @@ fn a_unit_subscription_on_a_producer_the_root_never_reads_runs_it() {
 fn a_whole_view_subscription_on_a_producer_only_runtime_runs_the_producer() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(SideProducer)
+        .install_general_producer(SideProducer)
         .expect("producer");
     runtime
         .edit(|edit| edit.view::<SideInput>().set_value(1))
@@ -2904,7 +2908,9 @@ impl GeneralComponent for ContentReplacer {
 #[test]
 fn a_replacement_at_the_reading_revision_invalidates_the_observation_it_moves() {
     let runtime = Runtime::new();
-    runtime.install_general(ContentReplacer).expect("install");
+    runtime
+        .install_general_root(ContentReplacer)
+        .expect("install");
     runtime
         .edit(|edit| edit.view::<Source>().set_value(10))
         .expect("seed");
@@ -2982,7 +2988,9 @@ impl GeneralComponent for StableSettler {
 #[test]
 fn a_replacement_that_keeps_a_provider_cell_does_not_move_its_version() {
     let runtime = Runtime::new();
-    runtime.install_general(StableSettler).expect("install");
+    runtime
+        .install_general_root(StableSettler)
+        .expect("install");
     runtime
         .read_outputs_general::<StableSettler>()
         .expect("the provider settles its cell");
@@ -3242,9 +3250,11 @@ impl GeneralComponent for EntryRestorer {
 #[test]
 fn a_generation_opened_after_a_retraction_marks_the_reader_that_recertified() {
     let runtime = Runtime::new();
-    runtime.install_general(EntryRestorer).expect("restorer");
     runtime
-        .install_general_component(PayloadProbe)
+        .install_general_root(EntryRestorer)
+        .expect("restorer");
+    runtime
+        .install_general_producer(PayloadProbe)
         .expect("probe");
     // Each tag is a fresh invocation, so every call runs the reader body and
     // reaches the probe instead of reusing an earlier answer.
@@ -3783,7 +3793,7 @@ impl GeneralComponent for LateRetractionRoot {
 fn a_drain_retraction_republishes_the_value_the_demand_read() {
     let runtime = Runtime::new();
     runtime
-        .install_general(LateRetractionRoot {
+        .install_general_root(LateRetractionRoot {
             runtime: runtime.clone(),
         })
         .expect("root");
@@ -3890,7 +3900,7 @@ mod adjacency_reader {
 fn a_fill_reaches_the_reader_that_observed_the_unfilled_generation() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(AdjacencyProbe)
+        .install_general_producer(AdjacencyProbe)
         .expect("probe");
     let probe = |tag: u64| {
         runtime
@@ -4024,7 +4034,7 @@ fn seed_network(runtime: &Runtime, nodes: &[(u64, u64)], edges: &[(u64, u64, u64
 fn a_general_read_does_not_leave_an_accessor_projected_unit_vacant() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(AdjacencyProbe)
+        .install_general_producer(AdjacencyProbe)
         .expect("probe");
     seed_network(&runtime, &[(1, 0), (2, 0)], &[(1, 2, 5)]);
     assert_eq!(

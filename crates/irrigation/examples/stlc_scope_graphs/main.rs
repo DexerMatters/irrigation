@@ -188,13 +188,13 @@ fn main() -> std::io::Result<()> {
     let (runtime, recorder) = observed_runtime(ObserveLevel::Nodes);
     let grammar = grammar::grammar();
     runtime
-        .install_general_component(TextComponent)
+        .install_general_producer(TextComponent)
         .expect("text component");
     runtime
-        .install_general_component(LexerComponent::new(grammar.lexer().clone()))
+        .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
         .expect("lexer component");
     runtime
-        .install_general_component(ParserComponent::new(grammar))
+        .install_general_producer(ParserComponent::new(grammar))
         .expect("parser component");
     let app = runtime
         .install_root(pipeline::Stlc)
@@ -326,13 +326,13 @@ mod tests {
         let runtime = Runtime::new();
         let grammar = grammar::grammar();
         runtime
-            .install_general_component(TextComponent)
+            .install_general_producer(TextComponent)
             .expect("text component");
         runtime
-            .install_general_component(LexerComponent::new(grammar.lexer().clone()))
+            .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
             .expect("lexer component");
         runtime
-            .install_general_component(ParserComponent::new(grammar))
+            .install_general_producer(ParserComponent::new(grammar))
             .expect("parser component");
         runtime.install(pipeline::Stlc).expect("install");
         runtime

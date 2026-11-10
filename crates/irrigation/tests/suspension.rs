@@ -443,7 +443,7 @@ fn a_cancelled_async_component_returns_instead_of_parking_forever() {
         ..RuntimeConfig::default()
     });
     runtime
-        .install_general(irrigation::AsyncAdapter::new(ParkedAsync))
+        .install_general_root(irrigation::AsyncAdapter::new(ParkedAsync))
         .expect("install");
 
     let (sender, receiver) = std::sync::mpsc::channel();

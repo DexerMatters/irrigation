@@ -266,7 +266,7 @@ fn randomized_join_edits_match_the_from_scratch_oracle() {
     runtime.register_view(<DiffRight as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<DiffJoined as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general(irrigation::EquiJoin::<DiffWeightJoin>::new())
+        .install_general_root(irrigation::EquiJoin::<DiffWeightJoin>::new())
         .expect("install");
     let mut left: BTreeMap<u32, i64> = BTreeMap::new();
     let mut right: BTreeMap<u32, i64> = BTreeMap::new();

@@ -1051,7 +1051,7 @@ fn traces_observing(runtime: &Runtime, node: irrigation::NodeId) -> usize {
 fn a_housekeeping_producer_stays_out_of_consumer_traces() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(HousekeepingProducer)
+        .install_general_producer(HousekeepingProducer)
         .expect("producer");
     runtime.install(housekeeping::Root).expect("install");
     runtime

@@ -941,7 +941,7 @@ fn a_producer_cannot_adopt_the_roots_component_id() {
     runtime.register_view(<Ledger as ViewSchema>::DESCRIPTOR);
     runtime.install(shared_identity::Root).expect("root");
     let error = runtime
-        .install_general_component(AdoptsRootIdentity)
+        .install_general_producer(AdoptsRootIdentity)
         .expect_err("two live components cannot share one identity");
     assert!(
         format!("{error}").contains("component id is already installed"),

@@ -230,13 +230,13 @@ fn main() -> std::io::Result<()> {
 
     let grammar = grammar();
     runtime
-        .install_general_component(TextComponent)
+        .install_general_producer(TextComponent)
         .expect("text component");
     runtime
-        .install_general_component(LexerComponent::new(grammar.lexer().clone()))
+        .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
         .expect("lexer component");
     runtime
-        .install_general_component(ParserComponent::new(grammar))
+        .install_general_producer(ParserComponent::new(grammar))
         .expect("parser component");
     runtime.install(sink::JsonSink).expect("sink");
 

@@ -30,13 +30,13 @@ fn main() -> std::io::Result<()> {
 
     let grammar = grammar::grammar();
     runtime
-        .install_general_component(TextComponent)
+        .install_general_producer(TextComponent)
         .expect("text component");
     runtime
-        .install_general_component(LexerComponent::new(grammar.lexer().clone()))
+        .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
         .expect("lexer component");
     runtime
-        .install_general_component(ParserComponent::new(grammar))
+        .install_general_producer(ParserComponent::new(grammar))
         .expect("parser component");
     runtime
         .install(resolve::ResolveProgram)
@@ -175,13 +175,13 @@ mod tests {
         let runtime = Runtime::new();
         let compiled = grammar::grammar();
         runtime
-            .install_general_component(TextComponent)
+            .install_general_producer(TextComponent)
             .expect("text component");
         runtime
-            .install_general_component(LexerComponent::new(compiled.lexer().clone()))
+            .install_general_producer(LexerComponent::new(compiled.lexer().clone()))
             .expect("lexer component");
         runtime
-            .install_general_component(ParserComponent::new(compiled))
+            .install_general_producer(ParserComponent::new(compiled))
             .expect("parser component");
         runtime
             .install(resolve::ResolveProgram)

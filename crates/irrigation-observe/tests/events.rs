@@ -436,7 +436,7 @@ fn a_general_component_reports_the_same_shape_as_a_root() {
     runtime.register_view(<Ticker as ViewSchema>::DESCRIPTOR);
     runtime.register_view(<Mirror as ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(Mirrorer)
+        .install_general_producer(Mirrorer)
         .expect("general component");
     runtime.install(general_root::Observe).expect("root");
     runtime

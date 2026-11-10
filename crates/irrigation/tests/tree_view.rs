@@ -721,9 +721,9 @@ fn a_tree_patch_decides_what_the_root_reaches() {
     runtime.register_view(<published::Published as irrigation::ViewSchema>::DESCRIPTOR);
     runtime.register_view(<PatchStep as irrigation::ViewSchema>::DESCRIPTOR);
     runtime
-        .install_general_component(PatchProducer)
+        .install_general_producer(PatchProducer)
         .expect("producer");
-    runtime.install_general(PatchDemand).expect("demand");
+    runtime.install_general_root(PatchDemand).expect("demand");
     assert_eq!(
         runtime
             .read_outputs_general::<PatchDemand>()

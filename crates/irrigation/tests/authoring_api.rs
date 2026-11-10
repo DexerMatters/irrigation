@@ -119,7 +119,7 @@ pub fn read_mirror(mirror: &Mirror) -> (u64, Option<u32>) {
 fn field_constants_read_and_write_through_a_general_component() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(MirrorProducer)
+        .install_general_producer(MirrorProducer)
         .expect("producer");
     runtime.install(ReadMirror).expect("root");
     runtime
@@ -222,7 +222,7 @@ pub fn read_gadget(gadget: &Gadget) -> u64 {
 fn general_component_function_form_builds_the_trait_impl() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(GadgetProducer)
+        .install_general_producer(GadgetProducer)
         .expect("producer");
     runtime.install(ReadGadget).expect("root");
     runtime
@@ -263,7 +263,7 @@ pub fn read_gadget2(gadget: &Gadget2) -> u64 {
 fn general_component_impl_form_fills_identity_and_views() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(GadgetProducer2)
+        .install_general_producer(GadgetProducer2)
         .expect("producer");
     runtime.install(ReadGadget2).expect("root");
     runtime
@@ -523,7 +523,7 @@ fn a_closure_join_publishes_through_typed_map_fields() {
         |left: &u64, right: &u64| left * right,
     )
     .publish_to(JoinedRows::ROWS);
-    runtime.install_general_component(join).expect("join");
+    runtime.install_general_producer(join).expect("join");
     runtime.install(ReadJoined).expect("root");
     runtime
         .edit(|edit| {
@@ -549,9 +549,7 @@ fn two_closure_joins_over_the_same_fields_are_rejected() {
         |left: &u64, right: &u64| left + right,
     )
     .publish_to(JoinedRows::ROWS);
-    runtime
-        .install_general_component(first)
-        .expect("first join");
+    runtime.install_general_producer(first).expect("first join");
     // A second join over the same fields would define the same outputs; the
     // runtime must reject it rather than merge the two producers.
     let second = irrigation::Join::new(
@@ -560,7 +558,7 @@ fn two_closure_joins_over_the_same_fields_are_rejected() {
         |left: &u64, right: &u64| left + right,
     )
     .publish_to(JoinedRows::ROWS);
-    assert!(runtime.install_general_component(second).is_err());
+    assert!(runtime.install_general_producer(second).is_err());
 }
 
 #[view(derived)]
@@ -591,7 +589,7 @@ pub fn read_graph(graph: &GraphOut) -> (usize, usize, Option<u32>) {
 fn a_typed_graph_writer_defines_nodes_edges_and_topology() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(GraphProducer)
+        .install_general_producer(GraphProducer)
         .expect("producer");
     runtime.install(ReadGraph).expect("root");
     runtime
@@ -629,7 +627,7 @@ pub fn read_reduced(output: &ReducedOut) -> u64 {
 fn a_typed_reduced_writer_publishes_a_lawful_aggregate() {
     let runtime = Runtime::new();
     runtime
-        .install_general_component(ReducedProducer)
+        .install_general_producer(ReducedProducer)
         .expect("producer");
     runtime.install(ReadReduced).expect("root");
     runtime

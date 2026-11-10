@@ -304,7 +304,7 @@ fn cross_family_rows() {
         runtime.register_view(<RightNumbers as irrigation::ViewSchema>::DESCRIPTOR);
         runtime.register_view(<JoinedNumbers as irrigation::ViewSchema>::DESCRIPTOR);
         runtime
-            .install_general(irrigation::EquiJoin::<NumberJoin>::new())
+            .install_general_root(irrigation::EquiJoin::<NumberJoin>::new())
             .expect("install join");
         runtime
             .edit(|edit| {
