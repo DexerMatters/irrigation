@@ -68,6 +68,12 @@ impl Inner {
                 cancel,
             )
         };
+        // Emitted here, where the event's own doc says it belongs: the task is
+        // queued and has not started. It used to be emitted after `recv()`
+        // returned, so on this path a "started" demand was announced only once
+        // it had finished -- after every TaskRunning and NodeCommitted of the
+        // same demand, and after the task's slot was gone.
+        self.note_demand_started(id, cause);
         self.set_active_task(Some(id));
         self.submit_task(id);
         let (result, ok) = match receiver.recv() {
@@ -85,7 +91,6 @@ impl Inner {
                 )
             }
         };
-        self.note_demand_started(id, cause);
         self.note_demand_finished(id, ok, started);
         result
     }

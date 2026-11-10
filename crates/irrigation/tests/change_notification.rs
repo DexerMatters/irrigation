@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
 
 use irrigation::{
@@ -1757,6 +1757,11 @@ struct ParkRefresh {
     runtime: std::sync::OnceLock<Runtime>,
     request: std::sync::mpsc::Sender<()>,
     parked: AtomicBool,
+    /// The refresh task, remembered from its start event.
+    refresh: AtomicU64,
+    /// Tasks this observer has already seen an event for, so a `DemandStarted`
+    /// that arrives after its own task has begun is caught.
+    seen: std::sync::Mutex<std::collections::HashSet<u64>>,
 }
 
 #[cfg(feature = "observatory")]
@@ -1766,12 +1771,41 @@ impl irrigation_observe::RuntimeObserver for ParkRefresh {
     }
 
     fn record(&self, event: irrigation_observe::RuntimeEvent) {
-        let irrigation_observe::RuntimeEvent::DemandStarted { cause, .. } = event else {
-            return;
-        };
-        if cause != irrigation_observe::DemandCause::ObservationRefresh
-            || self.parked.swap(true, Ordering::SeqCst)
-        {
+        // The refresh demand is identified when it starts and parked when it
+        // finishes: `DemandStarted` now means "queued", so it is the wrong
+        // moment to act on -- the point this test needs is that the demand has
+        // returned and released its revision pin.
+        match event {
+            irrigation_observe::RuntimeEvent::DemandStarted {
+                task,
+                cause: irrigation_observe::DemandCause::ObservationRefresh,
+            } => {
+                assert!(
+                    !self.seen.lock().expect("seen").contains(&task),
+                    "DemandStarted for task {task} arrived after an event for the same task: a started demand must be announced before it runs"
+                );
+                self.refresh.store(task, Ordering::SeqCst);
+            }
+            irrigation_observe::RuntimeEvent::DemandFinished { task, .. }
+                if self.refresh.load(Ordering::SeqCst) == task
+                    && self.refresh.load(Ordering::SeqCst) != u64::MAX =>
+            {
+                self.park();
+            }
+            irrigation_observe::RuntimeEvent::TaskRunning { task }
+            | irrigation_observe::RuntimeEvent::TaskWaiting { task, .. }
+            | irrigation_observe::RuntimeEvent::TaskWoken { task, .. } => {
+                self.seen.lock().expect("seen").insert(task);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "observatory")]
+impl ParkRefresh {
+    fn park(&self) {
+        if self.parked.swap(true, Ordering::SeqCst) {
             return;
         }
         // The demand has returned and released its permit. A refresh that read
@@ -1800,6 +1834,8 @@ fn a_refresh_pairs_its_snapshot_with_the_versions_of_that_revision() {
         runtime: std::sync::OnceLock::new(),
         request,
         parked: AtomicBool::new(false),
+        refresh: AtomicU64::new(u64::MAX),
+        seen: std::sync::Mutex::new(std::collections::HashSet::new()),
     });
     let runtime = Runtime::with_observer(
         irrigation::RuntimeConfig::default(),
