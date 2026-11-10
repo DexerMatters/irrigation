@@ -1535,6 +1535,7 @@ impl Runtime {
                 view: delivery.view,
                 previous: delivery.previous,
                 current: delivery.current,
+                moved: delivery.moved,
             });
         match delivery.callback {
             crate::state::Observer::Plain(callback) => callback(&delivery.snapshot),
@@ -1565,6 +1566,7 @@ struct Delivery {
     previous: Version,
     current: Version,
     units: Vec<Version>,
+    moved: u32,
 }
 
 /// Decides what one captured snapshot owes each subscription and advances it.
@@ -1611,12 +1613,17 @@ fn stage_deliveries(state: &mut State, snapshot: &Arc<Snapshot>) -> Vec<Delivery
         if !moved {
             continue;
         }
-        let previous = {
+        let (previous, units_moved) = {
             let subscription = &mut state.subscriptions[index];
+            let units_moved = versions
+                .iter()
+                .zip(subscription.last_versions.iter())
+                .filter(|(now, was)| now != was)
+                .count();
             let previous = subscription.last_version;
             subscription.last_version = version;
             subscription.last_versions.clone_from(&versions);
-            previous
+            (previous, units_moved)
         };
         deliveries.push(Delivery {
             subscription: id,
@@ -1626,6 +1633,7 @@ fn stage_deliveries(state: &mut State, snapshot: &Arc<Snapshot>) -> Vec<Delivery
             active,
             previous,
             current: version,
+            moved: u32::try_from(units_moved).unwrap_or(u32::MAX),
             units: versions,
         });
     }

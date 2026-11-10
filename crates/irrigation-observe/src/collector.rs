@@ -480,10 +480,12 @@ fn map_event(event: &RuntimeEvent) -> EventWire {
             view,
             previous,
             current,
+            moved,
         } => EventWire::Notified {
             view: format!("v:{:016x}", view.0),
             previous: *previous,
             current: *current,
+            moved: *moved,
         },
         RuntimeEvent::TaskRunning { task } => EventWire::Running { task: *task },
         RuntimeEvent::TaskWaiting { task, node } => EventWire::Waiting {

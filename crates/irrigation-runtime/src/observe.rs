@@ -182,6 +182,12 @@ pub enum RuntimeEvent {
         previous: Version,
         /// Content version now.
         current: Version,
+        /// How many watched units moved for this notification.
+        ///
+        /// Zero for a whole-View subscription, which watches the content instead.
+        /// For a unit subscription this is the number that explains a
+        /// notification whose content versions above are equal.
+        moved: u32,
     },
     /// Cache reclamation ran.
     Collected {

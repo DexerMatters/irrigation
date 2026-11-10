@@ -4279,3 +4279,71 @@ fn a_summary_observer_builds_no_node_payloads() {
         "a summary observer's demand must not build node-commit payloads"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A unit notification says how many units moved (r8-runtime-state-07)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "observatory")]
+#[derive(Default)]
+struct MovedRecorder {
+    moved: AtomicU32,
+    fired: AtomicU32,
+}
+
+#[cfg(feature = "observatory")]
+impl irrigation_observe::RuntimeObserver for MovedRecorder {
+    fn level(&self) -> irrigation_observe::ObserveLevel {
+        irrigation_observe::ObserveLevel::Summary
+    }
+
+    fn record(&self, event: irrigation_observe::RuntimeEvent) {
+        if let irrigation_observe::RuntimeEvent::SubscriptionNotified { moved, .. } = event {
+            self.moved.store(moved, Ordering::SeqCst);
+            self.fired.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// A unit subscription is woken by a per-unit move that does not advance the
+/// View's content, so the content versions in the event are equal. The `moved`
+/// count is what tells a consumer -- and the board's timeline -- that something
+/// did happen.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_unit_notification_reports_how_many_units_moved() {
+    let recorder = Arc::new(MovedRecorder::default());
+    let runtime = Runtime::with_observer(
+        irrigation::RuntimeConfig::default(),
+        Arc::clone(&recorder) as Arc<dyn irrigation_observe::RuntimeObserver>,
+    );
+    runtime.register_view(<Source as ViewSchema>::DESCRIPTOR);
+    let unit = irrigation::UnitKey::field(
+        <Source as ViewSchema>::view_id(),
+        FieldId(0),
+        UnitKind::Value,
+    );
+    let _subscription = runtime
+        .observe_units_of(
+            <Source as ViewSchema>::DESCRIPTOR,
+            vec![unit.clone()],
+            |_snapshot| {},
+        )
+        .expect("subscribe");
+
+    runtime
+        .edit(|edit| edit.set(unit.clone(), 1u64))
+        .expect("edit");
+    // The refresh delivers the notification; any read drives one.
+    let _ = runtime.snapshot();
+
+    assert!(
+        recorder.fired.load(Ordering::SeqCst) > 0,
+        "the subscription fired"
+    );
+    assert_eq!(
+        recorder.moved.load(Ordering::SeqCst),
+        1,
+        "one watched unit moved, and the event says so even though the content did not"
+    );
+}

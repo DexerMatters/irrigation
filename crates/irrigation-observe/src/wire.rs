@@ -693,6 +693,8 @@ pub enum EventWire {
         previous: Version,
         /// Current version.
         current: Version,
+        /// Watched units that moved; zero for a whole-View subscription.
+        moved: u32,
     },
     /// A task began on a worker.
     Running {
