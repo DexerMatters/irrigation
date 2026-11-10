@@ -1232,6 +1232,36 @@ mod retraction_tests {
         },
     };
 
+    /// Presence answers for every entity unit the committed content spells, not
+    /// only for a membership: a payload port with no cell is present when the
+    /// content projects it, which is what every read of that unit does.
+    #[test]
+    fn a_content_seeded_payload_port_is_present() {
+        let inner = Inner::new(RuntimeConfig::default());
+        inner.register_view(&DESCRIPTOR);
+        let state = inner.lock();
+        let entity = UnitKey::entity(
+            VIEW,
+            FieldId(0),
+            UnitKind::Value,
+            irrigation_core::key::any_key(5u32),
+        );
+        // No cell exists for this unit; the descriptor's `get` projects every
+        // Value unit from the content.
+        assert!(
+            state.units.get(&entity).is_none(),
+            "the premise is that nothing materialized the cell"
+        );
+        assert!(
+            unit_present(&state, &entity),
+            "the content spells this payload unit, so it is present"
+        );
+        // A field-level unit with no cell is still absent: only an entity has a
+        // content projection to fall back to.
+        let field_level = UnitKey::field(VIEW, FieldId(0), UnitKind::Value);
+        assert!(!unit_present(&state, &field_level));
+    }
+
     /// A provider that retracts a whole-field definition whose cell already holds
     /// the field's empty value must not move that cell's version: the value did
     /// not change, and every unit subscription would otherwise be woken for it.

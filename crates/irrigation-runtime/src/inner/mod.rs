@@ -1199,15 +1199,24 @@ fn unit_present(state: &State, unit: &UnitKey) -> bool {
             _ => return record.value.is_some(),
         }
     }
-    if unit.entity.is_none() || unit.kind != UnitKind::Membership {
+    // No cell: the committed content is the only thing that can answer, and it
+    // answers for every entity unit, not just a membership. Stopping at the
+    // membership let a payload port report absent while every read of the same
+    // unit projected it from that same content -- so `require_present` failed
+    // and `require_absent` held for a unit the content spells.
+    if unit.entity.is_none() {
         return false;
     }
-    state
+    let projected = state
         .regions
         .get(&unit.view)
-        .and_then(|region| content_projection(region, unit))
-        .and_then(|value| value.downcast_ref::<bool>().copied())
-        .unwrap_or(false)
+        .and_then(|region| content_projection(region, unit));
+    match unit.kind {
+        UnitKind::Membership => projected
+            .and_then(|value| value.downcast_ref::<bool>().copied())
+            .unwrap_or(false),
+        _ => projected.is_some(),
+    }
 }
 
 /// Returns `true` when a structural requirement holds at commit.
