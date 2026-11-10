@@ -572,6 +572,13 @@ impl OutputTxn<'_> {
     }
 
     /// Defines one map entry.
+    ///
+    /// **This does not make the field readable on its own.** A reader decides keyed-versus-whole
+    /// through the field's protocol certificate, which is published only by a *content* definition
+    /// (a `Structure` install) -- not by this per-unit write. A component that publishes entries and
+    /// nothing else leaves the field reading as whole-value, and its consumers get `Absent` for the
+    /// entry they ask for. Publish the structure as well, or publish the whole field with
+    /// [`Self::field`] instead.
     pub fn entry<K, V>(&mut self, view: ViewId, field: FieldId, key: K, value: V)
     where
         K: Any + Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
