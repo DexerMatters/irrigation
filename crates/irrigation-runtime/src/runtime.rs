@@ -583,6 +583,7 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`ComputeError::Cancelled`] when the token was cancelled.
+    ///
     /// # Panics
     ///
     /// Panics when a root output has no value after the demand reported success. Outputs are

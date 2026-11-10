@@ -101,6 +101,7 @@ impl Drop for Server {
 /// # Errors
 ///
 /// Returns the bind error when the address is unavailable.
+///
 /// # Panics
 ///
 /// Panics when the accept thread cannot be spawned.

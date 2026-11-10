@@ -129,6 +129,7 @@ impl Collector {
     }
 
     /// Whether this View can be edited from the page.
+    ///
     /// # Panics
     ///
     /// Panics when another thread panicked while holding the text registry. The lock
@@ -143,6 +144,7 @@ impl Collector {
     }
 
     /// Reads a View's committed text.
+    ///
     /// # Panics
     ///
     /// Panics when another thread panicked while holding the text registry. The lock

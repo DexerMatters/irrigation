@@ -163,6 +163,7 @@ impl Pool {
     /// If the caller is already a worker, or no workers exist, the job runs
     /// inline. That rule is what prevents a nested demand from waiting on a
     /// pool that is entirely busy with its own callers.
+    ///
     /// # Panics
     ///
     /// Inline work propagates the job's panic to the caller, because the caller is where the
