@@ -724,3 +724,80 @@ fn a_retraction_of_an_absent_member_publishes_no_content() {
          field must not publish a new content version"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Supersession: a keyed restatement retires the members it stops listing
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct MemberScript {
+    members: u64,
+}
+
+#[view(derived)]
+pub struct KeyedSet(Set<u32>);
+
+#[irrigation]
+mod keyed_restates {
+    use super::{KeyedSet, MemberScript};
+
+    /// Restates the keyed set from the script. `define_keyed` publishes one
+    /// whole-field draft plus a membership per *current* member, so a member it
+    /// stops listing is not retracted explicitly: supersession is what retires
+    /// its cells.
+    #[component]
+    pub fn publish(_tag: u32) -> u32 {
+        irrigation::ensure_view(<KeyedSet as irrigation::ViewSchema>::DESCRIPTOR);
+        let members: Vec<u32> = match MemberScript.members() {
+            1 => vec![1],
+            2 => vec![1, 2],
+            _ => vec![1, 2, 3],
+        };
+        KeyedSet.field0().define_keyed(members, "keyed_restate");
+        0
+    }
+
+    #[component(root)]
+    pub fn read() -> Vec<(u32, bool)> {
+        let set = KeyedSet.field0();
+        [1u32, 2, 3]
+            .iter()
+            .map(|member| (*member, set.contains(member)))
+            .collect()
+    }
+}
+
+#[test]
+fn a_keyed_restatement_retires_the_members_it_drops() {
+    let runtime = Runtime::new();
+    runtime.register_view(<MemberScript as ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<KeyedSet as ViewSchema>::DESCRIPTOR);
+    runtime.install(keyed_restates::Read).expect("install");
+    runtime
+        .edit(|edit| edit.view::<MemberScript>().set_members(3))
+        .expect("script");
+    runtime
+        .call::<keyed_restates::__PublishSpec>(keyed_restates::PublishArgs { _tag: 0 })
+        .expect("publish three");
+    assert_eq!(
+        runtime
+            .read_outputs::<keyed_restates::Read>()
+            .expect("read"),
+        vec![(1, true), (2, true), (3, true)]
+    );
+
+    // Drop members 2 and 3 by listing only member 1.
+    runtime
+        .edit(|edit| edit.view::<MemberScript>().set_members(1))
+        .expect("script");
+    runtime
+        .call::<keyed_restates::__PublishSpec>(keyed_restates::PublishArgs { _tag: 0 })
+        .expect("publish one");
+    assert_eq!(
+        runtime
+            .read_outputs::<keyed_restates::Read>()
+            .expect("read"),
+        vec![(1, true), (2, false), (3, false)],
+        "a member the restatement stops listing must read absent"
+    );
+}

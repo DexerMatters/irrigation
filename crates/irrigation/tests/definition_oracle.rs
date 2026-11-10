@@ -43,6 +43,9 @@ fn expected(step: u64) -> BTreeMap<u32, u64> {
     out
 }
 
+/// One read of both published Views, through their per-key accessors.
+type Probe = (Vec<u32>, Vec<(u32, bool, Option<u64>)>, Vec<(u32, bool)>);
+
 #[irrigation]
 mod publisher {
     use super::{Published, PublishedSet, Script, expected};
@@ -57,7 +60,7 @@ mod publisher {
     /// every key the script can use. Content-level checks would not see a stale
     /// cell, which is the failure this family of tests exists to catch.
     #[component]
-    pub fn read(_tag: u32) -> (Vec<u32>, Vec<(u32, bool, Option<u64>)>, Vec<(u32, bool)>) {
+    pub fn read(_tag: u32) -> super::Probe {
         let map = Published.field0();
         let set = PublishedSet.field0();
         // Twelve keys, spelled literally: a component body lowers `for` and
