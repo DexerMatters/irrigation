@@ -14556,3 +14556,47 @@ fn removing_a_reduced_element_leaves_no_stale_tail() {
         "the aggregate follows the removal rather than the stale cells"
     );
 }
+
+/// A provider-driven removal moves the **presence** cell's routing generation, not only the
+/// payload's.
+///
+/// Both cells of one entity belong to one release, so a provider that retracts an entity has to
+/// advance the generation a presence subscriber reads. The existing handover gate asserts this for
+/// the `Value` unit only; the `Membership` cell is a different unit and was unasserted, so the
+/// asymmetry could have been reintroduced without a failure.
+#[test]
+fn a_provider_removal_advances_the_presence_generation() {
+    let runtime = Runtime::new();
+    runtime.install(graph_node_map_gate::Root).expect("install");
+    assert_eq!(
+        runtime
+            .read_outputs::<graph_node_map_gate::Root>()
+            .expect("read"),
+        (vec![(1, 10), (2, 20)], Some(10), Some(20))
+    );
+
+    let membership = |node: u64| {
+        irrigation::UnitKey::entity(
+            <GraphNodeMap as irrigation::ViewSchema>::view_id(),
+            irrigation::FieldId(0),
+            irrigation::UnitKind::Membership,
+            irrigation::any_key(node),
+        )
+    };
+    let before = runtime.routing_generation(&membership(2));
+
+    // mode 2 defines a graph with one node, so node 2's entry is retracted by the provider.
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(2))
+        .expect("edit");
+    let (entries, _, second) = runtime
+        .read_outputs::<graph_node_map_gate::Root>()
+        .expect("read");
+    assert_eq!(entries, vec![(1, 10)], "the entry is gone");
+    assert_eq!(second, None);
+
+    assert!(
+        runtime.routing_generation(&membership(2)) > before,
+        "the presence cell's generation moves with the payload's on a provider removal"
+    );
+}
