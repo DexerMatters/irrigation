@@ -908,3 +908,50 @@ fn an_eof_guard_holds_only_for_the_last_match() {
         "the first `a` is not at the end of input, the second is"
     );
 }
+
+/// `column` in a guard is the column the match starts at, so a rule can be
+/// restricted to the start of a line. Nothing tested this through a spec before --
+/// only through hand-built `EvalContext`s -- so a runtime that never advanced the
+/// column would still have passed every guard test.
+#[test]
+fn a_column_guard_sees_the_match_column() {
+    let (lexer, output) = lex(
+        r#"
+        grammar ColumnGuard {
+            lexer {
+                initial text;
+                state text {
+                    skip ws = /[ ]+/;
+                    token LineStart = /x/ when column == 0;
+                    token Inner = /x/;
+                }
+            }
+        }
+        "#,
+        "x x",
+    );
+    let line_start = lexer.spec().kind_by_name("LineStart").expect("LineStart");
+    let inner = lexer.spec().kind_by_name("Inner").expect("Inner");
+    // Compare by name: the spec also interns kinds for states and errors, so the
+    // numeric ids say nothing.
+    let named = |kind| {
+        if kind == line_start {
+            "LineStart"
+        } else if kind == inner {
+            "Inner"
+        } else {
+            "other"
+        }
+    };
+    let kinds: Vec<_> = output
+        .tokens()
+        .iter()
+        .map(|token| named(token.kind))
+        .filter(|name| *name != "other")
+        .collect();
+    assert_eq!(
+        kinds,
+        ["LineStart", "Inner"],
+        "the first x is at column 0, the second follows a space"
+    );
+}
