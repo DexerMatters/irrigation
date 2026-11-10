@@ -42,6 +42,8 @@ struct Counters {
     token_units_read: u64,
     executions: u64,
     adopted: u64,
+    invalidations: u64,
+    invalidation_ns: u64,
     latency_us: u64,
 }
 
@@ -57,6 +59,8 @@ impl Counters {
         self.token_units_read = self.token_units_read.max(row.token_units_read);
         self.executions = self.executions.max(row.executions);
         self.adopted = self.adopted.max(row.adopted);
+        self.invalidations = self.invalidations.max(row.invalidations);
+        self.invalidation_ns = self.invalidation_ns.max(row.invalidation_ns);
         self.latency_us = self.latency_us.max(row.micros as u64);
     }
 }
@@ -171,6 +175,7 @@ fn fixture_work_is_proportional_to_the_edit() {
             || counters.nodes_added > bound.nodes_added
             || counters.token_units_read > bound.token_units_read
             || counters.meta_units_written > bound.meta_units_written
+            || counters.invalidations > bound.invalidations
         {
             failures.push(format!("{}: {counters:?} exceeds {bound:?}", script.name));
         }
@@ -286,6 +291,7 @@ struct Bound {
     nodes_added: u64,
     meta_units_written: u64,
     token_units_read: u64,
+    invalidations: u64,
 }
 
 fn load_baseline() -> std::collections::HashMap<String, Bound> {
@@ -308,6 +314,7 @@ fn load_baseline() -> std::collections::HashMap<String, Bound> {
                 nodes_added: read("nodes_added"),
                 meta_units_written: read("meta_units_written"),
                 token_units_read: read("token_units_read"),
+                invalidations: read("invalidations"),
             },
         );
     }

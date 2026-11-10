@@ -1,54 +1,61 @@
 {
-  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down.",
+  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone the edit walks: it is the cost the plan calls E_v, and every script currently pays the whole-document cone (7,125-10,731 nodes) even when it relexes 8 tokens. Lowering these numbers is the granularity work; raising one is a regression.",
   "scripts": {
     "backspace": {
       "tokens_relexed": 8,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
-      "token_units_read": 4
+      "token_units_read": 4,
+      "invalidations": 7137
     },
     "delete-member": {
       "tokens_relexed": 62,
       "tokens_reparsed": 23,
       "nodes_added": 41,
       "meta_units_written": 282,
-      "token_units_read": 25
+      "token_units_read": 25,
+      "invalidations": 7908
     },
     "delete": {
       "tokens_relexed": 513,
       "tokens_reparsed": 200,
       "nodes_added": 306,
       "meta_units_written": 2178,
-      "token_units_read": 185
+      "token_units_read": 185,
+      "invalidations": 10731
     },
     "paste": {
       "tokens_relexed": 513,
       "tokens_reparsed": 177,
       "nodes_added": 272,
       "meta_units_written": 1934,
-      "token_units_read": 179
+      "token_units_read": 179,
+      "invalidations": 10731
     },
     "rename-key": {
       "tokens_relexed": 4,
       "tokens_reparsed": 2,
       "nodes_added": 8,
       "meta_units_written": 50,
-      "token_units_read": 4
+      "token_units_read": 4,
+      "invalidations": 7125
     },
     "typing-end": {
       "tokens_relexed": 12,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
-      "token_units_read": 4
+      "token_units_read": 4,
+      "invalidations": 7137
     },
     "typing-mid": {
       "tokens_relexed": 11,
       "tokens_reparsed": 3,
       "nodes_added": 10,
       "meta_units_written": 62,
-      "token_units_read": 4
+      "token_units_read": 4,
+      "invalidations": 7137
     }
   }
 }

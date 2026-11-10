@@ -46,6 +46,14 @@ pub fn json_grammar() -> Grammar {
 /// One measured edit.
 #[derive(Clone, Debug)]
 pub struct Row {
+    /// Reverse-dependency nodes the edit invalidated.
+    ///
+    /// The counters above report *logical* work; this is the cost walk the plan
+    /// calls `E_v`, and it is the term that grows with the document when a unit
+    /// change is not narrowed to the region that observed it.
+    pub invalidations: u64,
+    /// Time spent in that invalidation walk.
+    pub invalidation_ns: u64,
     /// Wall time for the whole edit plus demand.
     pub micros: f64,
     /// Significant tokens whose payload was rebuilt.
@@ -205,6 +213,8 @@ impl Session {
         let stats = self.stats();
         Row {
             micros,
+            invalidations: after.invalidations.saturating_sub(before.invalidations),
+            invalidation_ns: after.invalidation_ns.saturating_sub(before.invalidation_ns),
             tokens_relexed: stats.tokens_relexed,
             bytes_relexed: stats.bytes_relexed,
             tokens_reparsed: stats.tokens_reparsed,
