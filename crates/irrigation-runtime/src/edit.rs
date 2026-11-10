@@ -358,7 +358,7 @@ impl Edit {
                 // Retraction mirrors installation: the primitive clears the
                 // entity's payload cell and derives the membership cell from it,
                 // whichever of the two the editor staged.
-                Inner::retract_entity(&mut state, &update.key, revision, &mut changed);
+                Inner::retract_entity(&mut state, &update.key, revision, &mut changed, false);
                 continue;
             }
             if !publishes_write {

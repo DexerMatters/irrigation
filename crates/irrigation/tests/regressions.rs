@@ -793,6 +793,15 @@ fn a_keyed_restatement_retires_the_members_it_drops() {
         vec![(1, true), (2, true), (3, true)]
     );
 
+    // The presence cell of a member this provider still owns, so the drop below
+    // is a release by a provider and not a host edit.
+    let payload = irrigation::value_unit(KeyedSet::view_id(), irrigation::FieldId(0), 2u32);
+    let membership = irrigation::UnitKey {
+        kind: irrigation::UnitKind::Membership,
+        ..payload
+    };
+    let routing_before = runtime.routing_generation(&membership);
+
     // Drop members 2 and 3 by listing only member 1.
     runtime
         .edit(|edit| edit.view::<MemberScript>().set_members(1))
@@ -806,6 +815,14 @@ fn a_keyed_restatement_retires_the_members_it_drops() {
             .expect("read"),
         vec![(1, true), (2, false), (3, false)],
         "a member the restatement stops listing must read absent"
+    );
+
+    // Both cells of the dropped member belong to one release by one provider, so
+    // the presence cell's routing generation moves with the payload's. A source
+    // View's host edit moves neither.
+    assert!(
+        runtime.routing_generation(&membership) > routing_before,
+        "the provider released the member, so the presence cell's routing moved too"
     );
 }
 

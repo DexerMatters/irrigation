@@ -724,6 +724,7 @@ impl Inner {
         unit: &UnitKey,
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
+        from_provider: bool,
     ) -> bool {
         let unit = &payload_key(unit);
         let membership = membership_key(unit);
@@ -733,6 +734,12 @@ impl Inner {
             let value_version = state.alloc_value_version();
             let record = state.node_mut(node);
             record.install_value(Some(value_of(false)), value_version, revision);
+            // Both cells of one entity belong to one release, so the presence
+            // cell's generation moves with the payload's. A host edit is not a
+            // release by any provider, so it moves neither.
+            if from_provider {
+                record.routing_at = revision;
+            }
             changed_nodes.push(node);
             true
         } else {
@@ -756,7 +763,7 @@ impl Inner {
             let already_retired =
                 record.value.is_none() && record.changed_at == revision && !record.content_stale;
             if closes_generation && !already_retired {
-                Self::retire_cell(state, node, revision, changed_nodes);
+                Self::retire_cell(state, node, revision, changed_nodes, from_provider);
             }
         }
         removed
@@ -842,11 +849,11 @@ impl Inner {
             if let Some(node) = current_unit_node(state, unit)
                 && state.node(node).value.is_some()
             {
-                Self::retire_cell(state, node, revision, changed_nodes);
+                Self::retire_cell(state, node, revision, changed_nodes, true);
             }
         }
         let removed_membership = if unit.entity.is_some() {
-            Self::retract_entity(state, unit, revision, changed_nodes)
+            Self::retract_entity(state, unit, revision, changed_nodes, true)
         } else {
             false
         };
@@ -924,7 +931,7 @@ impl Inner {
                 }
             }
             region.owners.remove(&owner);
-            Self::retract_entity(state, unit, revision, changed_nodes);
+            Self::retract_entity(state, unit, revision, changed_nodes, true);
         }
         if moved {
             // The batch knows it *attempted* a content retraction per unit, not

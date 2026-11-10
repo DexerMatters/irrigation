@@ -224,20 +224,17 @@ impl Inner {
         node: NodeId,
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
+        routes: bool,
     ) {
         let value_version = state.alloc_value_version();
         let validity = state.alloc_validity();
         // `routing_generation` "advances when the unit's provider changes,
-        // including a handover that leaves the value equal". A source View has no
-        // provider, so no handover there is possible and the stamp must not move:
-        // moving it told a routing observer that the provider had changed when
-        // only the value had, and left the entity's payload and membership cells
-        // disagreeing about whether anything had.
-        let routes = state
-            .node(node)
-            .unit
-            .as_ref()
-            .is_none_or(|unit| state.producers.contains_key(&unit.view));
+        // including a handover that leaves the value equal". Whether that is what
+        // this retirement is cannot be read off the state here: a host edit and a
+        // provider's release look the same, and `publish_region_content` takes the
+        // region out of the map for the whole publication, so the View's own
+        // descriptor is unavailable exactly when this runs. The caller knows, so
+        // it says.
         let record = state.node_mut(node);
         record.retire_value(value_version, revision);
         if routes {
