@@ -14651,3 +14651,46 @@ fn a_reentering_unit_initializer_is_refused() {
         "expected the structured refusal, got {error:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A list published as a whole field, asked for its entities
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct SpelledList(List<u32>);
+
+#[irrigation]
+mod spelled_list {
+    use super::SpelledList;
+
+    /// Publishes the list as one whole-field definition: the structure and the content, with
+    /// no per-item cells.
+    #[component]
+    pub fn root() -> Vec<u32> {
+        SpelledList.define_all([1u32, 2, 3]);
+        SpelledList.to_vec()
+    }
+}
+
+/// The board lists the items a whole-field list definition spells, which is the shape the
+/// content-order branch exists for: entities with no cells.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_whole_field_list_lists_the_items_its_content_spells() {
+    let runtime = Runtime::new();
+    runtime.install(spelled_list::Root).expect("install");
+    assert_eq!(
+        runtime.read_outputs::<spelled_list::Root>().expect("read"),
+        vec![1, 2, 3]
+    );
+
+    let entities = runtime.field_entities(
+        <SpelledList as irrigation::ViewSchema>::view_id(),
+        irrigation::FieldId(0),
+    );
+    assert_eq!(
+        entities.len(),
+        3,
+        "the three items the whole-field definition spells are listed"
+    );
+}
