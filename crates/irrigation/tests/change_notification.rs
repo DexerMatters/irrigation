@@ -4102,3 +4102,81 @@ fn a_subscription_on_an_accessor_projected_unit_does_not_deliver_an_unchanged_ou
         "materializing a projection is not a change of the answer the subscription seeds"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A pooled demand announces itself before it runs (r10-runtime-state-03)
+// ---------------------------------------------------------------------------
+
+/// Records the order of a task's own events, so "started" can be checked against
+/// "running" instead of asserted.
+#[cfg(feature = "observatory")]
+#[derive(Default)]
+struct OrderRecorder {
+    /// Started-order violation, if one was seen.
+    violation: std::sync::Mutex<Option<String>>,
+    /// Tasks already seen running or waiting.
+    began: std::sync::Mutex<std::collections::HashSet<u64>>,
+    /// Demands that reached the pool, by task.
+    pooled: AtomicU32,
+}
+
+#[cfg(feature = "observatory")]
+impl irrigation_observe::RuntimeObserver for OrderRecorder {
+    fn level(&self) -> irrigation_observe::ObserveLevel {
+        // Task events are `Full`-level; a summary observer would never see the
+        // running event this test compares against.
+        irrigation_observe::ObserveLevel::Full
+    }
+
+    fn record(&self, event: irrigation_observe::RuntimeEvent) {
+        use irrigation_observe::RuntimeEvent;
+        match event {
+            RuntimeEvent::DemandStarted { task, .. } => {
+                if self.began.lock().expect("began").contains(&task) {
+                    *self.violation.lock().expect("violation") = Some(format!(
+                        "DemandStarted for task {task} arrived after that task was already running"
+                    ));
+                }
+                self.pooled.fetch_add(1, Ordering::SeqCst);
+            }
+            RuntimeEvent::TaskRunning { task }
+            | RuntimeEvent::TaskWaiting { task, .. }
+            | RuntimeEvent::TaskWoken { task, .. } => {
+                self.began.lock().expect("began").insert(task);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "observatory")]
+#[test]
+fn a_pooled_demand_announces_itself_before_it_runs() {
+    let recorder = Arc::new(OrderRecorder::default());
+    // A pool, or the demand would take the inline path and this test would say
+    // nothing about the pooled one.
+    let runtime = Runtime::with_observer(
+        irrigation::RuntimeConfig {
+            workers: 2,
+            ..irrigation::RuntimeConfig::default()
+        },
+        Arc::clone(&recorder) as Arc<dyn irrigation_observe::RuntimeObserver>,
+    );
+    runtime.install(draft_settler::Root).expect("install");
+
+    // Called from the test thread, which is not a worker and holds no task, so
+    // this demand is a demand root and takes the pool.
+    runtime
+        .read_outputs::<draft_settler::Root>()
+        .expect("provider run");
+
+    assert!(
+        recorder.pooled.load(Ordering::SeqCst) > 0,
+        "no demand was announced at all"
+    );
+    assert_eq!(
+        *recorder.violation.lock().expect("violation"),
+        None,
+        "a demand must be announced before it runs"
+    );
+}
