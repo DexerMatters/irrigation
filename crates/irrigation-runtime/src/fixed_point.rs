@@ -162,6 +162,49 @@ pub const DEFAULT_BUDGET: usize = 1_000_000;
 ///
 /// Returns [`ComputeError::Unsupported`] when the worklist exceeds the budget,
 /// which means the declared order did not converge as specified.
+/// Runs the worklist to exhaustion, recording the edges it walked.
+///
+/// This is the solve loop: pop a key, transfer it, join each contribution, enqueue
+/// whatever moved, and count iterations and contributions against the budget. A
+/// from-scratch solve and an add-only extension both need exactly this, and both had
+/// their own copy -- so a change to the convergence rule could reach one and not the other.
+fn drain<P: FixedPointProblem>(
+    problem: &P,
+    values: &mut BTreeMap<P::Key, P::Value>,
+    queue: &mut std::collections::VecDeque<P::Key>,
+    budget: usize,
+    edges: &mut Vec<(P::Key, P::Key)>,
+) -> Result<(usize, usize)> {
+    let mut iterations = 0;
+    let mut work = 0usize;
+    while let Some(key) = queue.pop_front() {
+        iterations += 1;
+        let value = values.get(&key).cloned().unwrap_or_else(P::Value::bottom);
+        for (target, contribution) in problem.transfer(&key, &value) {
+            work += 1;
+            edges.push((key.clone(), target.clone()));
+            if work > budget {
+                return Err(ComputeError::unsupported(format!(
+                    "fixed point did not converge within {budget} contributions"
+                )));
+            }
+            let entry = values
+                .entry(target.clone())
+                .or_insert_with(P::Value::bottom);
+            if entry.join(&contribution) {
+                queue.push_back(target);
+            }
+        }
+    }
+    Ok((iterations, work))
+}
+
+/// Computes the least fixed point of `problem` within the default budget.
+///
+/// # Errors
+///
+/// Returns [`ComputeError::Unsupported`] when the worklist exceeds the budget,
+/// which means the declared order did not converge as specified.
 pub fn solve<P: FixedPointProblem>(problem: &P) -> Result<FixedPoint<P::Key, P::Value>> {
     solve_with_budget(problem, DEFAULT_BUDGET)
 }
@@ -185,28 +228,8 @@ pub fn solve_with_budget<P: FixedPointProblem>(
         }
     }
 
-    let mut iterations = 0;
-    let mut work = 0usize;
     let mut edges: Vec<(P::Key, P::Key)> = Vec::new();
-    while let Some(key) = queue.pop_front() {
-        iterations += 1;
-        let value = values.get(&key).cloned().unwrap_or_else(P::Value::bottom);
-        for (target, contribution) in problem.transfer(&key, &value) {
-            work += 1;
-            edges.push((key.clone(), target.clone()));
-            if work > budget {
-                return Err(ComputeError::unsupported(format!(
-                    "fixed point did not converge within {budget} contributions"
-                )));
-            }
-            let entry = values
-                .entry(target.clone())
-                .or_insert_with(P::Value::bottom);
-            if entry.join(&contribution) {
-                queue.push_back(target);
-            }
-        }
-    }
+    let (iterations, work) = drain(problem, &mut values, &mut queue, budget, &mut edges)?;
 
     let (sccs, self_loops) = strongly_connected(&values, &edges);
     let mut dependents: BTreeMap<P::Key, BTreeSet<P::Key>> = BTreeMap::new();
@@ -265,27 +288,7 @@ pub fn solve_from_with_budget<P: FixedPointProblem>(
         .iter()
         .flat_map(|(from, tos)| tos.iter().map(move |to| (from.clone(), to.clone())))
         .collect();
-    let mut iterations = 0;
-    let mut work = 0usize;
-    while let Some(key) = queue.pop_front() {
-        iterations += 1;
-        let value = values.get(&key).cloned().unwrap_or_else(P::Value::bottom);
-        for (target, contribution) in problem.transfer(&key, &value) {
-            work += 1;
-            edges.push((key.clone(), target.clone()));
-            if work > budget {
-                return Err(ComputeError::unsupported(format!(
-                    "fixed point did not converge within {budget} contributions"
-                )));
-            }
-            let entry = values
-                .entry(target.clone())
-                .or_insert_with(P::Value::bottom);
-            if entry.join(&contribution) {
-                queue.push_back(target);
-            }
-        }
-    }
+    let (iterations, work) = drain(problem, &mut values, &mut queue, budget, &mut edges)?;
     let (sccs, self_loops) = strongly_connected(&values, &edges);
     let mut dependents: BTreeMap<P::Key, BTreeSet<P::Key>> = BTreeMap::new();
     for (from, to) in edges {
