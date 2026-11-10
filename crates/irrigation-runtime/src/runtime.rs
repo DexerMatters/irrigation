@@ -1111,6 +1111,7 @@ impl Runtime {
             content_projections: state.stats.content_projections.load(Ordering::Relaxed),
             content_batches: state.stats.content_batches.load(Ordering::Relaxed),
             content_commits: state.stats.content_commits.load(Ordering::Relaxed),
+            observe_payloads_skipped: state.stats.observe_payloads_skipped.load(Ordering::Relaxed),
             source_content_applies: state.stats.source_content_applies.load(Ordering::Relaxed),
             source_equality_checks: state.stats.source_equality_checks.load(Ordering::Relaxed),
             structure_refreshes: state.stats.structure_refreshes.load(Ordering::Relaxed),
@@ -1999,6 +2000,8 @@ pub struct RuntimeStats {
     /// quadratic in the field's size. This is the counter that shows which one
     /// it is.
     pub content_commits: u64,
+    /// Node-commit payloads not built because no observer wanted node detail.
+    pub observe_payloads_skipped: u64,
     /// Source content installed from one changed content-moving unit.
     pub source_content_applies: u64,
     /// Source content replacements that needed whole-content equality.

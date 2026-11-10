@@ -546,6 +546,10 @@ impl Inner {
         // an observer that does not want node-level detail should not pay for it.
 
         if !self.observes(crate::observe::ObserveLevel::Nodes) {
+            self.lock()
+                .stats
+                .observe_payloads_skipped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
         }
         let (views, equal_views) = {

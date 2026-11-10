@@ -4203,10 +4203,10 @@ impl irrigation_observe::RuntimeObserver for LevelCounter {
     }
 
     fn record(&self, event: irrigation_observe::RuntimeEvent) {
-        if matches!(
-            event,
-            irrigation_observe::RuntimeEvent::NodeCommitted { .. }
-        ) {
+        // Count by the event's own declared level, so the assertion covers every
+        // node-level event -- most of them are emitted with no call-site guard and
+        // are held back by `emit` alone.
+        if event.level() == irrigation_observe::ObserveLevel::Nodes {
             self.commits.fetch_add(1, Ordering::SeqCst);
         } else {
             self.non_commits.fetch_add(1, Ordering::SeqCst);
@@ -4253,4 +4253,29 @@ fn a_summary_observer_receives_no_node_level_events() {
 
     let (node_commits, _) = count_commits_at(irrigation_observe::ObserveLevel::Nodes);
     assert!(node_commits > 0, "a node-level observer does receive them");
+}
+
+/// The other half of the level's promise: an observer that does not want node
+/// detail should not pay to build it. This is the counter that says so, and it is
+/// the only observable that distinguishes the call-site guard from the filter in
+/// `emit` -- the events look the same either way.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_summary_observer_builds_no_node_payloads() {
+    let counter = Arc::new(LevelCounter {
+        level: irrigation_observe::ObserveLevel::Summary,
+        ..LevelCounter::default()
+    });
+    let runtime = Runtime::with_observer(
+        irrigation::RuntimeConfig::default(),
+        Arc::clone(&counter) as Arc<dyn irrigation_observe::RuntimeObserver>,
+    );
+    runtime.install(draft_settler::Root).expect("install");
+    runtime
+        .read_outputs::<draft_settler::Root>()
+        .expect("demand");
+    assert!(
+        runtime.stats().observe_payloads_skipped > 0,
+        "a summary observer's demand must not build node-commit payloads"
+    );
 }
