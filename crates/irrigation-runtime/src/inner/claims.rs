@@ -188,25 +188,6 @@ impl Inner {
         Ok(true)
     }
 
-    /// Records a structural precondition on the current write group.
-    ///
-    /// The condition is the caller's evaluated predicate about `ports`; the
-    /// requirement asserts that those ports are present at commit. A false
-    /// condition therefore defers the write group or fails it — a state in
-    /// which the ports are absent never satisfies the write that observed the
-    /// absence.
-    /// Records a requirement that `ports` hold when the group commits.
-    ///
-    /// `observed` is the caller's own evaluation, from tracked reads it already
-    /// made. It is a hint, not a demand: with ports to re-read the runtime
-    /// decides at commit, because the world can move between the read and the
-    /// publish, so a `false` there means "not satisfied when I looked", not
-    /// "refuse". Callers pass it accordingly — several pass `false` about a port
-    /// that a provider will supply in the same revision, which is exactly the
-    /// deferral case.
-    ///
-    /// With no ports there is nothing to re-evaluate, so the answer has to be
-    /// taken as given and a `false` is a contradiction now.
     /// Records that `ports` must be absent when the group commits.
     ///
     /// This exists so absence and presence go through one owner: a caller that
@@ -250,8 +231,14 @@ impl Inner {
     /// Records a requirement that `ports` hold when the group commits.
     ///
     /// `observed` is the caller's own evaluation, from tracked reads it already
-    /// made; it is a hint, because with ports to re-read the runtime decides at
-    /// commit.
+    /// made. It is a hint, not a demand: with ports to re-read the runtime decides
+    /// at commit, because the world can move between the read and the publish, so a
+    /// `false` there means "not satisfied when I looked", not "refuse". Callers pass
+    /// it accordingly -- several pass `false` about a port that a provider will
+    /// supply in the same revision, which is exactly the deferral case.
+    ///
+    /// With no ports there is nothing to re-evaluate, so the answer has to be taken
+    /// as given and a `false` is a contradiction now.
     pub fn require_condition(
         &self,
         observed: bool,
