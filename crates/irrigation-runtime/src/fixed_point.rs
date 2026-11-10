@@ -156,12 +156,6 @@ impl<K: Ord, V> FixedPoint<K, V> {
 /// a hang.
 pub const DEFAULT_BUDGET: usize = 1_000_000;
 
-/// Computes the least fixed point of `problem`.
-///
-/// # Errors
-///
-/// Returns [`ComputeError::Unsupported`] when the worklist exceeds the budget,
-/// which means the declared order did not converge as specified.
 /// Runs the worklist to exhaustion, recording the edges it walked.
 ///
 /// This is the solve loop: pop a key, transfer it, join each contribution, enqueue
