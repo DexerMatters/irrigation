@@ -14511,3 +14511,48 @@ fn a_whole_graph_definition_refuses_an_edge_to_a_missing_node() {
         "the refusal names the rule: {message}"
     );
 }
+
+/// Removing a reduced element renumbers everything after it, and the cell at the old last
+/// position must be retracted -- restaging alone would leave it serving an element the field
+/// no longer holds.
+#[test]
+fn removing_a_reduced_element_leaves_no_stale_tail() {
+    let runtime = Runtime::new();
+    runtime.install(totals_reader::Total).expect("install");
+    runtime
+        .edit(|edit| {
+            let mut totals = edit.view::<Totals>();
+            let mut values = totals.values();
+            values.push(10);
+            values.push(20);
+            values.push(30);
+        })
+        .expect("seed");
+    assert_eq!(
+        runtime.read().expect("snapshot").view::<Totals>().values(),
+        vec![10, 20, 30]
+    );
+
+    runtime
+        .edit(|edit| {
+            let mut totals = edit.view::<Totals>();
+            let mut values = totals.values();
+            values.remove(0);
+        })
+        .expect("remove");
+
+    let snapshot = runtime.read().expect("snapshot");
+    let values = snapshot.view::<Totals>().values();
+    assert_eq!(
+        values,
+        vec![20, 30],
+        "the shifted elements take their new positions and the tail is gone"
+    );
+    assert_eq!(
+        runtime
+            .read_outputs::<totals_reader::Total>()
+            .expect("aggregate"),
+        50,
+        "the aggregate follows the removal rather than the stale cells"
+    );
+}
