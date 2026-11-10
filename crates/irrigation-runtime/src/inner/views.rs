@@ -484,10 +484,26 @@ impl Inner {
         self.pool.workers()
     }
 
-    /// Emits one observation event when an observer is installed.
+    /// Whether an installed observer wants events at this level.
+    ///
+    /// The level is the observer's own declaration, so the kernel is the side that
+    /// has to honour it: an event below it is not delivered, and a call site that
+    /// has to build a payload to emit one asks this first. Without it, `Full`-only
+    /// detail was built for every observer and filtered by the consumer.
+    #[cfg(feature = "observe")]
+    pub(crate) fn observes(&self, level: crate::observe::ObserveLevel) -> bool {
+        self.observer
+            .get()
+            .is_some_and(|observer| observer.level() >= level)
+    }
+
+    /// Emits one observation event when an observer is installed and wants it.
     #[cfg(feature = "observe")]
     pub(crate) fn emit(&self, event: crate::observe::RuntimeEvent) {
-        if let Some(observer) = self.observer.get() {
+        let Some(observer) = self.observer.get() else {
+            return;
+        };
+        if event.level() <= observer.level() {
             observer.record(event);
         }
     }
@@ -526,6 +542,12 @@ impl Inner {
         revision: Revision,
         started: std::time::Instant,
     ) {
+        // The payload below walks the node's definitions under the metadata lock;
+        // an observer that does not want node-level detail should not pay for it.
+
+        if !self.observes(crate::observe::ObserveLevel::Nodes) {
+            return;
+        }
         let (views, equal_views) = {
             let state = self.lock();
             let mut views: smallvec::SmallVec<[irrigation_core::ids::ViewId; 4]> =

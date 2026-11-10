@@ -4182,3 +4182,75 @@ fn a_pooled_demand_announces_itself_before_it_runs() {
         "a demand must be announced before it runs"
     );
 }
+
+// ---------------------------------------------------------------------------
+// An observer's level is honoured by the kernel, not only by the consumer
+// (runtime-api-09)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "observatory")]
+#[derive(Default)]
+struct LevelCounter {
+    level: irrigation_observe::ObserveLevel,
+    commits: AtomicU32,
+    non_commits: AtomicU32,
+}
+
+#[cfg(feature = "observatory")]
+impl irrigation_observe::RuntimeObserver for LevelCounter {
+    fn level(&self) -> irrigation_observe::ObserveLevel {
+        self.level
+    }
+
+    fn record(&self, event: irrigation_observe::RuntimeEvent) {
+        if matches!(
+            event,
+            irrigation_observe::RuntimeEvent::NodeCommitted { .. }
+        ) {
+            self.commits.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.non_commits.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(feature = "observatory")]
+fn count_commits_at(level: irrigation_observe::ObserveLevel) -> (u32, u32) {
+    let counter = Arc::new(LevelCounter {
+        level,
+        ..LevelCounter::default()
+    });
+    let runtime = Runtime::with_observer(
+        irrigation::RuntimeConfig::default(),
+        Arc::clone(&counter) as Arc<dyn irrigation_observe::RuntimeObserver>,
+    );
+    runtime.install(draft_settler::Root).expect("install");
+    runtime
+        .read_outputs::<draft_settler::Root>()
+        .expect("demand");
+    (
+        counter.commits.load(Ordering::SeqCst),
+        counter.non_commits.load(Ordering::SeqCst),
+    )
+}
+
+/// `NodeCommitted` is node-level detail: a summary observer declares it does not
+/// want it, and the kernel is the side that has to honour that -- building the
+/// event's payload for an observer that cannot see it is the cost this removes.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_summary_observer_receives_no_node_level_events() {
+    let (summary_commits, summary_other) =
+        count_commits_at(irrigation_observe::ObserveLevel::Summary);
+    assert_eq!(
+        summary_commits, 0,
+        "a summary observer must not be sent node commits"
+    );
+    assert!(
+        summary_other > 0,
+        "but it still receives the summary events it asked for"
+    );
+
+    let (node_commits, _) = count_commits_at(irrigation_observe::ObserveLevel::Nodes);
+    assert!(node_commits > 0, "a node-level observer does receive them");
+}
