@@ -168,3 +168,49 @@ fn a_membership_unit_is_named_from_the_field_handle() {
         "the unit names the field whose handle built it"
     );
 }
+
+#[irrigation::irrigation]
+mod one_unit_two_writers {
+    /// Writes `Pair::LEFT` from a callable, so two host calls are two attempts committing at
+    /// different revisions -- the cross-attempt duplicate, not the same-revision one.
+    #[component]
+    pub fn writer(tag: u32) -> u32 {
+        irrigation::ensure_view(<super::Pair as irrigation::ViewSchema>::DESCRIPTOR);
+        irrigation::define_unit(super::Pair::LEFT.unit(), u64::from(tag), "left writer");
+        0
+    }
+}
+
+/// A unit has one provider, and the refusal names the component that collided.
+///
+/// The two sides of the message come from different places -- an earlier draft's label and the late
+/// provider's node -- so a site provider used to be reported as `site`, which names no component the
+/// user wrote.
+#[test]
+fn a_second_provider_is_refused_by_name() {
+    let runtime = Runtime::with_config(RuntimeConfig {
+        workers: 1,
+        ..RuntimeConfig::default()
+    });
+    runtime.register_view(<Pair as ViewSchema>::DESCRIPTOR);
+    runtime
+        .call::<one_unit_two_writers::__WriterSpec>(one_unit_two_writers::__WriterArgs { tag: 1 })
+        .expect("the first writer owns the unit");
+
+    let error = runtime
+        .call::<one_unit_two_writers::__WriterSpec>(one_unit_two_writers::__WriterArgs { tag: 2 })
+        .expect_err("a second provider must be refused");
+    let message = format!("{error}");
+    assert!(
+        message.contains("is defined twice"),
+        "the refusal is the duplicate, not a failure: {message}"
+    );
+    assert!(
+        !message.contains("by `site"),
+        "the second side names its component rather than its node kind: {message}"
+    );
+    assert!(
+        message.contains("component `"),
+        "and the message says which component: {message}"
+    );
+}
