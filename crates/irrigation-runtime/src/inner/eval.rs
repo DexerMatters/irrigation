@@ -479,7 +479,7 @@ impl Inner {
             cancel.clone(),
         ));
         let guard = FrameGuard::push(Arc::clone(&frame));
-        let mut cx = crate::general::GeneralCx::new(self.arc(), revision, scope);
+        let mut cx = crate::general::GeneralCx::new(self.arc(), revision);
         let output_views = general.output_views();
         if !output_views.is_empty() {
             cx.restrict_output_views(output_views);

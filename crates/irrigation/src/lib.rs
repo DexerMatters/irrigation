@@ -49,10 +49,9 @@ pub use irrigation_runtime::fixed_point::{
     solve_from_with_budget,
 };
 pub use irrigation_runtime::general::{
-    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture,
-    DefinitionCapability, DependencyUpdates, GeneralComponent, GeneralCx, GeneralHandle,
-    GeneralInputs, LocalAdapter, LocalGeneralComponent, Request, TypedAdapter,
-    TypedGeneralComponent, TypedRequest, drive as drive_future,
+    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
+    GeneralComponent, GeneralCx, GeneralHandle, GeneralInputs, LocalAdapter, LocalGeneralComponent,
+    Request, TypedAdapter, TypedGeneralComponent, TypedRequest, drive as drive_future,
 };
 pub use irrigation_runtime::helpers::{
     WriteGroup, claim_field, claim_ports, claim_unit, define_unit, ensure_view, node_of,

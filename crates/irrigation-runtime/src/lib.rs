@@ -40,10 +40,9 @@ pub use fixed_point::{
     solve_with_budget,
 };
 pub use general::{
-    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture,
-    DefinitionCapability, DependencyUpdates, GeneralComponent, GeneralCx, GeneralHandle,
-    GeneralInputs, LocalAdapter, LocalGeneralComponent, Request, TypedAdapter,
-    TypedGeneralComponent, TypedRequest, drive,
+    AsyncAdapter, AsyncGeneralComponent, Change, ChangeBatch, ComponentFuture, DependencyUpdates,
+    GeneralComponent, GeneralCx, GeneralHandle, GeneralInputs, LocalAdapter, LocalGeneralComponent,
+    Request, TypedAdapter, TypedGeneralComponent, TypedRequest, drive,
 };
 pub use helpers::{
     WriteGroup, claim_field, claim_ports, claim_unit, define_unit, plan_ports, provide_ports,

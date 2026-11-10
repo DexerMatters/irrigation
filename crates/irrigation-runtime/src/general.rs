@@ -132,7 +132,6 @@ impl ChangeBatch {
 pub struct GeneralCx {
     runtime: Arc<dyn RuntimeOps>,
     revision: Revision,
-    node_scope: irrigation_core::ids::ScopeId,
     scope: Option<u64>,
     unit_scopes: FxHashMap<UnitKey, u64>,
     retained: FxHashSet<u64>,
@@ -154,15 +153,10 @@ impl std::fmt::Debug for GeneralCx {
 }
 
 impl GeneralCx {
-    pub(crate) fn new(
-        runtime: Arc<dyn RuntimeOps>,
-        revision: Revision,
-        node_scope: irrigation_core::ids::ScopeId,
-    ) -> Self {
+    pub(crate) fn new(runtime: Arc<dyn RuntimeOps>, revision: Revision) -> Self {
         Self {
             runtime,
             revision,
-            node_scope,
             scope: None,
             unit_scopes: FxHashMap::default(),
             retained: FxHashSet::default(),
@@ -284,17 +278,8 @@ impl GeneralCx {
     }
 
     /// Starts a typed output transaction committed with the new state.
-    ///
-    /// The transaction carries the dispatcher-issued [`DefinitionCapability`]
-    /// for this computation; it cannot be constructed outside the runtime.
     pub fn output(&mut self) -> OutputTxn<'_> {
-        OutputTxn {
-            capability: DefinitionCapability {
-                scope: self.node_scope,
-                _private: (),
-            },
-            cx: self,
-        }
+        OutputTxn { cx: self }
     }
 
     /// The checked form of [`Self::define`]: it refuses a unit outside the
@@ -415,6 +400,11 @@ impl GeneralCx {
     }
 
     /// Stages one output definition, committed with the new state.
+    ///
+    /// This is the unchecked primitive: it stages whatever unit it is given,
+    /// including one outside the component's declared output Views. Prefer
+    /// [`Self::output`]'s `define`, which refuses that; this form exists for the
+    /// runtime's own tests of the refusal.
     #[track_caller]
     pub fn define<T: PartialEq + Send + Sync + 'static>(
         &mut self,
@@ -535,36 +525,13 @@ pub trait FieldWrite {
     fn open<'a>(self, cx: &'a mut GeneralCx) -> Self::Writer<'a>;
 }
 
-/// The scope an output transaction was opened for.
-///
-/// This is a marker, not an authority. The runtime creates it when it opens a
-/// transaction, and its private field keeps external code from constructing one,
-/// but it does not gate anything: [`GeneralCx::define`] stages the same
-/// definition without it, and the checked wrapper around this type differs only
-/// in refusing units outside the component's declared output Views. Read it as
-/// "which scope we are writing", never as a permission.
-pub struct DefinitionCapability {
-    scope: irrigation_core::ids::ScopeId,
-    _private: (),
-}
-
-impl std::fmt::Debug for DefinitionCapability {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DefinitionCapability")
-            .field("scope", &self.scope)
-            .finish_non_exhaustive()
-    }
-}
-
 /// A typed transaction for publishing per-unit definitions.
 pub struct OutputTxn<'a> {
     cx: &'a mut GeneralCx,
-    capability: DefinitionCapability,
 }
 
 impl std::fmt::Debug for OutputTxn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = &self.capability;
         f.write_str("OutputTxn")
     }
 }
