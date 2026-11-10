@@ -126,6 +126,13 @@ static SETTINGS_DESC: ViewDescriptor = ViewDescriptor {
         changed_units_equal: |_, _, _| None,
         summary: |_, _| None,
         eq: settings_eq,
+        field_equal: |_, left, right| match (
+            left.downcast_ref::<u64>(),
+            right.downcast_ref::<u64>(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        },
         describe: |_| None,
         variant_label: |_, _| None,
     },

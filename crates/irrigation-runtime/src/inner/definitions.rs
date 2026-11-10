@@ -832,11 +832,33 @@ impl Inner {
                 };
                 if let Some(slot) = region.units.get(unit) {
                     let node = slot.node;
-                    let value_version = state.alloc_value_version();
-                    let record = state.node_mut(node);
-                    record.install_value(value, value_version, revision);
-                    record.routing_at = revision;
-                    changed_nodes.push(node);
+                    // Reverting to a value the cell already holds is not a change.
+                    // Every other publication path cuts an equal payload off
+                    // (`draft.eq` in `apply_definitions`, `structure.eq` in
+                    // `refresh_structure`); without the same cutoff here, a
+                    // provider that defined the empty value and then retracted it
+                    // told every unit subscription the value had changed.
+                    //
+                    // `field_equal` answers `false` for a family whose storage it
+                    // cannot compare, which publishes -- the safe direction, and
+                    // the behaviour this arm had before the cutoff existed.
+                    let unchanged = {
+                        let record = state.node(node);
+                        match (&record.value, &value) {
+                            (Some(current), Some(reverted)) => {
+                                (descriptor.content.field_equal)(unit.field, current, reverted)
+                            }
+                            (None, None) => true,
+                            _ => false,
+                        }
+                    };
+                    if !unchanged {
+                        let value_version = state.alloc_value_version();
+                        let record = state.node_mut(node);
+                        record.install_value(value, value_version, revision);
+                        record.routing_at = revision;
+                        changed_nodes.push(node);
+                    }
                 }
             }
         } else if unit.entity.is_none() && unit.kind == UnitKind::Value {

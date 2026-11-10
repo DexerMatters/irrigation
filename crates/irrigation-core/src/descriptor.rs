@@ -115,6 +115,13 @@ pub struct ContentVtable {
     pub summary: fn(&Content, FieldId) -> Option<crate::value::Value>,
     /// Compares two content values semantically.
     pub eq: fn(&Content, &Content) -> bool,
+    /// Whether two storage values of one field hold the same answer.
+    ///
+    /// A retraction installs the field's reverted storage, and this is how it
+    /// knows whether that is already what the cell holds. A family that cannot
+    /// compare its storage answers `false`, which publishes -- the safe
+    /// direction.
+    pub field_equal: fn(FieldId, &crate::value::Value, &crate::value::Value) -> bool,
     /// Spells one element value for the board, when the View's types can.
     ///
     /// A projection that draws a View without a host renderer calls this with

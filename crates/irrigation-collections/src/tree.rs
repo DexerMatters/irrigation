@@ -1310,6 +1310,9 @@ pub const fn tree_content_vtable() -> ContentVtable {
         changed_units_equal: tree_changed_units_equal,
         summary: |_, _| None,
         eq: tree_eq,
+        // A tree's storage is a node arena whose identity comparison is not the
+        // question a retraction asks, so it answers "changed" and publishes.
+        field_equal: |_, _, _| false,
         describe: |_| None,
         variant_label: |_, _| None,
     }

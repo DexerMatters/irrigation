@@ -24,6 +24,16 @@ pub trait ViewField: 'static {
     /// The empty field.
     fn empty() -> Self::Storage;
 
+    /// Whether two storage values of this field hold the same answer.
+    ///
+    /// The default is `false`, which is the safe direction: a caller that uses it
+    /// to skip publishing an equal value falls back to publishing, so a family
+    /// that does not implement this behaves exactly as before. Families whose
+    /// storage is comparable override it.
+    fn equal_storage(_left: &Value, _right: &Value) -> bool {
+        false
+    }
+
     /// Installs `value` under `key`, returning the new storage.
     ///
     /// Scalar fields ignore the key: they have exactly one logical unit.
@@ -132,6 +142,14 @@ where
 
     fn empty() -> Self::Storage {
         T::default()
+    }
+
+    /// A scalar has exactly one value, so its storage comparison is the value's.
+    fn equal_storage(left: &Value, right: &Value) -> bool {
+        match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
     }
 
     fn define(storage: &Self::Storage, _key: &dyn AnyKey, value: Value) -> Self::Storage {

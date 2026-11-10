@@ -137,6 +137,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let changed_eq_fn = format_ident!("__{}_changed_units_equal", prefix);
     let summary_fn = format_ident!("__{}_summary", prefix);
     let eq_fn = format_ident!("__{}_eq", prefix);
+    let field_equal_fn = format_ident!("__{}_field_equal", prefix);
     let describe_fn = format_ident!("__{}_describe", prefix);
 
     // A View spells its own values unless it declined: one downcast per
@@ -450,6 +451,17 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         })
         .collect();
 
+    let equal_arms: Vec<TokenStream> = fields
+        .iter()
+        .map(|field| {
+            let index = field.index;
+            let marker = marker_for(&field.shape, derived);
+            quote! {
+                #index => <#marker as irrigation::ViewField>::equal_storage(left, right),
+            }
+        })
+        .collect();
+
     let structure_arms: Vec<TokenStream> = fields
         .iter()
         .map(|field| {
@@ -689,6 +701,18 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         }
 
         #gate
+        fn #field_equal_fn(
+            field: irrigation::FieldId,
+            left: &irrigation::Value,
+            right: &irrigation::Value,
+        ) -> bool {
+            match field.0 {
+                #( #equal_arms )*
+                _ => false,
+            }
+        }
+
+        #gate
         fn #describe_fn(
             value: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
         ) -> Option<String> {
@@ -726,6 +750,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 changed_units_equal: #changed_eq_fn,
                 summary: #summary_fn,
                 eq: #eq_fn,
+                field_equal: #field_equal_fn,
                 describe: #describe_entry,
                 variant_label: |_, _| None,
             },
