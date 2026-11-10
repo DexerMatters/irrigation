@@ -64,8 +64,14 @@ pub struct ChangeSummary {
     /// The observed View.
     pub view: ViewId,
     /// Content version before the change.
+    ///
+    /// This is the View's *content* version, not a unit version. A subscription
+    /// that watches units instead of the whole View is woken by a per-unit move
+    /// that does not advance the content -- a host edit to one source unit, or a
+    /// provider handover -- so for those notifications `previous == current`.
+    /// Do not read the inequality as "something changed": the wake is the event.
     pub previous: Version,
-    /// Content version now.
+    /// Content version now: see [`Self::previous`] for when it equals it.
     pub current: Version,
 }
 

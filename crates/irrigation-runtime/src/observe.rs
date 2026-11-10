@@ -176,6 +176,9 @@ pub enum RuntimeEvent {
         /// The observed View.
         view: ViewId,
         /// Content version before the refresh.
+        ///
+        /// Equal to `current` for a unit-granularity notification: those are woken
+        /// by a per-unit move that does not advance the View's content.
         previous: Version,
         /// Content version now.
         current: Version,
