@@ -129,6 +129,11 @@ pub struct RuntimeConfig {
     /// Worker threads used for parallel regions.
     pub workers: usize,
     /// Stack size of each worker thread.
+    ///
+    /// A value of 64 MiB or more is a request for deep recursion, and the pool adds
+    /// a fixed 16 MiB of headroom on top of it for runtime frames and debug
+    /// instrumentation -- so the thread's actual stack is larger than this number.
+    /// Below that threshold the value is used exactly.
     pub stack_size: usize,
     /// Maximum nested execution depth.
     pub max_depth: u32,

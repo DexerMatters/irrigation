@@ -82,10 +82,12 @@ impl Pool {
     /// Starts `workers` threads, each with `stack_size` bytes of stack.
     #[must_use]
     pub fn new(workers: usize, stack_size: usize) -> Self {
-        // Large stacks are the deep-recursion mode. Reserve a small fixed
-        // headroom for runtime frames and debug instrumentation so the
-        // configured depth budget is not consumed entirely by the scheduler's
-        // own bookkeeping.
+        // Large stacks are the deep-recursion mode. Reserve a small fixed headroom
+        // for runtime frames and debug instrumentation so the configured depth
+        // budget is not consumed entirely by the scheduler's own bookkeeping. The
+        // addition is contractual rather than silent: `RuntimeConfig::stack_size`
+        // says so, and no test here exercises a stack near the threshold, so
+        // removing it would be an untested bet either way.
         const HEADROOM: usize = 16 * 1024 * 1024;
         let stack_size = if stack_size >= 64 * 1024 * 1024 {
             stack_size.saturating_add(HEADROOM)
