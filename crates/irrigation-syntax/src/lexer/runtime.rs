@@ -356,83 +356,18 @@ impl Lexer {
                 column: self.column_after(state.column, lexeme),
             };
             let mut error_message: Option<Arc<str>> = rule.error_message.clone();
-            for action in &rule.actions {
-                match action {
-                    CompiledAction::Stay => {}
-                    CompiledAction::Switch(mode) => end_state.mode = *mode,
-                    CompiledAction::Push(mode) => {
-                        end_state.mode_stack.push(end_state.mode);
-                        end_state.mode = *mode;
-                    }
-                    CompiledAction::Pop => {
-                        if let Some(mode) = end_state.mode_stack.pop() {
-                            end_state.mode = mode;
-                        } else {
-                            diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.mode.pop",
-                                "mode stack underflow",
-                            ));
-                        }
-                    }
-                    CompiledAction::PushValue(expr) => {
-                        let cx =
-                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
-                        match expr.eval(&cx) {
-                            Ok(value) if end_state.values.len() < self.options.max_value_depth => {
-                                end_state.values.push(value);
-                            }
-                            Ok(_) => diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.value.depth",
-                                "value-stack depth limit exceeded",
-                            )),
-                            Err(error) => diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.guard",
-                                format!("action expression failed: {error}"),
-                            )),
-                        }
-                    }
-                    CompiledAction::SetValue(expr) => {
-                        let cx =
-                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
-                        match expr.eval(&cx) {
-                            Ok(value) if !end_state.values.is_empty() => {
-                                *end_state.values.last_mut().expect("checked non-empty") = value;
-                            }
-                            Ok(_) => diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.value.underflow",
-                                "`set_value` on an empty value stack",
-                            )),
-                            Err(error) => diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.guard",
-                                format!("action expression failed: {error}"),
-                            )),
-                        }
-                    }
-                    CompiledAction::PopValue => {
-                        if end_state.values.pop().is_none() {
-                            diagnostics.push(diagnostic(
-                                current,
-                                start_pos..end_pos,
-                                "lex.value.underflow",
-                                "`pop_value` on an empty value stack",
-                            ));
-                        }
-                    }
-                    CompiledAction::Error(message) => {
-                        error_message = Some(Arc::clone(message));
-                    }
-                }
-            }
+            self.apply_actions(
+                &state,
+                rule,
+                lexeme,
+                &captures,
+                start_pos,
+                end_pos,
+                current,
+                &mut end_state,
+                &mut error_message,
+                &mut diagnostics,
+            );
 
             if rule.error {
                 diagnostics.push(
@@ -637,6 +572,104 @@ impl Lexer {
         })
     }
 
+    /// Runs one rule's actions against a copy of the machine state.
+    ///
+    /// Both lexing loops -- the incremental relex and the from-scratch lex -- ran
+    /// their own copy of this: 77 identical lines differing only in the name they
+    /// bound the snapshot to. A change made to one copy left the other entry point
+    /// behaving differently, and did so silently.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_actions(
+        &self,
+        state: &LexConfig,
+        rule: &Rule,
+        lexeme: &str,
+        captures: &[Option<(usize, usize)>],
+        start_pos: usize,
+        end_pos: usize,
+        snapshot: &Arc<TextSnapshot>,
+        end_state: &mut LexConfig,
+        error_message: &mut Option<Arc<str>>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let text = snapshot.text();
+        for action in &rule.actions {
+            match action {
+                CompiledAction::Stay => {}
+                CompiledAction::Switch(mode) => end_state.mode = *mode,
+                CompiledAction::Push(mode) => {
+                    end_state.mode_stack.push(end_state.mode);
+                    end_state.mode = *mode;
+                }
+                CompiledAction::Pop => {
+                    if let Some(mode) = end_state.mode_stack.pop() {
+                        end_state.mode = mode;
+                    } else {
+                        diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.mode.pop",
+                            "mode stack underflow",
+                        ));
+                    }
+                }
+                CompiledAction::PushValue(expr) => {
+                    let cx = eval_context(state, lexeme, rule, captures, end_pos == text.len());
+                    match expr.eval(&cx) {
+                        Ok(value) if end_state.values.len() < self.options.max_value_depth => {
+                            end_state.values.push(value);
+                        }
+                        Ok(_) => diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.value.depth",
+                            "value-stack depth limit exceeded",
+                        )),
+                        Err(error) => diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.guard",
+                            format!("action expression failed: {error}"),
+                        )),
+                    }
+                }
+                CompiledAction::SetValue(expr) => {
+                    let cx = eval_context(state, lexeme, rule, captures, end_pos == text.len());
+                    match expr.eval(&cx) {
+                        Ok(value) if !end_state.values.is_empty() => {
+                            *end_state.values.last_mut().expect("checked non-empty") = value;
+                        }
+                        Ok(_) => diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.value.underflow",
+                            "`set_value` on an empty value stack",
+                        )),
+                        Err(error) => diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.guard",
+                            format!("action expression failed: {error}"),
+                        )),
+                    }
+                }
+                CompiledAction::PopValue => {
+                    if end_state.values.pop().is_none() {
+                        diagnostics.push(diagnostic(
+                            snapshot,
+                            start_pos..end_pos,
+                            "lex.value.underflow",
+                            "`pop_value` on an empty value stack",
+                        ));
+                    }
+                }
+                CompiledAction::Error(message) => {
+                    *error_message = Some(Arc::clone(message));
+                }
+            }
+        }
+    }
+
     fn lex_snapshot(&self, snapshot: Arc<TextSnapshot>) -> LexOutput {
         let text = snapshot.text();
         let text_len = text.len();
@@ -681,83 +714,18 @@ impl Lexer {
                 column: self.column_after(state.column, lexeme),
             };
             let mut error_message: Option<Arc<str>> = rule.error_message.clone();
-            for action in &rule.actions {
-                match action {
-                    CompiledAction::Stay => {}
-                    CompiledAction::Switch(mode) => end_state.mode = *mode,
-                    CompiledAction::Push(mode) => {
-                        end_state.mode_stack.push(end_state.mode);
-                        end_state.mode = *mode;
-                    }
-                    CompiledAction::Pop => {
-                        if let Some(mode) = end_state.mode_stack.pop() {
-                            end_state.mode = mode;
-                        } else {
-                            diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.mode.pop",
-                                "mode stack underflow",
-                            ));
-                        }
-                    }
-                    CompiledAction::PushValue(expr) => {
-                        let cx =
-                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
-                        match expr.eval(&cx) {
-                            Ok(value) if end_state.values.len() < self.options.max_value_depth => {
-                                end_state.values.push(value);
-                            }
-                            Ok(_) => diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.value.depth",
-                                "value-stack depth limit exceeded",
-                            )),
-                            Err(error) => diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.guard",
-                                format!("action expression failed: {error}"),
-                            )),
-                        }
-                    }
-                    CompiledAction::SetValue(expr) => {
-                        let cx =
-                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
-                        match expr.eval(&cx) {
-                            Ok(value) if !end_state.values.is_empty() => {
-                                *end_state.values.last_mut().expect("checked non-empty") = value;
-                            }
-                            Ok(_) => diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.value.underflow",
-                                "`set_value` on an empty value stack",
-                            )),
-                            Err(error) => diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.guard",
-                                format!("action expression failed: {error}"),
-                            )),
-                        }
-                    }
-                    CompiledAction::PopValue => {
-                        if end_state.values.pop().is_none() {
-                            diagnostics.push(diagnostic(
-                                &snapshot,
-                                start_pos..end_pos,
-                                "lex.value.underflow",
-                                "`pop_value` on an empty value stack",
-                            ));
-                        }
-                    }
-                    CompiledAction::Error(message) => {
-                        error_message = Some(Arc::clone(message));
-                    }
-                }
-            }
+            self.apply_actions(
+                &state,
+                rule,
+                lexeme,
+                &captures,
+                start_pos,
+                end_pos,
+                &snapshot,
+                &mut end_state,
+                &mut error_message,
+                &mut diagnostics,
+            );
 
             if rule.error {
                 diagnostics.push(
