@@ -353,7 +353,11 @@ where
                             let mut values = Vec::with_capacity(chunk.len());
                             for id in chunk {
                                 values.push(map_member(
-                                    &runtime, call_scope, *id, view, field, content, f,
+                                    &runtime,
+                                    call_scope,
+                                    *id,
+                                    || read_member(view, field, content, *id),
+                                    f,
                                 ));
                             }
                             values
@@ -387,7 +391,15 @@ where
             return results.into_iter().flatten().collect();
         }
         ids.iter()
-            .filter_map(|id| map_member(&runtime, call_scope, *id, view, field, content, &f))
+            .filter_map(|id| {
+                map_member(
+                    &runtime,
+                    call_scope,
+                    *id,
+                    || read_member(view, field, content, *id),
+                    &f,
+                )
+            })
             .collect()
     }
 
@@ -440,17 +452,13 @@ where
         self.ids()
             .iter()
             .filter_map(|id| {
-                let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                let id = *id;
-                let param_node = runtime.site_node(member_scope, SiteId(1));
-                let value: Option<T> = irrigation_core::ops::eval_node(param_node, || {
-                    read_member(view, field, content, id)
-                });
-                let value = value?;
-                let result_node = runtime.site_node(member_scope, SiteId(2));
-                Some(irrigation_core::ops::eval_node(result_node, || {
-                    f(irrigation_runtime::Param::new(param_node, value.clone()))
-                }))
+                map_member(
+                    &runtime,
+                    call_scope,
+                    *id,
+                    || read_member(view, field, content, *id),
+                    &|param| f(param),
+                )
             })
             .flatten()
             .collect()
@@ -1485,25 +1493,30 @@ fn record_member_site(
     });
 }
 
-fn map_member<T, U, F>(
+/// Evaluates one member in its own scope and returns the operator's result for it.
+///
+/// Every list operator needs the same three things per member: a child scope named
+/// `list_member` under the operator's call scope, a parameter node at `SiteId(1)` that
+/// reads the member, and a result node at `SiteId(2)` that runs the operator. The helper
+/// takes the read as a closure so both families can use it -- the source family reads
+/// through `read_member`, the derived family through `get_key` or `whole_member` -- and so
+/// the scope name and site ids are spelled once instead of at each operator.
+fn map_member<T, U, F, R>(
     runtime: &std::sync::Arc<dyn irrigation_core::RuntimeOps>,
     call_scope: irrigation_core::ScopeId,
     id: u64,
-    view: ViewId,
-    field: FieldId,
-    content: fn(&dyn Any) -> PSeq<(u64, T)>,
+    read: R,
     f: &F,
 ) -> Option<U>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
     U: Clone + PartialEq + Send + Sync + 'static,
     F: Fn(irrigation_runtime::Param<T>) -> U + ?Sized,
+    R: FnOnce() -> Option<T>,
 {
     let member_scope = runtime.child_scope(call_scope, id, "list_member");
     let param_node = runtime.site_node(member_scope, SiteId(1));
-    let value: Option<T> = irrigation_core::ops::eval_node_with(runtime, param_node, || {
-        read_member(view, field, content, id)
-    });
+    let value: Option<T> = irrigation_core::ops::eval_node_with(runtime, param_node, read);
     let value = value?;
     let result_node = runtime.site_node(member_scope, SiteId(2));
     Some(irrigation_core::ops::eval_node_with(
