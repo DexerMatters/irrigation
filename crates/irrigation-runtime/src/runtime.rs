@@ -336,6 +336,12 @@ impl Runtime {
     ///
     /// Useful for hosts that read only source Views, and for tests that do not
     /// install a component.
+    ///
+    /// # Panics
+    ///
+    /// The snapshot runs as a demand that cannot fail: it captures committed content and
+    /// evaluates nothing, so the internal error is unreachable. A panic here means the
+    /// runtime is inconsistent rather than that the caller did something wrong.
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         let inner = Arc::clone(&self.inner);
