@@ -266,6 +266,13 @@ impl Inner {
     /// revisions), and a scalar field answers with its single value unit. A tree
     /// field answers empty: its nodes live in slot units, which a tree-aware
     /// reader resolves from the structure unit rather than from this call.
+    ///
+    /// **Coverage limit, stated so a consumer is not misled:** the rows come from
+    /// materialized cells, plus -- for a **list** -- the identities the committed content
+    /// spells without a cell. A set, map or graph whose entities the content spells before
+    /// any cell exists lists none of them, because enumerating a typed key table needs a
+    /// `ContentVtable` capability that does not exist yet. A whole-field `define_all` on a
+    /// list is the only shape known to exercise the content path today.
     #[cfg(feature = "observe")]
     #[must_use]
     pub fn field_entities(

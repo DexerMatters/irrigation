@@ -404,6 +404,10 @@ impl Runtime {
     }
 
     /// One field's entities in the View's own order.
+    ///
+    /// See [`crate::inner`]'s `field_entities` for the coverage limit: rows come from
+    /// materialized cells, plus the content-spelled identities of a **list**. A set, map or
+    /// graph lists only entities that already have cells.
     #[must_use]
     #[cfg(feature = "observe")]
     pub fn field_entities(
