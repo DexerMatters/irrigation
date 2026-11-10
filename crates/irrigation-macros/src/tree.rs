@@ -558,6 +558,11 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         }
     };
 
+    let view_marker = if derived {
+        quote!(impl irrigation::DerivedView for #view_ident {})
+    } else {
+        quote!(impl irrigation::SourceView for #view_ident {})
+    };
     let view_def = quote! {
         /// The tree View handle.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -582,7 +587,9 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             }
         }
 
-        impl irrigation::SourceView for #view_ident {}
+        // A derived tree's content comes from its producer, so the marker says so;
+        // `SourceView` would claim the host populates it.
+        #view_marker
 
         impl #view_ident {
             /// Reads the root identity, observing only the root unit.
