@@ -1544,6 +1544,7 @@ impl Runtime {
                     view: delivery.view,
                     previous: delivery.previous,
                     current: delivery.current,
+                    moved: delivery.moved,
                 };
                 callback(&delivery.snapshot, &summary);
             }

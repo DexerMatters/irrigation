@@ -73,6 +73,13 @@ pub struct ChangeSummary {
     pub previous: Version,
     /// Content version now: see [`Self::previous`] for when it equals it.
     pub current: Version,
+    /// How many watched units moved for this wake.
+    ///
+    /// Zero for a whole-View subscription, which watches the content. For a unit
+    /// subscription this is the only field that is non-zero when the versions above
+    /// are equal, which is the normal case: a per-unit move does not advance the
+    /// View's content.
+    pub moved: u32,
 }
 
 /// Immutable content captured at one revision.
