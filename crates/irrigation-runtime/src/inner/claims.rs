@@ -195,9 +195,21 @@ impl Inner {
     /// condition therefore defers the write group or fails it — a state in
     /// which the ports are absent never satisfies the write that observed the
     /// absence.
+    /// Records a requirement that `ports` hold when the group commits.
+    ///
+    /// `observed` is the caller's own evaluation, from tracked reads it already
+    /// made. It is a hint, not a demand: with ports to re-read the runtime
+    /// decides at commit, because the world can move between the read and the
+    /// publish, so a `false` there means "not satisfied when I looked", not
+    /// "refuse". Callers pass it accordingly — several pass `false` about a port
+    /// that a provider will supply in the same revision, which is exactly the
+    /// deferral case.
+    ///
+    /// With no ports there is nothing to re-evaluate, so the answer has to be
+    /// taken as given and a `false` is a contradiction now.
     pub fn require_condition(
         &self,
-        condition: bool,
+        observed: bool,
         ports: &[UnitKey],
         description: &'static str,
     ) -> Result<()> {
@@ -217,9 +229,9 @@ impl Inner {
             });
         }
         if ports.is_empty() {
-            // Nothing can be re-evaluated at commit, so honour the condition
+            // Nothing can be re-evaluated at commit, so honour the observation
             // now instead of registering a requirement no port can meet.
-            if condition {
+            if observed {
                 return Ok(());
             }
             return Err(ComputeError::PreconditionUnmet {

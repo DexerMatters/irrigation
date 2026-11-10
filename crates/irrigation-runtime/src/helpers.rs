@@ -514,14 +514,20 @@ pub fn provide_ports(ports: &[UnitKey]) -> bool {
 /// The caller evaluates the condition with tracked reads first; this helper
 /// only publishes the requirement to the runtime.
 ///
+/// `observed` is that evaluation, and it is a hint rather than a demand: when
+/// `ports` is non-empty the runtime re-reads them at commit and decides then, so
+/// passing `false` does not refuse — it is what a caller passes for a port a
+/// provider will supply in the same revision. With no ports the observation is
+/// the only answer and `false` fails immediately.
+///
 /// # Panics
 ///
 /// Panics with an engine payload outside a computation.
-pub fn require_condition(condition: bool, ports: &[UnitKey], description: &'static str) {
+pub fn require_condition(observed: bool, ports: &[UnitKey], description: &'static str) {
     let frame = current_or_engine_panic("write requirement");
     frame
         .runtime()
-        .require_condition(condition, ports, description)
+        .require_condition(observed, ports, description)
         .unwrap_or_else(|error| panic_engine(error));
 }
 
