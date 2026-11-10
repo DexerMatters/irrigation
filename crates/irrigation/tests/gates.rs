@@ -14600,3 +14600,54 @@ fn a_provider_removal_advances_the_presence_generation() {
         "the presence cell's generation moves with the payload's on a provider removal"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A cell initializer that calls back into the runtime
+// ---------------------------------------------------------------------------
+
+/// Reads an unset reduced position, and from inside that initializer reads another unit.
+///
+/// The initializer runs while the metadata lock is held, so the nested read asks for the same
+/// non-reentrant lock on the thread that holds it. `Inner::lock` refuses with
+/// `ComputeError::ReentrantUse` instead of waiting forever.
+fn reentering_initializer() -> u64 {
+    let unit = |position: u64| {
+        irrigation::UnitKey::entity(
+            <Totals as irrigation::ViewSchema>::view_id(),
+            irrigation::FieldId(0),
+            irrigation::UnitKind::Value,
+            irrigation::any_key(position),
+        )
+    };
+    let reached = std::cell::Cell::new(false);
+    let _ = irrigation::try_read_unit_value(unit(5), |_| {
+        // Inside `unit_node_init`, holding the metadata lock, in user code.
+        let _ = irrigation::try_read_unit_value(unit(6), |_| None::<u64>);
+        reached.set(true);
+        None::<u64>
+    });
+    u64::from(reached.get())
+}
+
+#[irrigation]
+mod reentrant_initializer {
+    #[component(root)]
+    pub fn root() -> u64 {
+        super::reentering_initializer()
+    }
+}
+
+#[test]
+fn a_reentering_unit_initializer_is_refused() {
+    let runtime = Runtime::new();
+    runtime
+        .install(reentrant_initializer::Root)
+        .expect("install");
+    let error = runtime
+        .read_outputs::<reentrant_initializer::Root>()
+        .expect_err("the nested read cannot take the lock its caller holds");
+    assert!(
+        matches!(error, irrigation::ComputeError::ReentrantUse { .. }),
+        "expected the structured refusal, got {error:?}"
+    );
+}
