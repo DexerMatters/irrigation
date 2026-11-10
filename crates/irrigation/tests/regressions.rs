@@ -1132,3 +1132,29 @@ fn an_equal_commit_is_counted_as_a_cutoff() {
         "a commit whose value did not move is a cutoff, and the counter says so"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A workerless runtime reports what it has, and still computes
+// (runtime-api-r77-01)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_workerless_runtime_reports_zero_workers_and_still_runs() {
+    let runtime = Runtime::with_config(irrigation::RuntimeConfig {
+        workers: 0,
+        ..irrigation::RuntimeConfig::default()
+    });
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_verbs::Keys).expect("install");
+
+    assert_eq!(
+        runtime.worker_count(),
+        0,
+        "no workers were configured, so the accessor must not claim one"
+    );
+    // Every demand runs inline on this thread; the answer is the same.
+    assert_eq!(
+        runtime.read_outputs::<ledger_verbs::Keys>().expect("read"),
+        (vec![1], 1)
+    );
+}

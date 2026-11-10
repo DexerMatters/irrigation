@@ -1023,9 +1023,14 @@ impl Runtime {
     }
 
     /// Number of worker threads available to derived computation.
+    ///
+    /// The configured number, including zero: a workerless runtime is supported --
+    /// every demand runs inline on the calling thread -- and reporting `1` for it
+    /// told callers a pool existed. Parallel-region sizing already treats anything
+    /// at or below one worker as sequential, so no caller needs the floor.
     #[must_use]
     pub fn worker_count(&self) -> usize {
-        self.inner.config.workers.max(1)
+        self.inner.config.workers
     }
 
     /// Demands a component by descriptor, returning its output product.
