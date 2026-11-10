@@ -719,9 +719,13 @@ where
             |_| (),
             |()| {
                 let structure: PSet<T> = members.iter().cloned().collect();
-                // Staged as a whole-field value first: it supersedes the members
-                // this definition omits, so no member cell has to be read and
-                // retracted by hand. Reading the structure here would observe a
+                // Staged as a whole-field value first: the definition pipeline
+                // retires the members this definition omits, so no member cell
+                // has to be read and retracted by hand. Which rule does it
+                // depends on the provider: a custom component writes deltas so
+                // the draft supersedes its field's entity units, while a
+                // lowered component restates its whole output and the
+                // restatement retires them. Reading the structure here would observe a
                 // unit this same commit replaces.
                 define_unit(
                     self.unit(),

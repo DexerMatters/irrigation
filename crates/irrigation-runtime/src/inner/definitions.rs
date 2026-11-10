@@ -167,23 +167,39 @@ impl Inner {
 
         // A field-level `Value` draft publishes its field as one value, not as a
         // delta against entities: the entity cells this provider staged for that
-        // field and did not restate belong to the value that was replaced. A
-        // delta publisher that stops listing an id would otherwise leave its
-        // membership and payload cells serving the dropped member forever.
-        let replaced: FxHashSet<(ViewId, FieldId)> = drafts
-            .iter()
-            .filter(|draft| draft.unit.entity.is_none() && draft.unit.kind == UnitKind::Value)
-            .map(|draft| (draft.unit.view, draft.unit.field))
-            .collect();
-        let superseded: FxHashSet<UnitKey> = old
-            .iter()
-            .filter(|record| {
-                record.unit.entity.is_some()
-                    && replaced.contains(&(record.unit.view, record.unit.field))
-                    && !restaged.contains(&record.unit)
-            })
-            .map(|record| record.unit.clone())
-            .collect();
+        // field and did not restate belong to the value that was replaced.
+        //
+        // Two rules retire an entity unit this run does not restate, and each
+        // owns one kind of provider:
+        //
+        // * A lowered component restates its whole output every run, so
+        //   `restate_all` retires whatever it stopped stating.
+        // * A custom component writes deltas, so `superseded` is the rule that
+        //   makes a whole-field draft replace the entity units of its field:
+        //   a delta publisher that stops listing an id would otherwise leave
+        //   that id's membership and payload cells serving it forever.
+        //
+        // They overlap on a lowered component that stages a whole-field draft,
+        // where either alone is enough. The scan below is therefore only worth
+        // its cost for the delta case: `restate_all` already covers the rest, and
+        // the record set it would walk is every definition the provider owns.
+        let superseded: FxHashSet<UnitKey> = if restate_all {
+            FxHashSet::default()
+        } else {
+            let replaced: FxHashSet<(ViewId, FieldId)> = drafts
+                .iter()
+                .filter(|draft| draft.unit.entity.is_none() && draft.unit.kind == UnitKind::Value)
+                .map(|draft| (draft.unit.view, draft.unit.field))
+                .collect();
+            old.iter()
+                .filter(|record| {
+                    record.unit.entity.is_some()
+                        && replaced.contains(&(record.unit.view, record.unit.field))
+                        && !restaged.contains(&record.unit)
+                })
+                .map(|record| record.unit.clone())
+                .collect()
+        };
 
         // Retractions of one View batch their content publish, and the fields
         // they move are refreshed once by the install pass that follows.
