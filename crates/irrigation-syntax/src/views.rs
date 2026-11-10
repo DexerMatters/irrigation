@@ -62,14 +62,6 @@ pub struct Text {
     pub edits: Map<u64, crate::TextEdit>,
 }
 
-impl Text {
-    /// The document unit.
-    #[must_use]
-    pub fn document_unit() -> irrigation::UnitKey {
-        Self::DOCUMENT.unit()
-    }
-}
-
 /// Everything the parser needs to know about one token.
 ///
 /// The token stream is the only place token structure lives: there is no second
