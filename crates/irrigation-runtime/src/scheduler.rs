@@ -80,12 +80,13 @@ impl std::fmt::Debug for Pool {
 
 impl Pool {
     /// Starts `workers` threads, each with `stack_size` bytes of stack.
-    #[must_use]
+    ///
     /// # Panics
     ///
     /// Panics when a worker thread cannot be spawned -- no memory for its stack, or the
     /// process is out of threads. There is no degraded mode: a pool missing a worker
     /// would make progress depend on which threads happened to start.
+    #[must_use]
     pub fn new(workers: usize, stack_size: usize) -> Self {
         // Large stacks are the deep-recursion mode. Reserve a small fixed headroom
         // for runtime frames and debug instrumentation so the configured depth
