@@ -3547,6 +3547,12 @@ fn a_join_tracks_both_inputs_changing_in_one_transaction() {
 fn invalidation_cost_is_counted() {
     let runtime = Runtime::new();
     runtime.install(structure_map::Root).expect("install");
+    // The reader has to exist before the edit, or there is no dependent to
+    // invalidate: a seed nothing reads invalidates nobody, and the kernel no
+    // longer records a marking step for it.
+    let _ = runtime
+        .read_outputs::<structure_map::Root>()
+        .expect("read the root so the mode unit has a dependent");
     let before = runtime.stats().invalidations;
     runtime
         .edit(|edit| edit.view::<StructureMode>().set_mode(1))

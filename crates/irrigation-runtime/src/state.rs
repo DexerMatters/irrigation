@@ -1354,6 +1354,18 @@ pub fn invalidate(
     invalidate_tracked(state, seeds, revision).0
 }
 
+/// Whether a node holds committed data rather than a computed result.
+///
+/// A unit and a region's content are the data a commit installs; every other
+/// kind is a result derived from them. Invalidation asks the difference twice —
+/// a data node keeps its certification and only its readers are marked — so the
+/// question has one owner.
+fn is_data_node(record: &NodeRecord) -> bool {
+    matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent)
+        && record.value.is_some()
+        && record.has_valid_trace()
+}
+
 /// [`invalidate`], also reporting whether it marked a node that `revision` had
 /// already finalized.
 ///
@@ -1379,7 +1391,20 @@ pub(crate) fn invalidate_tracked(
     // not, so a node verified earlier in this revision is distinguishable from
     // one verified after this invalidation.
     let validity = state.alloc_validity();
-    let mut stack: smallvec::SmallVec<[NodeId; 16]> = seeds.into_iter().collect();
+    // A seed with no readers invalidates nobody, and a *data* seed needs no
+    // suspect stamp either: its value is what a commit just installed, so it is
+    // certified for this revision and every later read takes the certified
+    // path. The difference is what the pass walks: the nodes a commit touched,
+    // or every unit it published. A definition commit installs thousands of
+    // cells at once, and marking them made a bulk publication pay per cell
+    // instead of per reader.
+    let mut stack: smallvec::SmallVec<[NodeId; 16]> = seeds
+        .into_iter()
+        .filter(|node| {
+            let record = state.node(*node);
+            !(record.dependents.is_empty() && is_data_node(record))
+        })
+        .collect();
     let roots: FxHashSet<NodeId> = stack.iter().copied().collect();
     let mut seen: FxHashSet<NodeId> = FxHashSet::default();
     let mut marked = 0u64;
@@ -1404,9 +1429,7 @@ pub(crate) fn invalidate_tracked(
         // so they stay certified at the new stamp and only their dependents are
         // marked suspect. Computed nodes reached through reverse edges are the
         // ones that must re-run.
-        let data_seed = matches!(record.kind, NodeKind::Unit | NodeKind::RegionContent)
-            && record.value.is_some()
-            && record.has_valid_trace();
+        let data_seed = is_data_node(record);
         record.suspect_at = revision;
         record.suspect_validity = validity;
         if data_seed {
