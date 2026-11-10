@@ -25,6 +25,12 @@ use irrigation_runtime::observe::GraphScope;
 const MAX_BODY: usize = 64 * 1024;
 /// Longest request-head line accepted. A header or request line past this is refused rather than read.
 const MAX_HEAD_LINE: usize = 8 * 1024;
+/// How long a connection may stay silent before it is dropped.
+///
+/// Each connection owns a thread, and nothing else would reclaim one whose client connected and never
+/// sent a byte: `read_request` blocks on the socket. The timeout bounds that wait; the stream route
+/// answers quickly and does not hold the socket open afterwards, so it is not affected.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 use crate::collector::Collector;
 use crate::wire::EventsWire;
@@ -127,6 +133,8 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                             .spawn(move || {
                                 let _ = stream.set_nonblocking(false);
                                 let _ = stream.set_nodelay(true);
+                                // A peer that connects and says nothing must not own a thread forever.
+                                let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
                                 handle(&collector, &config, stream);
                             })
                             .ok();
