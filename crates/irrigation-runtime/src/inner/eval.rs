@@ -627,6 +627,11 @@ impl Inner {
             if !verified {
                 state.node_mut(dep.node).certify(revision);
             }
+            // `dep.validity` is deliberately not a criterion here: the stamp
+            // advances on a same-revision invalidation even when nothing moved, so
+            // comparing it would fail validation for an unchanged output -- the
+            // gate `unchanged_output_does_not_invalidate_consumers` rejects exactly
+            // that.
             if changed != dep.version || routing != dep.routing {
                 state
                     .stats

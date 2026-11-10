@@ -31,6 +31,12 @@ pub struct Dep {
     pub routing: u64,
     /// The node's certification stamp when it was observed.
     ///
+    /// Recorded for diagnostics, **not** a validation criterion: the stamp
+    /// advances on a same-revision invalidation even when nothing else moved, so
+    /// comparing it would reject an unchanged output. `validate_trace` compares
+    /// `version` and `routing` only, and the test
+    /// `unchanged_output_does_not_invalidate_consumers` is what says so.
+    ///
     /// Invalidation advances the stamp even when the revision, value version,
     /// and routing generation are unchanged. It is carried with an observation
     /// so a consumer can tell whether the observation predates the node's
