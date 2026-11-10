@@ -31,6 +31,13 @@ const MAX_HEAD_LINE: usize = 8 * 1024;
 /// sent a byte: `read_request` blocks on the socket. The timeout bounds that wait; the stream route
 /// answers quickly and does not hold the socket open afterwards, so it is not affected.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a write may block before the connection is dropped.
+///
+/// The event stream writes a heartbeat every fifteen seconds and breaks on a write error, but a peer
+/// that stops reading fills its socket buffer and then blocks `write_all` forever -- the write-side
+/// twin of [`READ_TIMEOUT`]. Bounding it turns "held until the peer goes away" into "held for one
+/// timeout".
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 use crate::collector::Collector;
 use crate::wire::EventsWire;
@@ -135,6 +142,8 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                                 let _ = stream.set_nodelay(true);
                                 // A peer that connects and says nothing must not own a thread forever.
                                 let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                                // Nor must one that stops reading: the stream writes heartbeats.
+                                let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
                                 handle(&collector, &config, stream);
                             })
                             .ok();
