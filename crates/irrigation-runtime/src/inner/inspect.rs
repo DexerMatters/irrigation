@@ -199,10 +199,7 @@ impl Inner {
     #[must_use]
     pub fn unit_facts(&self, unit: &UnitKey) -> Option<(Version, u32)> {
         let state = self.lock();
-        match crate::state::current_unit_node(&state, unit) {
-            Some(node) => Some((state.node(node).changed_at, 0)),
-            None => crate::state::content_version(&state, unit).map(|version| (version, 0)),
-        }
+        crate::state::unit_version_of(&state, unit).map(|version| (version, 0))
     }
     /// Returns several units' change versions under one lock.
     ///
@@ -218,10 +215,7 @@ impl Inner {
         let state = self.lock();
         units
             .iter()
-            .map(|unit| match crate::state::current_unit_node(&state, unit) {
-                Some(node) => Some(state.node(node).changed_at),
-                None => crate::state::content_version(&state, unit),
-            })
+            .map(|unit| crate::state::unit_version_of(&state, unit))
             .collect()
     }
     /// One field's entities in the View's own order, for a generic drawing.

@@ -43,7 +43,9 @@ impl Inner {
         // change of its own. A unit the content cannot spell is born at the
         // zero `unit_version` answered before the cell existed, and keeps that
         // version until an accessor's projection or a definition moves it.
-        let changed_at = crate::state::content_version(state, &key).unwrap_or(0);
+        // That zero is the version the one derivation already answers for a cell
+        // that does not exist yet.
+        let changed_at = crate::state::unit_version(state, &key);
         let mut record = NodeRecord::unit("unit", key.clone());
         record.changed_at = changed_at;
         if let Some(value) = initial {

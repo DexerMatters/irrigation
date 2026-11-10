@@ -766,9 +766,21 @@ pub fn routing_version(state: &State, unit: &UnitKey) -> Version {
 /// neither the cell table nor the content defines, so a subscription does not
 /// read a later appearance as anything but a change.
 pub fn unit_version(state: &State, unit: &UnitKey) -> Version {
+    unit_version_of(state, unit).unwrap_or(0)
+}
+
+/// [`unit_version`], keeping "no answer" distinct from "revision zero".
+///
+/// A cell's stamp can legitimately be zero — a cell born at the initial content
+/// revision — so a caller that needs to tell "defined at zero" from "not
+/// defined" asks here. It is the one derivation; the scalar form is its
+/// `unwrap_or(0)`, and the observation surface reads it too, so a host that
+/// seeds a watermark from the board agrees with the runtime's own
+/// subscriptions.
+pub fn unit_version_of(state: &State, unit: &UnitKey) -> Option<Version> {
     match current_unit_node(state, unit) {
-        Some(node) => state.node(node).changed_at,
-        None => content_version(state, unit).unwrap_or(0),
+        Some(node) => Some(state.node(node).changed_at),
+        None => content_version(state, unit),
     }
 }
 
