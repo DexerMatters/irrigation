@@ -51,6 +51,12 @@ pub fn field_protocol(view: ViewId, field: FieldId) -> bool {
 
 /// Reads one logical unit, creating it with `init` when first observed.
 ///
+/// `init` runs **while the runtime's metadata lock is held**, because it fills the cell
+/// the lock protects. It must therefore not read the runtime: a closure that calls
+/// `read`, `demand`, `stats` or any other locking entry point deadlocks instead of
+/// failing. `field_protocol` in this module is the worked example -- it reads the
+/// committed bit first, precisely because the second read takes the same lock.
+///
 /// # Panics
 ///
 /// Panics with an engine payload outside a computation or on engine failure.
@@ -88,6 +94,9 @@ where
 /// cancellation, a cycle, a panicking producer, a type mismatch — would publish
 /// a value derived from a false absence, so it travels to the caller as an
 /// engine panic exactly like [`read_unit_value`].
+///
+/// `init` has the same constraint as [`read_unit_value`]'s: it runs while the metadata
+/// lock is held and must not read the runtime.
 pub fn try_read_unit_value<T, F>(key: UnitKey, init: F) -> Option<T>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
