@@ -55,6 +55,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Markdown links
         run: python3 scripts/check-md-links.py
+      # Rustdoc concatenates an item's `///` lines in source order, so an attribute that
+      # splits a doc comment renders correctly and every other gate stays silent. The
+      # only symptom is source that reads as prose interrupted by an attribute.
+      - name: Doc comments
+        run: python3 scripts/check-doc-comments.py
       # A doc link that resolves to nothing is a public page telling a reader to
       # look somewhere that does not exist -- including at types the crate never
       # had. `-D warnings` also holds back bare URLs and invalid html tags.
