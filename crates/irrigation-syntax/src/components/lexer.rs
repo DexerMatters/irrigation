@@ -15,7 +15,7 @@ use irrigation::{
 
 use crate::lexer::{LexOutput, LexState, Lexer, Token, TokenFlags, TokenId};
 use crate::text::TextDocument;
-use crate::views::{DiagnosticId, SourceFile, Text, TokenDelta, TokenPayload, Tokens};
+use crate::views::{DiagnosticId, Text, TokenDelta, TokenPayload, Tokens};
 
 /// Retained lexer state.
 #[derive(Clone, Debug)]
@@ -219,7 +219,7 @@ impl GeneralComponent for LexerComponent {
 
     const ID: ComponentId = ComponentId(0x00B2_0001);
     const NAME: &'static str = "irrigation-syntax::LexerComponent";
-    const VIEWS: &'static [&'static ViewDescriptor] = &[<SourceFile as ViewSchema>::DESCRIPTOR];
+    const VIEWS: &'static [&'static ViewDescriptor] = &[<Text as ViewSchema>::DESCRIPTOR];
     const OUTPUT_VIEWS: &'static [&'static ViewDescriptor] = &[<Tokens as ViewSchema>::DESCRIPTOR];
 
     fn dependency_updates(&self) -> DependencyUpdates {
