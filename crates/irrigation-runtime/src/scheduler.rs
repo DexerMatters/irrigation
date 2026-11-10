@@ -109,7 +109,7 @@ impl Pool {
                         execute(job);
                     }
                 })
-                .expect("spawn reactive worker");
+                .expect("spawn irrigation worker");
             handles.push(handle);
         }
         Self {
@@ -168,7 +168,7 @@ impl Pool {
         }));
         match receiver.recv() {
             Ok(value) => value,
-            Err(error) => panic!("reactive worker dropped a demand result: {error}"),
+            Err(error) => panic!("irrigation worker dropped a demand result: {error}"),
         }
     }
 }

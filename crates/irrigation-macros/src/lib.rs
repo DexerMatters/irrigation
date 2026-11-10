@@ -1,4 +1,4 @@
-//! Procedural macros for the reactive incremental language.
+//! Procedural macros for the incremental language.
 //!
 //! The macros lower a Rust-shaped subset into typed builder calls:
 //!
@@ -48,7 +48,7 @@ pub fn incremental_data(args: TokenStream, input: TokenStream) -> TokenStream {
     path::rewrite(schema::expand(args.into(), input.into())).into()
 }
 
-/// Turns a function into a reactive component generator.
+/// Turns a function into a component generator.
 #[proc_macro_attribute]
 pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
     path::rewrite(component::expand_component(args.into(), input.into())).into()

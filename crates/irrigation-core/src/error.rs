@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::ids::NodeId;
 
-/// Result alias used across the reactive crates.
+/// Result alias used across the irrigation crates.
 pub type Result<T> = core::result::Result<T, ComputeError>;
 
 /// A failure produced by the incremental engine rather than by user data.

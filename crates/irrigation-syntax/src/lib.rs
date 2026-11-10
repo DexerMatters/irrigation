@@ -11,7 +11,7 @@
 //! Each layer consumes the previous layer's delta: the lexer relexes the edit
 //! window, the parser resumes from a checkpoint and splices untouched subtrees,
 //! and publication is a patch. [`LexerComponent`] and [`ParserComponent`] are
-//! ordinary reactive components; their incremental algorithms are internal.
+//! ordinary incremental components; their incremental algorithms are internal.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]

@@ -1,4 +1,4 @@
-//! Core vocabulary for the reactive incremental runtime.
+//! Core vocabulary for the incremental runtime.
 //!
 //! This crate owns the pieces that every other crate agrees on:
 //!

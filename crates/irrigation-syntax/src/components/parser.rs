@@ -1,6 +1,6 @@
 //! Parser component: turns the token delta into the `AstTree` and `AstMeta`.
 //!
-//! The component is an ordinary reactive component: it reads the token delta,
+//! The component is an ordinary incremental component: it reads the token delta,
 //! resumes the parse from a checkpoint, and publishes only what the edit
 //! touched. There is no concrete tree, no full parse after the first one, and no
 //! runtime-side knowledge of what it does.
