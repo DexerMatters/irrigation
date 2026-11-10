@@ -117,6 +117,7 @@ impl ParserComponent {
         previous: Option<&AstTable>,
         rules: &mut HashSet<u64>,
         diagnostics: &mut HashSet<DiagnosticId>,
+        errors: &mut HashSet<u64>,
         added: &[crate::AstNodeRecord],
         removed: &[u64],
         parse_diagnostics: &[Diagnostic],
@@ -176,8 +177,7 @@ impl ParserComponent {
                 written += 2;
             }
             if record.category.is_some() {
-                cx.write(AstMeta::ERRORS).member(record.id).present(true);
-                written += 1;
+                errors.insert(record.id);
             }
             for (field, child) in &record.fields {
                 cx.write(AstMeta::FIELDS)
@@ -201,11 +201,17 @@ impl ParserComponent {
             cx.write(AstMeta::SPAN_ENDS).entry(*id).retract();
             cx.write(AstMeta::TOKENS).entry(*id).retract();
             cx.write(AstMeta::VALUES).entry(*id).retract();
-            cx.write(AstMeta::ERRORS).member(*id).present(false);
+            errors.remove(id);
             for field in fields {
                 cx.write(AstMeta::FIELDS).entry((*id, field)).retract();
             }
         }
+        // The recovery set is one value per revision, so it is written as one.
+        // Stated per node it cost one membership write per added node and one
+        // *withdrawal* per removed node, and a withdrawal republishes the field's
+        // whole content in the definition pipeline: deleting a region then paid
+        // a content publish per removed node.
+        cx.write(AstMeta::ERRORS).define_all(errors.iter().copied());
         let mut stats = stats;
         stats.meta_units_written = written;
         stats.publish(cx);
@@ -270,12 +276,14 @@ impl GeneralComponent for ParserComponent {
         };
         let mut rules = HashSet::new();
         let mut diagnostics = HashSet::new();
+        let mut errors = HashSet::new();
         let mut storage = TreeStorage::default();
         Self::publish(
             cx,
             None,
             &mut rules,
             &mut diagnostics,
+            &mut errors,
             &added,
             &[],
             &parse_diagnostics,
@@ -422,6 +430,13 @@ impl GeneralComponent for ParserComponent {
         let added = added_for_meta;
         let mut rules = state.rules.clone();
         let mut diagnostics = state.diagnostics.clone();
+        let mut errors: HashSet<u64> = state
+            .ast
+            .nodes
+            .iter()
+            .filter(|(_, meta)| meta.record.category.is_some())
+            .map(|(id, _)| *id)
+            .collect();
         let mut storage = if rebuilt_all {
             TreeStorage::default()
         } else {
@@ -432,6 +447,7 @@ impl GeneralComponent for ParserComponent {
             Some(&state.ast.nodes),
             &mut rules,
             &mut diagnostics,
+            &mut errors,
             &added,
             &removed,
             &parse_diagnostics,
