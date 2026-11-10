@@ -227,9 +227,22 @@ impl Inner {
     ) {
         let value_version = state.alloc_value_version();
         let validity = state.alloc_validity();
+        // `routing_generation` "advances when the unit's provider changes,
+        // including a handover that leaves the value equal". A source View has no
+        // provider, so no handover there is possible and the stamp must not move:
+        // moving it told a routing observer that the provider had changed when
+        // only the value had, and left the entity's payload and membership cells
+        // disagreeing about whether anything had.
+        let routes = state
+            .node(node)
+            .unit
+            .as_ref()
+            .is_none_or(|unit| state.producers.contains_key(&unit.view));
         let record = state.node_mut(node);
         record.retire_value(value_version, revision);
-        record.routing_at = revision;
+        if routes {
+            record.routing_at = revision;
+        }
         record.verified_at = 0;
         record.verified_validity = 0;
         record.suspect_at = revision;

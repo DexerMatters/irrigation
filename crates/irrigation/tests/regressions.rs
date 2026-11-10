@@ -931,3 +931,49 @@ fn a_producer_cannot_adopt_the_roots_component_id() {
         "expected the uniqueness error, got {error:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A source removal moves no routing generation (runtime-api-r11-03)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_source_removal_moves_no_routing_generation() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_verbs::Keys).expect("install");
+
+    // Read presence and payload, so both cells exist: an unmaterialized cell has
+    // no stamp to move and this test would measure nothing.
+    assert_eq!(
+        runtime
+            .call::<ledger_verbs::__EntrySpec>(ledger_verbs::EntryArgs { _tag: 0 })
+            .expect("entry"),
+        (true, Some(10))
+    );
+
+    let value = ledger_value(1);
+    let membership = irrigation::UnitKey {
+        kind: irrigation::UnitKind::Membership,
+        ..value.clone()
+    };
+    let value_routing = runtime.routing_generation(&value);
+    let membership_routing = runtime.routing_generation(&membership);
+
+    // A host edit removes the member. No provider owned it before or after, so
+    // no routing generation can have moved -- routing answers "who else could
+    // define this", and a source View has no provider at all.
+    runtime
+        .edit(|edit| edit.set(membership.clone(), false))
+        .expect("remove");
+
+    assert_eq!(
+        runtime.routing_generation(&value),
+        value_routing,
+        "a removal in a View with no provider is not a provider change"
+    );
+    assert_eq!(
+        runtime.routing_generation(&membership),
+        membership_routing,
+        "the entity's two cells must agree about whether the provider moved"
+    );
+}
