@@ -102,8 +102,12 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let mut handle_attrs = Vec::new();
     for attr in &item.attrs {
         let path = attr.path();
-        if path.is_ident("cfg") || path.is_ident("cfg_attr") || is_lint_policy(attr) {
+        if path.is_ident("cfg") || path.is_ident("cfg_attr") {
             gate_attrs.push(attr);
+        } else if is_lint_policy(attr) {
+            if crate::attr::is_forwardable_lint_policy(attr) {
+                gate_attrs.push(attr);
+            }
         } else if path.is_ident("doc")
             || path.is_ident("must_use")
             || path.is_ident("non_exhaustive")

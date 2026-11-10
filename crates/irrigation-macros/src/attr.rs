@@ -171,3 +171,51 @@ pub fn is_lint_policy(attr: &Attribute) -> bool {
         .iter()
         .any(|name| path.is_ident(name))
 }
+
+/// Whether a lint attribute may be copied onto every item a macro generates.
+///
+/// `allow`, `warn`, `deny` and `forbid` set a policy, so duplicating them is
+/// harmless: each generated item is governed by the same rule. `expect` is not a
+/// policy -- it asserts that the lint *fires here*, and an unfulfilled expectation
+/// is itself a lint (`unfulfilled_lint_expectations`), so copying one onto items
+/// whose code the user never wrote turns their one deliberate expectation into
+/// errors they did not write and cannot remove.
+pub fn is_forwardable_lint_policy(attr: &Attribute) -> bool {
+    is_lint_policy(attr) && !attr.path().is_ident("expect")
+}
+
+#[cfg(test)]
+mod lint_policy_tests {
+    use super::*;
+    use syn::parse_quote;
+
+    /// A policy attribute applies to everything the macro emits.
+    #[test]
+    fn allow_is_forwardable() {
+        let attr: Attribute = parse_quote!(#[allow(dead_code)]);
+        assert!(is_lint_policy(&attr));
+        assert!(is_forwardable_lint_policy(&attr));
+    }
+
+    /// An expectation asserts that the lint fires *here*; copying it onto generated
+    /// items makes it unfulfilled there, which is a lint the user did not write.
+    #[test]
+    fn expect_is_not_forwardable() {
+        let attr: Attribute = parse_quote!(#[expect(unused_variables)]);
+        assert!(is_lint_policy(&attr), "it is still a lint attribute");
+        assert!(
+            !is_forwardable_lint_policy(&attr),
+            "but it must not be copied onto generated items"
+        );
+    }
+
+    #[test]
+    fn other_policies_are_forwardable() {
+        let deny: Attribute = parse_quote!(#[deny(unsafe_code)]);
+        let warn: Attribute = parse_quote!(#[warn(missing_docs)]);
+        let forbid: Attribute = parse_quote!(#[forbid(unsafe_code)]);
+        for attr in [deny, warn, forbid] {
+            assert!(is_forwardable_lint_policy(&attr));
+        }
+    }
+}

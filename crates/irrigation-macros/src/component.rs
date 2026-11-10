@@ -605,8 +605,11 @@ fn attributes_for(attrs: &[Attribute], site: AttrSite) -> Vec<Attribute> {
 
 fn applies_to(attr: &Attribute, site: AttrSite) -> bool {
     let path = attr.path();
-    if path.is_ident("cfg") || path.is_ident("cfg_attr") || is_lint_policy(attr) {
+    if path.is_ident("cfg") || path.is_ident("cfg_attr") {
         return true;
+    }
+    if is_lint_policy(attr) {
+        return crate::attr::is_forwardable_lint_policy(attr);
     }
     if path.is_ident("non_exhaustive") {
         return matches!(site, AttrSite::Struct);
