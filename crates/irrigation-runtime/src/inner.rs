@@ -2617,6 +2617,10 @@ impl Inner {
             .map(|record| record.unit.clone())
             .collect();
 
+        // Retractions of one View batch their content publish, and the fields
+        // they move are refreshed once by the install pass that follows.
+        let mut stale_entities: FxHashMap<ViewId, Vec<UnitKey>> = FxHashMap::default();
+        let mut retracted_dirty: FxHashMap<ViewId, Vec<FieldId>> = FxHashMap::default();
         // Retractions first: a unit this provider no longer produces must
         // disappear atomically with the new value. A unit is removed only when
         // it is retracted explicitly, superseded by a whole-field replacement,
@@ -2638,6 +2642,13 @@ impl Inner {
                 continue;
             }
             let view = record.unit.view;
+            if record.unit.entity.is_some() {
+                stale_entities
+                    .entry(view)
+                    .or_default()
+                    .push(record.unit.clone());
+                continue;
+            }
             let outcome = Self::with_taken_region(state, view, |state, region| {
                 Self::retract_unit(
                     state,
@@ -2656,17 +2667,46 @@ impl Inner {
         // set: a branch site that was not taken last revision can retract the
         // unit it used to own without waiting for the old branch node to be
         // reclaimed.
+        let mut explicit_entities: FxHashMap<ViewId, Vec<UnitKey>> = FxHashMap::default();
         for unit in &retracted {
             if restaged.contains(unit) || superseded.contains(unit) {
                 continue;
             }
             let view = unit.view;
+            if unit.entity.is_some() {
+                explicit_entities
+                    .entry(view)
+                    .or_default()
+                    .push(unit.clone());
+                continue;
+            }
             let outcome = Self::with_taken_region(state, view, |state, region| {
                 Self::retract_unit(state, region, provider, unit, revision, changed_nodes, true);
             });
             debug_assert!(outcome.is_some(), "a View that owns a unit has its region");
         }
 
+        // The two batches differ only in authority: a stale record is only
+        // released, an explicit retraction may take a sibling site's unit over.
+        for (batches, force) in [(stale_entities, false), (explicit_entities, true)] {
+            for (view, units) in batches {
+                let outcome = Self::with_taken_region(state, view, |state, region| {
+                    let mut dirty = retracted_dirty.remove(&view).unwrap_or_default();
+                    Self::retract_entities(
+                        state,
+                        region,
+                        provider,
+                        &units,
+                        force,
+                        revision,
+                        changed_nodes,
+                        &mut dirty,
+                    );
+                    retracted_dirty.insert(view, dirty);
+                });
+                debug_assert!(outcome.is_some(), "a validated View has its region");
+            }
+        }
         let mut by_view: FxHashMap<ViewId, Vec<DefinitionDraft>> = FxHashMap::default();
         for draft in drafts {
             by_view.entry(draft.unit.view).or_default().push(draft);
@@ -2692,9 +2732,24 @@ impl Inner {
                     decisions,
                     changed_nodes,
                     &mut installed,
+                    retracted_dirty.remove(&view).unwrap_or_default(),
                 );
             });
             debug_assert!(applied.is_some(), "a validated View has its region");
+        }
+        // A View whose retractions moved a field but which installs nothing this
+        // run never reaches `apply_definitions`, so its projection is refreshed
+        // here — still once per field.
+        for (view, fields) in retracted_dirty {
+            if fields.is_empty() {
+                continue;
+            }
+            let outcome = Self::with_taken_region(state, view, |state, region| {
+                for field in fields {
+                    Self::refresh_unowned_structure(state, region, field, revision, changed_nodes);
+                }
+            });
+            debug_assert!(outcome.is_some(), "a validated View has its region");
         }
         // Retained definitions are still this provider's output for the
         // revision: certify them so readers and reuse checks see them as final.
@@ -2823,11 +2878,18 @@ impl Inner {
         decisions: &[RouteDecision],
         changed_nodes: &mut Vec<NodeId>,
         installed: &mut Vec<DefinitionRecord>,
+        retracted_dirty: Vec<FieldId>,
     ) {
         let descriptor = region.descriptor;
         let mut content_drafts: Vec<(UnitKey, Value)> = Vec::new();
         let mut content_changed = false;
-        let mut dirty_fields: Vec<FieldId> = Vec::new();
+        // Fields the group's own retractions moved before the installs ran. They
+        // are seeded here so this View's single flush republishes every moved
+        // projection once, from the group's final content.
+        let mut dirty_fields: Vec<FieldId> = retracted_dirty;
+        // Fields the group's presence decisions move. They are flushed under
+        // their own rule, because a presence decision answers after the drafts.
+        let mut presence_fields: Vec<FieldId> = Vec::new();
         let mut protocols: Vec<(FieldId, bool)> = Vec::new();
         for draft in drafts {
             // The group's presence decision owns this entity's cells: a
@@ -3061,24 +3123,52 @@ impl Inner {
         for (field, keyed) in protocols {
             Self::set_field_protocol(state, descriptor.id, field, keyed, revision, changed_nodes);
         }
-        for field in dirty_fields {
-            Self::refresh_structure(state, region, field, revision, changed_nodes);
-        }
         // The group's presence decisions land after its content rewrite: a
         // `Membership = false` draft states that the entity is absent, and
         // absence implies the payload is absent. Both cells go through the one
         // retraction primitive, so no draft of the same group can leave a
         // payload certified behind an absence it stated itself.
-        for owner in withdrawn.iter().filter(|owner| owner.view == descriptor.id) {
-            Self::retract_unit(
+        let withdrawn_units: Vec<UnitKey> = withdrawn
+            .iter()
+            .filter(|owner| owner.view == descriptor.id)
+            .map(payload_key)
+            .collect();
+        if !withdrawn_units.is_empty() {
+            Self::retract_entities(
                 state,
                 region,
                 provider,
-                &payload_key(owner),
+                &withdrawn_units,
+                true,
                 revision,
                 changed_nodes,
-                true,
+                &mut presence_fields,
             );
+        }
+        // One flush for the whole group, and the projection each moved field
+        // gets is decided by who answered last:
+        //
+        // * A field the group *publishes* a structure for has already been
+        //   answered by that draft, so refreshing it again would write the cell
+        //   a second time and could only produce the value it already holds.
+        // * A field the group's presence decisions moved has no such answer:
+        //   those drafts were computed from the content *before* the retraction,
+        //   so the retraction is the group's last word and the projection must
+        //   follow it.
+        let published: FxHashSet<UnitKey> = drafts
+            .iter()
+            .filter(|draft| draft.unit.kind == UnitKind::Structure)
+            .map(|draft| draft.unit.clone())
+            .collect();
+        for field in dirty_fields {
+            let structure = UnitKey::field(descriptor.id, field, UnitKind::Structure);
+            if published.contains(&structure) {
+                continue;
+            }
+            Self::refresh_structure(state, region, field, revision, changed_nodes);
+        }
+        for field in presence_fields {
+            Self::refresh_structure(state, region, field, revision, changed_nodes);
         }
     }
 
@@ -3695,6 +3785,74 @@ impl Inner {
                 && (descriptor.content.structure)(&region.content, unit.field).is_some())
         {
             Self::refresh_unowned_structure(state, region, unit.field, revision, changed_nodes);
+        }
+    }
+
+    /// Retracts a batch of one View's entity units with a single publish.
+    ///
+    /// [`Self::retract_unit`] is the single-unit primitive and publishes the
+    /// field's content itself. A write group that retracts a whole field — a
+    /// provider whose definition set shrank, a presence decision covering
+    /// thousands of entities, a region deleted from a document — calls that
+    /// primitive once per unit, and each call rebuilds and republishes the
+    /// field's content: the group becomes quadratic in what it retracts.
+    ///
+    /// The per-unit half is unchanged and still the single owner of each
+    /// entity's cells, ownership record and routing bump. Only the content
+    /// publish is hoisted out of the loop, and the fields it moved are returned
+    /// so the caller can refresh each projection exactly once, from the group's
+    /// final content, instead of once per retracted unit.
+    ///
+    /// Entity units only. A whole-field unit retracts the field's *protocol* and
+    /// reinstalls the unit's own storage, which is one unit by definition and
+    /// stays on the single-unit path.
+    #[allow(clippy::too_many_arguments)]
+    fn retract_entities(
+        state: &mut State,
+        region: &mut Region,
+        provider: NodeId,
+        units: &[UnitKey],
+        force: bool,
+        revision: Revision,
+        changed_nodes: &mut Vec<NodeId>,
+        dirty_fields: &mut Vec<FieldId>,
+    ) {
+        let descriptor = region.descriptor;
+        let mut content = Arc::clone(&region.content);
+        let mut moved = false;
+        for unit in units {
+            let unit = &payload_key(unit);
+            let owner = owner_key(unit);
+            if let Some(existing) = region.owners.get(&owner) {
+                // The same authority the single-unit primitive applies: this
+                // provider's own unit, a sibling site of its own component, or a
+                // stale record it may take over.
+                let may_take_over =
+                    force && retraction_may_take_over(state, provider, existing, unit);
+                if existing.node != provider && !may_take_over {
+                    continue;
+                }
+            }
+            let owns_content = Self::retraction_owns_content(state, region, provider, unit);
+            if owns_content {
+                if region.owners.get(&owner).is_some() {
+                    region.routing_version = region.routing_version.wrapping_add(1);
+                }
+                content = (descriptor.content.retract)(&content, unit);
+                moved = true;
+                if !dirty_fields.contains(&unit.field) {
+                    dirty_fields.push(unit.field);
+                }
+            }
+            region.owners.remove(&owner);
+            let membership = membership_key(unit);
+            if let Some(slot) = region.units.get_mut(&membership) {
+                slot.present = false;
+            }
+            Self::retract_entity(state, unit, revision, changed_nodes);
+        }
+        if moved {
+            Self::commit_content_changed(state, region, content, revision, changed_nodes);
         }
     }
 

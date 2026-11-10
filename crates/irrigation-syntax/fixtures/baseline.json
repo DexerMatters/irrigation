@@ -1,5 +1,5 @@
 {
-  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone (E_v); `content_commits` counts whole-content publishes. A one-byte edit publishes 6-41 whole-field values. `delete` (6,518) and `delete-member` (795) are still high: removing nodes retracts one payload unit per node through the per-unit content publish, which is the next target.",
+  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone (E_v); `content_commits` counts whole-content publishes, one per field a write group actually moves. It is now 6-12 for every script regardless of how much the edit touches (it was 7,051 for one byte and 6,518 for a deleted region), which is the property the plan asks for.",
   "scripts": {
     "backspace": {
       "tokens_relexed": 8,
@@ -8,7 +8,7 @@
       "meta_units_written": 62,
       "token_units_read": 4,
       "invalidations": 10,
-      "content_commits": 41
+      "content_commits": 12
     },
     "delete-member": {
       "tokens_relexed": 62,
@@ -17,7 +17,7 @@
       "meta_units_written": 282,
       "token_units_read": 25,
       "invalidations": 52,
-      "content_commits": 795
+      "content_commits": 12
     },
     "delete": {
       "tokens_relexed": 513,
@@ -26,7 +26,7 @@
       "meta_units_written": 2178,
       "token_units_read": 185,
       "invalidations": 185,
-      "content_commits": 6518
+      "content_commits": 12
     },
     "paste": {
       "tokens_relexed": 513,
@@ -44,7 +44,7 @@
       "meta_units_written": 50,
       "token_units_read": 4,
       "invalidations": 10,
-      "content_commits": 32
+      "content_commits": 12
     },
     "typing-end": {
       "tokens_relexed": 12,
@@ -53,7 +53,7 @@
       "meta_units_written": 62,
       "token_units_read": 4,
       "invalidations": 10,
-      "content_commits": 41
+      "content_commits": 12
     },
     "typing-mid": {
       "tokens_relexed": 11,
@@ -62,7 +62,7 @@
       "meta_units_written": 62,
       "token_units_read": 4,
       "invalidations": 10,
-      "content_commits": 41
+      "content_commits": 12
     }
   }
 }
