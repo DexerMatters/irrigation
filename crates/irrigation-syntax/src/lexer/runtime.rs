@@ -378,7 +378,7 @@ impl Lexer {
                     }
                     CompiledAction::PushValue(expr) => {
                         let cx =
-                            eval_context(&state, lexeme, rule, &captures, start_pos == text.len());
+                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
                         match expr.eval(&cx) {
                             Ok(value) if end_state.values.len() < self.options.max_value_depth => {
                                 end_state.values.push(value);
@@ -399,7 +399,7 @@ impl Lexer {
                     }
                     CompiledAction::SetValue(expr) => {
                         let cx =
-                            eval_context(&state, lexeme, rule, &captures, start_pos == text.len());
+                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
                         match expr.eval(&cx) {
                             Ok(value) if !end_state.values.is_empty() => {
                                 *end_state.values.last_mut().expect("checked non-empty") = value;
@@ -703,7 +703,7 @@ impl Lexer {
                     }
                     CompiledAction::PushValue(expr) => {
                         let cx =
-                            eval_context(&state, lexeme, rule, &captures, start_pos == text.len());
+                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
                         match expr.eval(&cx) {
                             Ok(value) if end_state.values.len() < self.options.max_value_depth => {
                                 end_state.values.push(value);
@@ -724,7 +724,7 @@ impl Lexer {
                     }
                     CompiledAction::SetValue(expr) => {
                         let cx =
-                            eval_context(&state, lexeme, rule, &captures, start_pos == text.len());
+                            eval_context(&state, lexeme, rule, &captures, end_pos == text.len());
                         match expr.eval(&cx) {
                             Ok(value) if !end_state.values.is_empty() => {
                                 *end_state.values.last_mut().expect("checked non-empty") = value;
@@ -881,7 +881,7 @@ impl Lexer {
                         &text[position..matched.end],
                         rule,
                         &captures,
-                        position == text.len(),
+                        matched.end == text.len(),
                     );
                     match guard.eval_bool(&cx) {
                         Ok(true) => {}

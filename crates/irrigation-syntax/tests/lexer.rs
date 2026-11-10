@@ -877,3 +877,34 @@ fn message_attribute_requires_an_error_rule() {
     .expect_err("message on normal token");
     assert!(error.to_string().contains("@message"));
 }
+
+/// `eof` in a guard means the *match* reaches the end of input.
+///
+/// It used to compare the match's start with the text length, which no rule that
+/// consumes anything can satisfy -- so a guard written `when eof` could never hold
+/// and the rule it guarded could never fire.
+#[test]
+fn an_eof_guard_holds_only_for_the_last_match() {
+    let (lexer, output) = lex(
+        r#"
+        grammar EofGuard {
+            lexer {
+                initial text;
+                state text {
+                    token Last = /a/ when eof;
+                    token First = /a/;
+                }
+            }
+        }
+        "#,
+        "aa",
+    );
+    let last = lexer.spec().kind_by_name("Last").expect("Last kind");
+    let first = lexer.spec().kind_by_name("First").expect("First kind");
+    let kinds: Vec<_> = output.tokens().iter().map(|token| token.kind).collect();
+    assert_eq!(
+        kinds,
+        [first, last],
+        "the first `a` is not at the end of input, the second is"
+    );
+}
