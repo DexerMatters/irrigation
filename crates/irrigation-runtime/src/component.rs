@@ -108,34 +108,12 @@ pub fn call_component_projection<S: ComponentSpec>(args: S::Args, index: usize) 
             "projection index out of range",
         ));
     };
-    let body_eq = |left: &Value, right: &Value| match (
-        left.downcast_ref::<S::Output>(),
-        right.downcast_ref::<S::Output>(),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    };
-    let body_value = eval_value(
-        &runtime,
-        body,
-        || irrigation_core::value::value_of(S::run(&args)),
-        &body_eq,
-    );
+    let body_value = eval_body::<S>(&runtime, body, &args);
     let projection_eq = |left: &Value, right: &Value| S::projection_eq(index, left, right);
     eval_value(
         &runtime,
         node,
-        || {
-            runtime
-                .observe(body)
-                .unwrap_or_else(|error| panic_engine(error));
-            let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
-                panic_engine(irrigation_core::ComputeError::internal(
-                    "component body produced an unexpected type",
-                ))
-            });
-            S::project(output, index)
-        },
+        || project_body_output::<S>(&runtime, body, index, &body_value),
         &projection_eq,
     )
 }
@@ -166,19 +144,7 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
         &args_eq,
     );
 
-    let body_eq = |left: &Value, right: &Value| match (
-        left.downcast_ref::<S::Output>(),
-        right.downcast_ref::<S::Output>(),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    };
-    let body_value = eval_value(
-        &runtime,
-        body,
-        || irrigation_core::value::value_of(S::run(&args)),
-        &body_eq,
-    );
+    let body_value = eval_body::<S>(&runtime, body, &args);
 
     let mut parts = Vec::with_capacity(S::ARITY);
     for (index, node) in outputs.iter().enumerate() {
@@ -190,22 +156,61 @@ pub fn call_component<S: ComponentSpec>(args: S::Args) -> S::Output {
         let value = eval_value(
             &runtime,
             node,
-            || {
-                runtime
-                    .observe(body)
-                    .unwrap_or_else(|error| panic_engine(error));
-                let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
-                    panic_engine(irrigation_core::ComputeError::internal(
-                        "component body produced an unexpected type",
-                    ))
-                });
-                S::project(output, index)
-            },
+            || project_body_output::<S>(&runtime, body, index, &body_value),
             &projection_eq,
         );
         parts.push(value);
     }
     S::reconstruct(&parts)
+}
+
+/// Evaluates a component body and returns its published value.
+///
+/// The body is compared with `S::Output` equality, so an unequal output is a change and
+/// an equal one is a cutoff -- and that comparison was written out for the single-output
+/// path and again for the multi-output path.
+fn eval_body<S: ComponentSpec>(
+    runtime: &Arc<dyn irrigation_core::ops::RuntimeOps>,
+    body: irrigation_core::ids::NodeId,
+    args: &S::Args,
+) -> Value {
+    let body_eq = |left: &Value, right: &Value| match (
+        left.downcast_ref::<S::Output>(),
+        right.downcast_ref::<S::Output>(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    };
+    eval_value(
+        runtime,
+        body,
+        || irrigation_core::value::value_of(S::run(args)),
+        &body_eq,
+    )
+}
+
+/// One projection node's value: observe the body, then project it.
+///
+/// Reading the body inside the projection records the dependency, so a body change
+/// invalidates the projections even when the value came from an earlier demand. The
+/// protocol -- observe, downcast, project, and the message on a type mismatch -- was
+/// written out for the single-output path and again inside the multi-output loop, so a
+/// change could have reached one arity and not the other.
+fn project_body_output<S: ComponentSpec>(
+    runtime: &Arc<dyn irrigation_core::ops::RuntimeOps>,
+    body: irrigation_core::ids::NodeId,
+    index: usize,
+    body_value: &Value,
+) -> Value {
+    runtime
+        .observe(body)
+        .unwrap_or_else(|error| panic_engine(error));
+    let output = body_value.downcast_ref::<S::Output>().unwrap_or_else(|| {
+        panic_engine(irrigation_core::ComputeError::internal(
+            "component body produced an unexpected type",
+        ))
+    });
+    S::project(output, index)
 }
 
 /// Evaluates one node with a value-producing closure, converting engine
