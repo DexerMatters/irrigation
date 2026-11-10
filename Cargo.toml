@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["crates/reactive-syntax/fuzz"]
+exclude = ["crates/irrigation-syntax/fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,15 +12,15 @@ authors = ["Dexer Matters <dexermatters@gmail.com>"]
 description = "A concurrent, fine-grained incremental computation system"
 
 [workspace.dependencies]
-reactive-core = { path = "crates/reactive-core" }
-reactive-store = { path = "crates/reactive-store" }
-reactive-collections = { path = "crates/reactive-collections" }
-reactive-runtime = { path = "crates/reactive-runtime" }
-reactive-macros = { path = "crates/reactive-macros" }
-reactive-test = { path = "crates/reactive-test" }
-reactive = { path = "crates/reactive" }
-reactive-observe = { path = "crates/reactive-observe" }
-reactive-syntax = { path = "crates/reactive-syntax" }
+irrigation-core = { path = "crates/irrigation-core" }
+irrigation-store = { path = "crates/irrigation-store" }
+irrigation-collections = { path = "crates/irrigation-collections" }
+irrigation-runtime = { path = "crates/irrigation-runtime" }
+irrigation-macros = { path = "crates/irrigation-macros" }
+irrigation-test = { path = "crates/irrigation-test" }
+irrigation = { path = "crates/irrigation" }
+irrigation-observe = { path = "crates/irrigation-observe" }
+irrigation-syntax = { path = "crates/irrigation-syntax" }
 
 syn = { version = "3.0.9", features = ["full", "extra-traits", "visit-mut", "printing", "proc-macro", "parsing"] }
 quote = "1.0.47"

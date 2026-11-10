@@ -15,7 +15,7 @@ there is no CST tree.
 ## 1. What the profile measured
 
 Source: `json_typing_profile.rs` (since removed; the fixture gate is
-`crates/reactive-syntax/tests/fixture.rs`), 20-entry JSON document (856 tokens,
+`crates/irrigation-syntax/tests/fixture.rs`), 20-entry JSON document (856 tokens,
 1.7 KB), release-free debug build.
 
 | phase | median | tokens relexed | bytes relexed | AST nodes moved |
@@ -59,7 +59,7 @@ Both the read cost and the commit cost were re-measured after the O(1)
 ### Measured causes
 
 - **R1 — the parser re-reads every token unit per edit.** `read_tokens` (in the
-  since-removed `reactive_components.rs`)
+  since-removed `irrigation_components.rs`)
   reads `Tokens::kind/text/range/flags/states/...` for *all* tokens: ~12 ms per
   edit at 856 tokens, ~30 ms at 2 117 — O(document), not O(edit).
 - **R2 — the AST is parsed from scratch.** `ParserComponent::parse_ast` calls
@@ -118,7 +118,7 @@ observe.
 - `update(&self, cx, state, changes: &ChangeBatch)` keeps its signature.
 - `ChangeBatch::changes()` fills once (`OnceCell`), then returns a slice.
 - Deleting `ensure_view_current` and the pre-batch walk in
-  [`inner.rs`](../crates/reactive-runtime/src/inner.rs) follows.
+  [`inner.rs`](../crates/irrigation-runtime/src/inner.rs) follows.
 
 ### 3.2 Uniform input certification for reuse
 
@@ -170,7 +170,7 @@ order and per-token units.
   reads to discover changes; payload units are then fetched per changed id
   (§6).
 - Optional follow-up: publish the order as a `ListDelta<TokenId>`
-  ([`reactive-store::delta`](../crates/reactive-store/src/delta.rs)) when order
+  ([`irrigation-store::delta`](../crates/irrigation-store/src/delta.rs)) when order
   edits become a measured cost.
 
 Gate: for a character edit, `changed` has ≤ 2 ids and the order delta has ≤ 2
@@ -293,7 +293,7 @@ Gate: `meta_units_written ≤ 32` for a character edit (5 units per touched node
 ### 8.1 Layout
 
 ```text
-crates/reactive-syntax/fixtures/
+crates/irrigation-syntax/fixtures/
   docs/small.json        ~1 KB
   docs/medium.json       ~17 KB
   docs/large.json        ~200 KB      (generated deterministically, checked in)
@@ -501,7 +501,7 @@ Known gaps (Phase 4 follow-up):
 
 ### Fixture, phase 0/6
 
-`crates/reactive-syntax/fixtures/` now holds three documents (248 B, 20 KB,
+`crates/irrigation-syntax/fixtures/` now holds three documents (248 B, 20 KB,
 250 KB), seven edit scripts (`typing-end`, `typing-mid`, `backspace`,
 `rename-key`, `paste`, `delete`, `delete-member`), each tagged with the document
 it was generated from and whether it is gated, and `baseline.json` with the

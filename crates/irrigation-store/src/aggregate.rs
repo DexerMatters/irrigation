@@ -1,0 +1,648 @@
+//! Persistent sequences with cached lawful aggregates.
+//!
+//! A balanced sequence stores, at every node, the reduction of its subtree
+//! under a declared associative operation. A point edit recomputes only the
+//! ancestor path, so aggregate updates cost `O(log n)` combines rather than
+//! `O(n)`.
+//!
+//! The operation must be lawful: an explicit identity and an associative
+//! combine. The plan forbids silently reassociating floating-point addition or
+//! an arbitrary user closure; the caller declares both pieces here.
+
+use std::sync::Arc;
+
+use crate::delta::{AppliedDelta, DeltaStore, ReducedDelta, ReducedEdit};
+
+type Link<A, T> = Option<Arc<AggNode<A, T>>>;
+
+#[derive(Debug)]
+struct AggNode<A, T> {
+    value: T,
+    aggregate: A,
+    left: Link<A, T>,
+    right: Link<A, T>,
+    height: u16,
+    size: usize,
+}
+
+fn height<A, T>(link: &Link<A, T>) -> u16 {
+    link.as_ref().map_or(0, |node| node.height)
+}
+
+fn size<A, T>(link: &Link<A, T>) -> usize {
+    link.as_ref().map_or(0, |node| node.size)
+}
+
+/// A persistent sequence with a cached lawful reduction.
+pub struct AggSeq<A, T> {
+    root: Link<A, T>,
+    len: usize,
+    leaf: fn(&T) -> A,
+    combine: fn(&A, &A) -> A,
+    identity: A,
+}
+
+impl<A: Clone, T> Clone for AggSeq<A, T> {
+    fn clone(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            len: self.len,
+            leaf: self.leaf,
+            combine: self.combine,
+            identity: self.identity.clone(),
+        }
+    }
+}
+
+impl<A: std::fmt::Debug + Clone, T: std::fmt::Debug + Clone> std::fmt::Debug for AggSeq<A, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AggSeq")
+            .field("len", &self.len)
+            .field("aggregate", &self.aggregate())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<A: Clone + PartialEq, T: Clone + PartialEq> PartialEq for AggSeq<A, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().eq(other.iter())
+    }
+}
+
+impl<A: Clone + PartialEq + Eq, T: Clone + PartialEq + Eq> Eq for AggSeq<A, T> {}
+
+impl<A: Clone, T: Clone> AggSeq<A, T> {
+    /// Creates an empty sequence with the declared reduction.
+    #[must_use]
+    pub fn new(leaf: fn(&T) -> A, combine: fn(&A, &A) -> A, identity: A) -> Self {
+        Self {
+            root: None,
+            len: 0,
+            leaf,
+            combine,
+            identity,
+        }
+    }
+
+    /// Number of elements.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns `true` when the sequence is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The reduction of the whole sequence.
+    #[must_use]
+    pub fn aggregate(&self) -> A {
+        self.aggregate_of(&self.root)
+    }
+
+    fn aggregate_of(&self, link: &Link<A, T>) -> A {
+        match link {
+            Some(node) => node.aggregate.clone(),
+            None => self.identity.clone(),
+        }
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "`Link` is the AVL's option-typed child pointer; building a node always yields one"
+    )]
+    fn make(&self, value: T, left: Link<A, T>, right: Link<A, T>) -> Link<A, T> {
+        let aggregate = (self.combine)(
+            &(self.combine)(&self.aggregate_of(&left), &(self.leaf)(&value)),
+            &self.aggregate_of(&right),
+        );
+        Some(Arc::new(AggNode {
+            value,
+            aggregate,
+            height: 1 + height(&left).max(height(&right)),
+            size: 1 + size(&left) + size(&right),
+            left,
+            right,
+        }))
+    }
+
+    fn rebalance(&self, node: Arc<AggNode<A, T>>) -> Link<A, T> {
+        let balance = i32::from(height(&node.left)) - i32::from(height(&node.right));
+        if balance > 1 {
+            let left = node.left.as_ref().expect("left child");
+            if height(&left.left) < height(&left.right) {
+                let new_left = self.rotate_left(Arc::clone(left));
+                let rebuilt = self
+                    .make(node.value.clone(), new_left, node.right.clone())
+                    .expect("rebuilt node");
+                return self.rotate_right(rebuilt);
+            }
+            self.rotate_right(node)
+        } else if balance < -1 {
+            let right = node.right.as_ref().expect("right child");
+            if height(&right.right) < height(&right.left) {
+                let new_right = self.rotate_right(Arc::clone(right));
+                let rebuilt = self
+                    .make(node.value.clone(), node.left.clone(), new_right)
+                    .expect("rebuilt node");
+                return self.rotate_left(rebuilt);
+            }
+            self.rotate_left(node)
+        } else {
+            Some(node)
+        }
+    }
+
+    fn rotate_right(&self, node: Arc<AggNode<A, T>>) -> Link<A, T> {
+        let left = node.left.as_ref().expect("left child");
+        self.make(
+            left.value.clone(),
+            left.left.clone(),
+            self.make(node.value.clone(), left.right.clone(), node.right.clone()),
+        )
+    }
+
+    fn rotate_left(&self, node: Arc<AggNode<A, T>>) -> Link<A, T> {
+        let right = node.right.as_ref().expect("right child");
+        self.make(
+            right.value.clone(),
+            self.make(node.value.clone(), node.left.clone(), right.left.clone()),
+            right.right.clone(),
+        )
+    }
+}
+
+impl<A: Clone, T: Clone> AggSeq<A, T> {
+    /// Returns the element at `index`.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&T> {
+        let mut current = self.root.as_deref();
+        let mut index = index;
+        while let Some(node) = current {
+            let left = size(&node.left);
+            match index.cmp(&left) {
+                std::cmp::Ordering::Less => current = node.left.as_deref(),
+                std::cmp::Ordering::Greater => {
+                    index -= left + 1;
+                    current = node.right.as_deref();
+                }
+                std::cmp::Ordering::Equal => return Some(&node.value),
+            }
+        }
+        None
+    }
+
+    /// Iterates in order.
+    pub fn iter(&self) -> AggIter<'_, A, T> {
+        let mut stack = Vec::new();
+        let mut current = self.root.as_deref();
+        while let Some(node) = current {
+            stack.push(node);
+            current = node.left.as_deref();
+        }
+        AggIter { stack }
+    }
+
+    /// Collects the sequence into a vector.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<T> {
+        self.iter().cloned().collect()
+    }
+
+    /// Inserts at `index`, recomputing the ancestor path only.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index > len`.
+    #[must_use]
+    pub fn insert(&self, index: usize, value: T) -> Self {
+        assert!(index <= self.len, "insert index {index} out of bounds");
+        Self {
+            root: self.insert_at(self.root.clone(), index, value),
+            len: self.len + 1,
+            leaf: self.leaf,
+            combine: self.combine,
+            identity: self.identity.clone(),
+        }
+    }
+
+    fn insert_at(&self, link: Link<A, T>, index: usize, value: T) -> Link<A, T> {
+        match link {
+            None => self.make(value, None, None),
+            Some(node) => {
+                let left_size = size(&node.left);
+                if index <= left_size {
+                    let left = self.insert_at(node.left.clone(), index, value);
+                    let rebuilt = self
+                        .make(node.value.clone(), left, node.right.clone())
+                        .expect("rebuilt node");
+                    self.rebalance(rebuilt)
+                } else {
+                    let right = self.insert_at(node.right.clone(), index - left_size - 1, value);
+                    let rebuilt = self
+                        .make(node.value.clone(), node.left.clone(), right)
+                        .expect("rebuilt node");
+                    self.rebalance(rebuilt)
+                }
+            }
+        }
+    }
+
+    /// Removes and returns the element at `index`.
+    #[must_use]
+    pub fn remove(&self, index: usize) -> (Self, Option<T>) {
+        if index >= self.len {
+            return (self.clone(), None);
+        }
+        let (root, removed) = self.remove_at(self.root.clone(), index);
+        (
+            Self {
+                root,
+                len: self.len - 1,
+                leaf: self.leaf,
+                combine: self.combine,
+                identity: self.identity.clone(),
+            },
+            removed,
+        )
+    }
+
+    fn remove_at(&self, link: Link<A, T>, index: usize) -> (Link<A, T>, Option<T>) {
+        match link {
+            None => (None, None),
+            Some(node) => {
+                let left_size = size(&node.left);
+                match index.cmp(&left_size) {
+                    std::cmp::Ordering::Less => {
+                        let (left, removed) = self.remove_at(node.left.clone(), index);
+                        let rebuilt = self
+                            .make(node.value.clone(), left, node.right.clone())
+                            .expect("rebuilt node");
+                        (self.rebalance(rebuilt), removed)
+                    }
+                    std::cmp::Ordering::Greater => {
+                        let (right, removed) =
+                            self.remove_at(node.right.clone(), index - left_size - 1);
+                        let rebuilt = self
+                            .make(node.value.clone(), node.left.clone(), right)
+                            .expect("rebuilt node");
+                        (self.rebalance(rebuilt), removed)
+                    }
+                    std::cmp::Ordering::Equal => {
+                        let removed = node.value.clone();
+                        match (node.left.clone(), node.right.clone()) {
+                            (None, right) => (right, Some(removed)),
+                            (left, None) => (left, Some(removed)),
+                            (left, Some(right)) => {
+                                let (new_right, successor) = self.remove_first(right);
+                                let rebuilt = self
+                                    .make(successor.value.clone(), left, new_right)
+                                    .expect("rebuilt node");
+                                (self.rebalance(rebuilt), Some(removed))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn remove_first(&self, node: Arc<AggNode<A, T>>) -> (Link<A, T>, Arc<AggNode<A, T>>) {
+        match node.left.clone() {
+            None => (node.right.clone(), node),
+            Some(left) => {
+                let (new_left, first) = self.remove_first(left);
+                let rebuilt = self
+                    .make(node.value.clone(), new_left, node.right.clone())
+                    .expect("rebuilt node");
+                (self.rebalance(rebuilt), first)
+            }
+        }
+    }
+
+    /// Replaces the element at `index`, recomputing the ancestor path only.
+    #[must_use]
+    pub fn set(&self, index: usize, value: T) -> Self {
+        assert!(index < self.len, "set index {index} out of bounds");
+        Self {
+            root: self.set_at(self.root.clone(), index, value),
+            len: self.len,
+            leaf: self.leaf,
+            combine: self.combine,
+            identity: self.identity.clone(),
+        }
+    }
+
+    fn set_at(&self, link: Link<A, T>, index: usize, value: T) -> Link<A, T> {
+        let node = link.expect("set requires an existing node");
+        let left_size = size(&node.left);
+        match index.cmp(&left_size) {
+            std::cmp::Ordering::Less => self.make(
+                node.value.clone(),
+                self.set_at(node.left.clone(), index, value),
+                node.right.clone(),
+            ),
+            std::cmp::Ordering::Greater => self.make(
+                node.value.clone(),
+                node.left.clone(),
+                self.set_at(node.right.clone(), index - left_size - 1, value),
+            ),
+            std::cmp::Ordering::Equal => self.make(value, node.left.clone(), node.right.clone()),
+        }
+    }
+
+    /// Appends an element.
+    #[must_use]
+    pub fn push(&self, value: T) -> Self {
+        self.insert(self.len, value)
+    }
+}
+
+/// In-order iterator over an [`AggSeq`].
+pub struct AggIter<'a, A, T> {
+    stack: Vec<&'a AggNode<A, T>>,
+}
+
+impl<A, T> std::fmt::Debug for AggIter<'_, A, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AggIter").finish_non_exhaustive()
+    }
+}
+
+impl<'a, A, T> Iterator for AggIter<'a, A, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.stack.pop()?;
+        let mut current = node.right.as_deref();
+        while let Some(node) = current {
+            self.stack.push(node);
+            current = node.left.as_deref();
+        }
+        Some(&node.value)
+    }
+}
+
+impl<A, T> DeltaStore for AggSeq<A, T>
+where
+    A: Clone + PartialEq + Send + Sync + 'static,
+    T: Clone + PartialEq + Send + Sync + 'static,
+{
+    type Key = u64;
+    type Delta = ReducedDelta<T>;
+
+    fn apply_delta(&self, delta: &Self::Delta) -> (Self, AppliedDelta<u64>) {
+        let mut next = self.clone();
+        let mut applied = AppliedDelta::empty();
+        for edit in delta.edits() {
+            match edit {
+                ReducedEdit::Set { index, item } => {
+                    if next.get(*index) != Some(item) {
+                        next = next.insert(*index, item.clone());
+                        next = next.remove(index.saturating_add(1)).0;
+                        applied.changed.push(*index as u64);
+                        applied.content_changed = true;
+                    }
+                }
+                ReducedEdit::Insert { index, item } => {
+                    next = next.insert(*index, item.clone());
+                    applied.changed.push(*index as u64);
+                    applied.content_changed = true;
+                }
+                ReducedEdit::Remove { index } => {
+                    if next.get(*index).is_some() {
+                        next = next.remove(*index).0;
+                        applied.removed.push(*index as u64);
+                        applied.content_changed = true;
+                    }
+                }
+            }
+        }
+        (next, applied)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COMBINES: AtomicU64 = AtomicU64::new(0);
+
+    /// Walks the tree asserting the AVL invariant at every node, and returns
+    /// the subtree's `(height, size)` so the caller can check its own node.
+    fn assert_balanced<A, T>(link: &Link<A, T>) -> (u16, usize) {
+        let Some(node) = link else {
+            return (0, 0);
+        };
+        let (left_height, left_size) = assert_balanced(&node.left);
+        let (right_height, right_size) = assert_balanced(&node.right);
+        let balance = i32::from(left_height) - i32::from(right_height);
+        assert!(
+            balance.abs() <= 1,
+            "node is unbalanced: {left_height} vs {right_height}"
+        );
+        assert_eq!(
+            node.height,
+            1 + left_height.max(right_height),
+            "stored height does not match the subtree"
+        );
+        assert_eq!(
+            node.size,
+            1 + left_size + right_size,
+            "stored size does not match the subtree"
+        );
+        (node.height, node.size)
+    }
+
+    fn assert_sequence_invariant(seq: &AggSeq<u64, u64>, model: &[u64]) {
+        let (_, size) = assert_balanced(&seq.root);
+        assert_eq!(size, model.len(), "tree size");
+        assert_eq!(seq.len(), model.len(), "sequence length");
+        assert_eq!(seq.to_vec(), model, "in-order contents");
+        assert_eq!(seq.aggregate(), model.iter().sum::<u64>(), "aggregate");
+    }
+
+    /// Deterministic churn: a small LCG keeps the mix reproducible.
+    struct Churn(u64);
+
+    impl Churn {
+        fn below(&mut self, bound: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 33) as usize) % bound.max(1)
+        }
+    }
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "`AggSeq::new` takes `fn(&T) -> A` and `fn(&A, &A) -> A`"
+    )]
+    fn leaf(value: &u64) -> u64 {
+        *value
+    }
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "`AggSeq::new` takes `fn(&A, &A) -> A`"
+    )]
+    fn add(left: &u64, right: &u64) -> u64 {
+        COMBINES.fetch_add(1, Ordering::Relaxed);
+        left + right
+    }
+
+    fn sum_seq(values: impl IntoIterator<Item = u64>) -> AggSeq<u64, u64> {
+        let mut seq = AggSeq::new(leaf, add, 0);
+        for value in values {
+            seq = seq.push(value);
+        }
+        seq
+    }
+
+    #[test]
+    fn aggregate_tracks_insertions_and_removals() {
+        let mut seq = sum_seq(0..100);
+        assert_eq!(seq.aggregate(), 4950);
+        seq = seq.insert(0, 1000);
+        assert_eq!(seq.aggregate(), 5950);
+        let (seq, removed) = seq.remove(0);
+        assert_eq!(removed, Some(1000));
+        assert_eq!(seq.aggregate(), 4950);
+        let seq = seq.set(50, 500);
+        assert_eq!(seq.aggregate(), 4950 - 50 + 500);
+        assert_eq!(seq.get(50), Some(&500));
+        assert_eq!(seq.len(), 100);
+    }
+
+    #[test]
+    fn point_edits_recombine_only_a_logarithmic_path() {
+        let size = 16_384usize;
+        let mut seq = sum_seq(0..size as u64);
+        let expected: u64 = (0..size as u64).sum();
+        assert_eq!(seq.aggregate(), expected);
+
+        COMBINES.store(0, Ordering::Relaxed);
+        seq = seq.set(size / 2, 1);
+        let combines = COMBINES.load(Ordering::Relaxed);
+        assert!(
+            combines <= 64,
+            "a point edit performed {combines} combines at size {size}"
+        );
+        assert!(combines > 0);
+
+        COMBINES.store(0, Ordering::Relaxed);
+        seq = seq.insert(size / 2, 7);
+        let combines = COMBINES.load(Ordering::Relaxed);
+        assert!(
+            combines <= 96,
+            "an insertion performed {combines} combines at size {size}"
+        );
+        assert_eq!(seq.len(), size + 1);
+        assert_eq!(seq.aggregate(), expected - (size as u64 / 2) + 1 + 7);
+    }
+
+    #[test]
+    fn sequence_order_is_preserved() {
+        let seq: AggSeq<u64, u64> = {
+            let mut seq = AggSeq::new(leaf, add, 0);
+            for value in [5, 1, 4, 2, 3] {
+                seq = seq.push(value);
+            }
+            seq
+        };
+        assert_eq!(seq.to_vec(), vec![5, 1, 4, 2, 3]);
+        assert_eq!(seq.aggregate(), 15);
+        let moved = seq.remove(0).0;
+        assert_eq!(moved.to_vec(), vec![1, 4, 2, 3]);
+        assert_eq!(moved.aggregate(), 10);
+    }
+
+    #[test]
+    fn deletion_keeps_the_avl_invariant() {
+        // The two-child case replaces the removed node with its in-order
+        // successor; that rebuild has to be rebalanced like every other path.
+        let base = sum_seq(0..5);
+        assert_sequence_invariant(&base, &[0, 1, 2, 3, 4]);
+        for first in 0..5 {
+            for second in 0..4 {
+                let removed = base.remove(first).0;
+                let mut model = vec![0, 1, 2, 3, 4];
+                model.remove(first);
+                let (shrunk, found) = removed.remove(second);
+                assert_eq!(found, Some(model[second]));
+                model.remove(second);
+                assert_sequence_invariant(&shrunk, &model);
+            }
+        }
+    }
+
+    #[test]
+    fn random_churn_keeps_the_avl_invariant() {
+        let mut churn = Churn(0x5eed);
+        let mut seq = AggSeq::new(leaf, add, 0);
+        for _ in 0..512 {
+            let mut model = seq.to_vec();
+            match churn.below(4) {
+                0 => {
+                    let value = churn.below(1000) as u64;
+                    seq = seq.push(value);
+                    model.push(value);
+                }
+                1 if !model.is_empty() => {
+                    let index = churn.below(model.len());
+                    let value = churn.below(1000) as u64;
+                    seq = seq.insert(index, value);
+                    model.insert(index, value);
+                }
+                2 if !model.is_empty() => {
+                    let index = churn.below(model.len());
+                    let (next, removed) = seq.remove(index);
+                    assert_eq!(removed, Some(model.remove(index)));
+                    seq = next;
+                }
+                _ if !model.is_empty() => {
+                    let index = churn.below(model.len());
+                    let value = churn.below(1000) as u64;
+                    seq = seq.set(index, value);
+                    model[index] = value;
+                }
+                _ => {}
+            }
+            assert_sequence_invariant(&seq, &model);
+        }
+    }
+}
+
+#[cfg(test)]
+mod delta_tests {
+    use super::*;
+
+    fn sum() -> AggSeq<u64, u64> {
+        AggSeq::new(|item| *item, |left, right| *left + *right, 0)
+    }
+
+    #[test]
+    fn reduced_delta_reports_positional_moves() {
+        let sequence = sum().push(1).push(2);
+        let delta = ReducedDelta::from_edits(vec![
+            ReducedEdit::Set { index: 0, item: 9 },
+            ReducedEdit::Insert { index: 1, item: 5 },
+            ReducedEdit::Remove { index: 2 },
+        ]);
+        let (sequence, applied) = sequence.apply_delta(&delta);
+        assert_eq!(sequence.to_vec(), vec![9, 5]);
+        assert!(applied.content_changed);
+        assert_eq!(applied.changed, vec![0, 1]);
+        assert_eq!(applied.removed, vec![2]);
+    }
+
+    #[test]
+    fn reduced_sequence_is_a_field_store() {
+        fn assert_field_store<T: crate::delta::FieldStore>() {}
+        assert_field_store::<AggSeq<u64, u64>>();
+    }
+}

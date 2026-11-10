@@ -5,15 +5,20 @@ import {
   place,
   resetLayout,
   setCamera,
+  toggleOverview,
   useStore,
 } from "../state/store";
 import { ViewCard } from "./ViewCard";
 import { ComponentCard } from "./ComponentCard";
+import { Minimap } from "./Minimap";
 import { componentInks, inkForView, inkMap } from "./inks";
 import {
   PHONE_BREAKPOINT,
+  avoidOverlap,
   boardBounds,
   componentNode,
+  assignPorts,
+  edgeKey,
   edgePath,
   layoutBoard,
   viewNode,
@@ -69,10 +74,23 @@ export function Canvas() {
 
   const inks = useMemo(() => componentInks(state.components), [state.components]);
   const inksByKey = useMemo(() => inkMap(inks), [inks]);
+  // Edges take the ink of the component they belong to; the marker defs are
+  // per ink so the arrowhead and port match the wire instead of staying green.
+  const edgeInks = useMemo(
+    () => [...new Set([...inks.map((entry) => entry.ink), "var(--faint)"])],
+    [inks],
+  );
 
+  const collapsed = useMemo(
+    () =>
+      state.overview
+        ? Object.fromEntries(state.views.map((view) => [view.view, true]))
+        : state.collapsed,
+    [state.overview, state.views, state.collapsed],
+  );
   const board = useMemo(
-    () => layoutBoard(state.views, state.components, state.renders, stage),
-    [state.views, state.components, state.renders, stage],
+    () => layoutBoard(state.views, state.components, state.renders, collapsed),
+    [state.views, state.components, state.renders, collapsed],
   );
 
   // A drag overrides the computed slot; the envelope follows, so an edge to a
@@ -82,19 +100,31 @@ export function Canvas() {
     for (const [node, at] of Object.entries(state.placement)) {
       if (merged.has(node)) merged.set(node, at);
     }
+    // A position saved against an older layout may now sit on another plate.
+    // Keep the automatic nodes still and walk each stored plate clear.
+    for (const node of Object.keys(state.placement)) {
+      const at = merged.get(node);
+      if (!at || !board.sizes.has(node)) continue;
+      merged.set(node, avoidOverlap(node, at, board.sizes, merged));
+    }
     if (drag) merged.set(drag.node, drag.at);
     return merged;
   }, [board, state.placement, drag]);
 
   const bounds = useMemo(() => boardBounds(placed, board.sizes), [placed, board.sizes]);
 
+  const ports = useMemo(() => assignPorts(board, placed), [board, placed]);
+
   const paths = useMemo(
     () =>
-      board.edges.map((edge) => ({
-        edge,
-        path: edgePath(edge, placed, board.sizes),
-      })),
-    [board, placed],
+      board.edges.map((edge) => {
+        const key = edgeKey(edge);
+        return {
+          edge,
+          path: edgePath(edge, placed, board.sizes, { ends: ports.get(key) }),
+        };
+      }),
+    [board, placed, ports],
   );
 
   useEffect(() => {
@@ -138,47 +168,74 @@ export function Canvas() {
   const fit = useCallback(() => {
     const box = surface.current?.getBoundingClientRect();
     if (!box || placed.size === 0) return;
-    // Narrow surfaces fit the width and let the board run past the bottom: a
-    // plate you can read and scroll beats a whole graph you cannot.
-    const fitWidth = box.width < PHONE_BREAKPOINT + 100;
-    const zoom = Math.min(
-      1.1,
-      Math.max(
-        MIN_ZOOM,
-        fitWidth
-          ? (box.width - 40) / Math.max(bounds.width, 1)
-          : Math.min(
-              (box.width - 64) / Math.max(bounds.width, 1),
-              (box.height - 96) / Math.max(bounds.height, 1),
-            ),
-      ),
-    );
+    // The DAG runs downward. Fit its width, not its whole length: squeezing a
+    // seven-level pipeline into 900px is what made every node unreadable. When
+    // the whole board does fit at that scale, centre it; otherwise start at the
+    // sources and let the reader pan down.
+    const phone = box.width < PHONE_BREAKPOINT + 100;
+    const side = phone ? 17 : 32;
+    // The minimap owns the top-left corner. Fit inside the remaining window so
+    // the first plate is not hidden underneath the map.
+    const gutter = box.width > 900 ? 182 : 0;
+    const usable = box.width - gutter - side * 2;
+    const widthFit = usable / Math.max(bounds.width, 1);
+    const zoom = Math.min(1.08, Math.max(MIN_ZOOM, widthFit));
+    const fitsWidth = bounds.width * zoom <= usable;
+    const fitsHeight = bounds.height * zoom <= box.height - 80;
     setCamera({
-      x: (box.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
-      y: fitWidth ? 16 - bounds.minY * zoom : (box.height - bounds.height * zoom) / 2 - bounds.minY * zoom,
+      x: fitsWidth
+        ? gutter + side + (usable - bounds.width * zoom) / 2 - bounds.minX * zoom
+        : gutter + side - bounds.minX * zoom,
+      y: fitsHeight
+        ? (box.height - bounds.height * zoom) / 2 - bounds.minY * zoom
+        : 18 - bounds.minY * zoom,
       zoom,
     });
   }, [bounds, placed]);
+
+  const navigate = useCallback(
+    (point: { x: number; y: number }) => {
+      touched.current = true;
+      setCamera({
+        ...state.camera,
+        x: stage.width / 2 - point.x * state.camera.zoom,
+        y: stage.height / 2 - point.y * state.camera.zoom,
+      });
+    },
+    [stage, state.camera],
+  );
 
   useEffect(() => {
     // Place the board once its cards exist, and again while renders settle —
     // until the reader moves it, which is theirs to keep.
     if (placed.size === 0) return;
-    const signature = `${Math.round(bounds.width)}x${Math.round(bounds.height)}@${placed.size}`;
+    const signature = `${Math.round(bounds.width)}x${Math.round(bounds.height)}@${placed.size}@${Math.round(stage.width)}x${Math.round(stage.height)}`;
     if (fitted.current === signature) return;
     const first = fitted.current === "";
     fitted.current = signature;
     if (!first && touched.current) return;
     fit();
-  }, [placed, bounds, fit]);
+  }, [placed, bounds, fit, stage.width, stage.height]);
 
   useEffect(() => {
     const surfaceElement = surface.current;
     if (!surfaceElement) return;
     const onWheel = (event: WheelEvent) => {
+      // A wheel over something that can scroll belongs to it. The native
+      // listener on the surface runs before React's delegated handlers, so a
+      // card cannot stop it from the inside; the check has to be here.
+      const zooming = event.ctrlKey || event.metaKey;
+      if (!zooming) {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest(".minimap")) return;
+        const scroller = target?.closest<HTMLElement>(".card-body, .editor-area");
+        const body = target?.closest<HTMLElement>(".card-body");
+        if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) return;
+        if (body && body.scrollHeight > body.clientHeight + 1) return;
+      }
       event.preventDefault();
       touched.current = true;
-      if (event.ctrlKey || event.metaKey) {
+      if (zooming) {
         zoomAt(event.deltaY < 0 ? 1.08 : 1 / 1.08, event.clientX, event.clientY);
       } else {
         setCamera({
@@ -252,7 +309,12 @@ export function Canvas() {
   // A card drag is reported here while it happens and persisted on release.
   const onNodeDrag = (node: string, at: Placement | null) => {
     if (at === null) {
-      if (drag) place(drag.node, drag.at);
+      if (drag) {
+        place(
+          drag.node,
+          avoidOverlap(drag.node, drag.at, board.sizes, placed),
+        );
+      }
       setDrag(null);
       return;
     }
@@ -266,10 +328,18 @@ export function Canvas() {
     return wire?.executed_at === shownRevision;
   };
 
+  const changedNodes = new Set<string>();
+  for (const view of state.views) {
+    if (reactionOf(view.view, view.state) === "changed") changedNodes.add(viewNode(view.view));
+  }
+  for (const component of state.components) {
+    if (ranAt(component.component)) changedNodes.add(componentNode(component.component));
+  }
+
   return (
     <div className="canvas">
       <div className="hud">
-        <button type="button" className="hud-button" onClick={fit} title="Fit the board (f)">
+        <button type="button" className="hud-button" onClick={fit} title="Fit the board to the window width (f)">
           Fit
         </button>
         <button
@@ -310,6 +380,19 @@ export function Canvas() {
           title="Forget the dragged positions and lay the board out again"
         >
           Tidy
+        </button>
+        <button
+          type="button"
+          className="hud-button"
+          aria-pressed={state.overview}
+          onClick={() => {
+            touched.current = false;
+            fitted.current = "";
+            toggleOverview();
+          }}
+          title="Fold every View to its header; open a detail for its content"
+        >
+          Overview
         </button>
         <span className="hud-sep" />
         <span className="legend" aria-label="Components">
@@ -375,51 +458,53 @@ export function Canvas() {
               publishes — and an arrow at the head, pointing at whoever receives.
             */}
             <defs>
-              <marker
-                id="edge-head"
-                viewBox="0 0 10 10"
-                refX="9"
-                refY="5"
-                markerWidth="10"
-                markerHeight="10"
-                markerUnits="userSpaceOnUse"
-                orient="auto-start-reverse"
-              >
-                <path d="M1 1 L9 5 L1 9 Z" className="edge-arrow" />
-              </marker>
-              <marker
-                id="edge-read"
-                viewBox="0 0 12 12"
-                refX="6"
-                refY="6"
-                markerWidth="12"
-                markerHeight="12"
-                markerUnits="userSpaceOnUse"
-                orient="auto-start-reverse"
-              >
-                <circle cx="6" cy="6" r="3.1" className="edge-port-read" />
-              </marker>
-              <marker
-                id="edge-write"
-                viewBox="0 0 12 12"
-                refX="6"
-                refY="6"
-                markerWidth="12"
-                markerHeight="12"
-                markerUnits="userSpaceOnUse"
-                orient="auto-start-reverse"
-              >
-                <rect x="2.6" y="2.6" width="6.8" height="6.8" className="edge-port-write" />
-              </marker>
+              {edgeInks.map((ink, index) => (
+                <g key={ink}>
+                  <marker
+                    id={`edge-head-${index}`}
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="10"
+                    markerHeight="10"
+                    markerUnits="userSpaceOnUse"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M1 1 L9 5 L1 9 Z" fill={ink} />
+                  </marker>
+                  <marker
+                    id={`edge-read-${index}`}
+                    viewBox="0 0 12 12"
+                    refX="6"
+                    refY="6"
+                    markerWidth="12"
+                    markerHeight="12"
+                    markerUnits="userSpaceOnUse"
+                    orient="auto-start-reverse"
+                  >
+                    <circle cx="6" cy="6" r="3.1" fill="var(--field)" stroke={ink} strokeWidth="1.4" />
+                  </marker>
+                  <marker
+                    id={`edge-write-${index}`}
+                    viewBox="0 0 12 12"
+                    refX="6"
+                    refY="6"
+                    markerWidth="12"
+                    markerHeight="12"
+                    markerUnits="userSpaceOnUse"
+                    orient="auto-start-reverse"
+                  >
+                    <rect x="2.6" y="2.6" width="6.8" height="6.8" fill={ink} />
+                  </marker>
+                </g>
+              ))}
             </defs>
             {paths.map(({ edge, path }) => {
               if (!path) return null;
               const hot = ranAt(edge.component);
               const dim = spotlight !== null && spotlight !== edge.component;
-              // An edge carries the relation, not the identity: the plate and its
-              // legend chip already name the component, and a board of coloured
-              // curves reads as a chart of nothing.
-              const ink = "var(--signal)";
+              const ink = inksByKey.get(edge.component) ?? "var(--faint)";
+              const marker = Math.max(0, edgeInks.indexOf(ink));
               return (
                 <g
                   key={`${edge.from}->${edge.to}-${edge.kind}`}
@@ -434,8 +519,12 @@ export function Canvas() {
                     className="edge"
                     d={path}
                     stroke={ink}
-                    markerStart={edge.kind === "reads" ? "url(#edge-read)" : "url(#edge-write)"}
-                    markerEnd="url(#edge-head)"
+                    markerStart={
+                      edge.kind === "reads"
+                        ? `url(#edge-read-${marker})`
+                        : `url(#edge-write-${marker})`
+                    }
+                    markerEnd={`url(#edge-head-${marker})`}
                   />
                 </g>
               );
@@ -455,10 +544,13 @@ export function Canvas() {
                 followingNewest={followingNewest}
                 reaction={reactionOf(view.view, view.state)}
                 ink={inkForView(inks, state.components, view.view)}
-                producer={
-                  state.components.find((component) => component.writes.includes(view.view))
-                    ?.name ?? null
-                }
+                producers={[
+                  ...new Set(
+                    state.components
+                      .filter((component) => component.writes.includes(view.view))
+                      .map((component) => component.name),
+                  ),
+                ]}
                 onDrag={onNodeDrag}
               />
             );
@@ -480,6 +572,16 @@ export function Canvas() {
             );
           })}
         </div>
+
+        <Minimap
+          board={board}
+          placed={placed}
+          camera={state.camera}
+          stage={stage}
+          inks={inksByKey}
+          changed={changedNodes}
+          onNavigate={navigate}
+        />
 
         {state.notice ? <p className="canvas-notice">{state.notice}</p> : null}
       </div>

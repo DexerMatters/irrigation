@@ -1,72 +1,26 @@
 import { useState } from "react";
 import { ModelView } from "../components/Render";
-import { beginEdit, endEdit, ensureRender, select, useStore } from "../state/store";
-import type { Model, Placement, ViewWire } from "../state/types";
-import { type Box, viewNode } from "./layout";
+import {
+  beginEdit,
+  endEdit,
+  ensureRender,
+  select,
+  toggleCollapsed,
+  useStore,
+} from "../state/store";
+import type { Placement, ViewWire } from "../state/types";
+import { type Box, displayName, viewNode } from "./layout";
+import { countWord, fieldNote, kindWord, movedField, rowCounts } from "./viewInfo";
 import { useNodeDrag } from "./drag";
-import { Editor, short } from "./Editor";
+import { Editor } from "./Editor";
 
 const stateWord = (state: string): string =>
   state === "not_demanded" ? "not demanded" : state.replace("_", " ");
 
-/** The runtime's own word for what this plate holds. A View with several
- *  fields says `fields`; a single-field View says which shape it is. */
-function kindWord(wire: ViewWire): string {
-  if (wire.fields.length > 1) return "fields";
-  return wire.fields[0]?.kind ?? "view";
-}
-
-/**
- * What the footer counts. A render that drew rows is the truth about what is on
- * the plate; the schema's element count is only a fallback, because a tree View
- * has one unit and thirty-three rows.
- */
-function countWord(wire: ViewWire, drawn: number): string {
-  const field = wire.fields[0];
-  if (!field) return "—";
-  if (field.kind === "scalar") return `${wire.fields.length} fields`;
-  if (drawn > 0) return `${drawn} rows`;
-  if (field.granularity === "whole_value") {
-    return field.elements === null ? "whole value" : `${field.elements} rows`;
-  }
-  return field.units === null ? "—" : `${field.units} units`;
-}
-
-/**
- * What the current render says about itself: how many rows it drew, how many of
- * them moved at the revision on screen, and how many carry an identity at all.
- */
-function rowCounts(model: Model | undefined): {
-  drawn: number;
-  changed: number;
-  identified: number;
-} {
-  if (!model) return { drawn: 0, changed: 0, identified: 0 };
-  const states = (rows: { state: string; unit: unknown }[]) => ({
-    drawn: rows.length,
-    changed: rows.filter((row) => row.state === "changed").length,
-    identified: rows.filter((row) => row.unit !== null).length,
-  });
-  switch (model.kind) {
-    case "tree":
-    case "list":
-    case "map":
-      return states(model.rows);
-    case "set":
-      return states(model.members);
-    case "scalar":
-      return states(model.rows);
-    case "graph":
-      return states(model.nodes);
-    default:
-      return { drawn: 0, changed: 0, identified: 0 };
-  }
-}
-
 type Props = {
   wire: ViewWire;
   at: Placement;
-  /** The plate's planned box: one height per rank, so a row ends level. */
+  /** The plate's planned box: one band per rank, so a level ends level. */
   box: Box;
   revision: number;
   followingNewest: boolean;
@@ -74,7 +28,8 @@ type Props = {
   reaction: "changed" | "cutoff" | null;
   /** The ink of the component that produces (or consumes) this View. */
   ink: string;
-  producer: string | null;
+  /** Every component that writes this View; the first is the primary. */
+  producers: string[];
   onDrag: (node: string, at: Placement | null) => void;
 };
 
@@ -91,25 +46,51 @@ export function ViewCard({
   followingNewest,
   reaction,
   ink,
-  producer,
+  producers,
   onDrag,
 }: Props) {
   const state = useStore((snapshot) => snapshot);
   const render = state.renders[wire.view];
   const error = state.renderErrors[wire.view];
   const editing = state.editing === wire.view;
+  const detailOpen =
+    state.selection?.kind === "module" && state.selection.view === wire.view;
+  // When the sidebar is showing this View, the editor belongs there; the plate
+  // keeps its projection instead of becoming a second textarea.
+  const shownEditing = editing && !detailOpen;
+  const collapsed = state.overview || Boolean(state.collapsed[wire.view]);
   const node = viewNode(wire.view);
   const drag = useNodeDrag(at, (next) => onDrag(node, next));
   const [chosen, setChosen] = useState<number | null>(null);
   const fields = render?.fields ?? [];
   const field = fields.find((entry) => entry.field === chosen) ?? fields[0];
-  const counts = rowCounts(field?.model);
-  // A keyed View keeps its content version across a value-only edit, so the
-  // rows are the second witness: if any of them says it moved at this revision,
-  // the plate changed, whatever the version says.
-  const contentMoved = wire.content_version === revision;
-  const changed = reaction === "changed" && (contentMoved || counts.changed > 0);
-  const ranAlike = reaction === "changed" && !changed;
+  const fieldWire =
+    wire.fields.find((entry) => entry.field === field?.field) ?? wire.fields[0];
+  const counts = rowCounts(field?.model, fieldWire);
+  const producer = producers[0] ?? null;
+  const extraProducers = Math.max(0, producers.length - 1);
+  const producerTitle = producers.length > 0 ? producers.map(displayName).join(", ") : wire.kind;
+  // The header state is the runtime's verdict. A plate is changed because the
+  // View changed, not because the field the reader happens to be looking at
+  // drew a moved row: another field may be the one that moved.
+  const changed = reaction === "changed";
+  const ranAlike = reaction === "cutoff";
+  const fieldMoved = movedField(wire, field?.field ?? 0);
+  // Only fields the projection actually drew can be switched to, so only they
+  // can be "other fields" a reader might look at.
+  const otherFields = fields.filter(
+    (entry) => entry.field !== field?.field && movedField(wire, entry.field),
+  );
+  // Only a following reader can trust per-field counts: they describe "now".
+  const fieldChange = followingNewest ? fieldMoved : false;
+  const otherChange = followingNewest ? otherFields.length : 0;
+  const fieldMark = fieldNote(
+    counts,
+    fieldWire,
+    field?.model.kind,
+    fieldMoved,
+    otherChange,
+  );
   const selected =
     state.selection?.kind === "node"
       ? false
@@ -117,7 +98,7 @@ export function ViewCard({
         ? state.selection.view === wire.view
         : false;
 
-  if (!editing) ensureRender(wire.view);
+  if (!editing && !collapsed) ensureRender(wire.view);
 
   return (
     <article
@@ -125,7 +106,8 @@ export function ViewCard({
         "card",
         changed ? "card-changed" : "",
         selected ? "card-selected" : "",
-        editing ? "card-editing" : "",
+        shownEditing ? "card-editing" : "",
+        collapsed ? "card-collapsed" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -141,20 +123,37 @@ export function ViewCard({
       }}
       data-blink={changed ? "1" : undefined}
       data-view={wire.view}
-      {...drag}
-      onDoubleClick={() => {
-        if (wire.editable) beginEdit(wire.view);
-        else void select({ kind: "module", view: wire.view });
+      data-collapsed={collapsed ? "1" : undefined}
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => {
+        if (
+          (event.target as HTMLElement).closest(
+            ".card-action, .card-grip, .field-chip, textarea, input, select, a",
+          )
+        ) {
+          return;
+        }
+        void select({ kind: "module", view: wire.view });
       }}
-      aria-label={`${wire.name}, ${kindWord(wire)}`}
+      aria-label={`${displayName(wire.name)}, ${kindWord(fields.length, fieldWire)}`}
     >
       <header className="card-head">
+        <button
+          type="button"
+          className="card-grip"
+          {...drag}
+          aria-label={`Drag ${displayName(wire.name)}`}
+          title="Drag this plate"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <GripIcon />
+        </button>
         <span className="card-ink" style={{ background: ink }} aria-hidden="true" />
         <span className="card-name" title={wire.name}>
-          {short(wire.name)}
+          {displayName(wire.name)}
         </span>
-        <span className="card-kind">{kindWord(wire)}</span>
-        <span className={`card-state state-${wire.state}`} title={producer ?? wire.kind}>
+        <span className="card-kind">{kindWord(fields.length, fieldWire)}</span>
+        <span className={`card-state state-${wire.state}`} title={producerTitle}>
           <span
             className={`glyph ${wire.state === "changed" ? "" : "hollow"}`.trim()}
             aria-hidden="true"
@@ -162,104 +161,160 @@ export function ViewCard({
           {ranAlike ? "same" : stateWord(wire.state)}
         </span>
         <span className="card-version mono">v{wire.content_version}</span>
-        {wire.editable ? (
+        {wire.editable && !collapsed ? (
           <button
             type="button"
             className="card-action"
             aria-pressed={editing}
             onClick={(event) => {
               event.stopPropagation();
-              if (editing) endEdit(wire.view);
-              else beginEdit(wire.view);
+              if (editing) {
+                endEdit(wire.view);
+              } else {
+                beginEdit(wire.view);
+                void select({ kind: "module", view: wire.view });
+              }
             }}
           >
             {editing ? "Done" : "Edit"}
           </button>
         ) : null}
+        {state.overview ? null : (
+        <button
+          type="button"
+          className="card-action card-fold"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `Expand ${displayName(wire.name)}` : `Collapse ${displayName(wire.name)}`}
+          title={collapsed ? "Expand this view" : "Fold this view to its header"}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleCollapsed(wire.view);
+          }}
+        >
+          <FoldIcon collapsed={collapsed} />
+        </button>
+        )}
       </header>
 
-      {fields.length > 1 ? (
-        <div className="card-fields" role="group" aria-label={`${short(wire.name)} fields`}>
-          {fields.map((entry) => (
-            <button
-              key={entry.field}
-              type="button"
-              className="field-chip"
-              aria-pressed={entry.field === field?.field}
-              onClick={(event) => {
-                event.stopPropagation();
-                setChosen(entry.field);
-              }}
+      {collapsed ? null : (
+        <>
+          {fields.length > 1 ? (
+            <div className="card-fields" role="group" aria-label={`${displayName(wire.name)} fields`}>
+              {fields.map((entry) => {
+                const moved =
+                  followingNewest &&
+                  (wire.fields.find((candidate) => candidate.field === entry.field)?.changed_units ??
+                    0) > 0;
+                const name =
+                  wire.fields.find((candidate) => candidate.field === entry.field)?.name ??
+                  `field ${entry.field}`;
+                return (
+                  <button
+                    key={entry.field}
+                    type="button"
+                    className={["field-chip", moved ? "field-chip-moved" : ""].filter(Boolean).join(" ")}
+                    aria-pressed={entry.field === field?.field}
+                    title={moved ? `${name} changed at r${revision}` : name}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setChosen(entry.field);
+                    }}
+                  >
+                    <span className="field-dot" aria-hidden="true" />
+                    {name}
+                    {moved ? <span className="sr-only"> changed at r{revision}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : field ? (
+            <div
+              className={["card-fields", "card-fields-single", fieldChange ? "field-chip-moved" : ""]
+                .filter(Boolean)
+                .join(" ")}
             >
-              {wire.fields.find((candidate) => candidate.field === entry.field)?.name ??
-                `field ${entry.field}`}
-            </button>
-          ))}
-        </div>
-      ) : field ? (
-        <div className="card-fields card-fields-single">
-          {wire.fields.find((candidate) => candidate.field === field.field)?.name ??
-            `field ${field.field}`}
-        </div>
-      ) : null}
+              <span className="field-dot" aria-hidden="true" />
+              {wire.fields.find((candidate) => candidate.field === field.field)?.name ??
+                `field ${field.field}`}
+              {fieldChange ? <span className="sr-only"> changed at r{revision}</span> : null}
+            </div>
+          ) : null}
 
-      <div
-        className="card-body"
-        tabIndex={0}
-        role="group"
-        aria-label={`${short(wire.name)} content`}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {editing ? (
-          <Editor view={wire} />
-        ) : field ? (
-          <ModelView
-            model={field.model}
-            selectedRow={null}
-            interactiveRevision={followingNewest}
-            revision={revision}
-            onSelectRow={() => undefined}
-          />
-        ) : (
-          <p className="card-empty">drawing…</p>
-        )}
-        {error ? <p className="card-error">{error}</p> : null}
-      </div>
-
-      <footer className="card-foot">
-        {wire.fields[0]?.render === "generic" ? (
-          <span
-            className="generic-note"
-            title="drawn from the runtime's facts; register a renderer for this View to draw it yourself"
+          <div
+            className="card-body"
+            tabIndex={0}
+            role="group"
+            aria-label={`${displayName(wire.name)} content`}
+            onPointerDown={(event) => event.stopPropagation()}
           >
-            generic
-          </span>
-        ) : null}
-        <span>{countWord(wire, counts.drawn)}</span>
-        {changed ? (
-          <span className="changed-note" title={`changed at revision ${revision}`}>
-            {counts.changed > 0
-              ? `${counts.changed} of ${counts.drawn} rows at r${revision}`
-              : counts.identified > 0
-                ? `rows added or removed at r${revision}`
-                : `whole value at r${revision}`}
-          </span>
-        ) : ranAlike ? (
-          <span className="same-note" title={`ran at r${revision} and published the same content`}>
-            ran at r{revision}, same content
-          </span>
-        ) : (
-          <span title={reaction === "cutoff" ? `ran at r${revision} and produced the same value` : undefined}>
-            {reaction === "cutoff"
-              ? `ran at r${revision}, no change`
-              : producer
-                ? short(producer)
-                : wire.editable
-                  ? "editable"
-                  : "read only"}
-          </span>
-        )}
-      </footer>
+            {shownEditing ? (
+              <Editor view={wire} />
+            ) : field ? (
+              <ModelView
+                model={field.model}
+                selectedRow={null}
+                interactiveRevision={followingNewest}
+                revision={revision}
+                onSelectRow={() => undefined}
+              />
+            ) : (
+              <p className="card-empty">drawing…</p>
+            )}
+            {error ? <p className="card-error">{error}</p> : null}
+          </div>
+
+          <footer className="card-foot">
+            <span>{countWord(fieldWire, field?.model.kind, counts.drawn)}</span>
+            {changed ? (
+              <span className="changed-note" title={`the runtime reports this View changed at revision ${revision}`}>
+                {fieldMark} at r{revision}
+              </span>
+            ) : ranAlike ? (
+              <span className="same-note" title={`ran at r${revision} and published the same content`}>
+                ran at r{revision}, same content
+              </span>
+            ) : (
+              <span title={producerTitle}>
+                {producer
+                  ? `${displayName(producer)}${extraProducers > 0 ? ` +${extraProducers}` : ""}`
+                  : wire.editable
+                    ? "editable"
+                    : "read only"}
+              </span>
+            )}
+          </footer>
+        </>
+      )}
     </article>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg className="grip-icon" viewBox="0 0 10 14" width="10" height="14" aria-hidden="true">
+      <g fill="currentColor">
+        <circle cx="3" cy="3" r="1.1" />
+        <circle cx="7" cy="3" r="1.1" />
+        <circle cx="3" cy="7" r="1.1" />
+        <circle cx="7" cy="7" r="1.1" />
+        <circle cx="3" cy="11" r="1.1" />
+        <circle cx="7" cy="11" r="1.1" />
+      </g>
+    </svg>
+  );
+}
+
+function FoldIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+      <path
+        d={collapsed ? "M2 4 L5 7 L8 4" : "M2 6 L5 3 L8 6"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

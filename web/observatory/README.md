@@ -1,20 +1,23 @@
 # Observatory page
 
-The React board for [`reactive-observe`](../../crates/reactive-observe). Two hosts
-serve it from `dist/`, and both are ordinary runtime programs — the page has no
-special knowledge of either:
+The React board for [`irrigation-observe`](../../crates/irrigation-observe). Four
+hosts serve it from `dist/`, all ordinary runtime programs — the page has no
+special knowledge of any of them:
 
 ```sh
 # JSON: lexer and parser as general components, and a sink that walks the
 # published tree into a keyed table of paths.
-cargo run --example observatory_json -p reactive --features observatory -- --bind 127.0.0.1:7791
+cargo run --example observatory_json -p irrigation --features observatory -- --bind 127.0.0.1:7791
 
 # The same pipeline over a smaller grammar, without a sink.
-cargo run --example observatory_syntax -p reactive --features observatory -- --bind 127.0.0.1:7790
+cargo run --example observatory_syntax -p irrigation --features observatory -- --bind 127.0.0.1:7790
 
-# A small language: a root that invokes five components, two sources, three
-# derived Views.
-cargo run --example observatory -p reactive --features observatory -- --bind 127.0.0.1:7777
+# STLC with a scope-graph resolver; the ScopeGraph View is a Graph field.
+cargo run --example stlc_scope_graphs -p irrigation --features observatory -- --bind 127.0.0.1:7792
+
+# The reference demo: the framework's text/lexer/parser over a tiny language,
+# the resolver over the published AST, and a second editable source (weights).
+cargo run --example observatory -p irrigation --features observatory -- --bind 127.0.0.1:7777
 ```
 
 The page is one canvas: Views as plates, components as nodes, an edge per
@@ -25,7 +28,7 @@ source Views with a live delta.
 npm install
 npm run build      # writes dist/, which the host serves
 npm run dev        # Vite on :5173, proxying /api to the host on :7788
-npm test           # vitest run (reducer semantics)
+npm test           # vitest run (reducer and layout semantics)
 npm run typecheck  # tsc --noEmit
 npm run smoke      # edits a plate in place against a running host (playwright-core)
                    # SMOKE_VIEW names the card, SMOKE_TEXT the text it gets, and
@@ -35,11 +38,11 @@ npm run a11y       # axe-core WCAG 2.1 A/AA pass plus a keyboard check
 
 ## Point it at your own runtime
 
-The page is served by any host that can build a `reactive_observe::Observatory`.
+The page is served by any host that can build a `irrigation_observe::Observatory`.
 The smallest one is a `main`:
 
 ```rust
-use reactive_observe::{Observatory, ObserveLevel, observed_runtime};
+use irrigation_observe::{Observatory, ObserveLevel, observed_runtime};
 
 fn main() -> std::io::Result<()> {
     let (runtime, recorder) = observed_runtime(ObserveLevel::Nodes);
@@ -49,43 +52,30 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-That already gives an honest board with **no renderer at all**: every View
-appears as a plate with its rows, every component as a chip, every recorded read
-and definition as a wire. The server draws each View from the runtime's facts —
-the field's shape, its entities in their own order, and the revision each unit
-moved at — and spells values with the element type's `Debug` form. A plate drawn
-that way says `generic` in its footer.
+That gives an honest board with **no host drawing at all**: every View appears
+as a plate, every component as a chip, every recorded read and definition as a
+wire. The server projects each View from the runtime's own facts — the View's
+declared shape, its entities in their own order, and the revision each unit
+moved at — and spells values through the View's own `Debug` form. There is no
+second renderer to register: a graph field draws a graph, a tree field draws a
+tree, a reduction draws its aggregate, and every field is a tab on its plate.
 
-Register a renderer when you want a *better* drawing than the facts can give:
+`text_view::<V>(read, write)` is the only input hook. It registers a text channel
+so a plate can be edited; it does not describe how anything is drawn.
 
-| call | what it buys |
-|---|---|
-| `.renderer::<V>(\|snapshot\| RenderModel::…)` | a host drawing: Tree/List/Map/Set/Scalar/Reduced/Graph, your labels and grouping |
-| `.field_renderer::<V>(…)` | several fields, switchable on the plate |
-| `.formatter::<V>(\|snapshot\| ValuePreview { … })` | the facts panel's summary for a View |
-| `.text_view::<V>(read, write)` | Edit on the plate commits text back to the host |
+Two rules make the board tell the truth rather than just look right:
 
-A View that cannot be `Debug` opts out with `#[view(derived, hide)]`: its plate
-keeps rows and change marks and spells no values.
-
-Three rules make the board tell the truth rather than just look right:
-
-1. **Cite a unit per row.** A row built with `UnitRef::entity(...)` or
-   `UnitRef::from_key(&tree_units::tag(...))` is checked against the runtime, so it
-   can say `changed at r12`. A row without one is a display row, and the plate
-   says `whole value` instead of pretending.
-2. **Demand after a write.** The page never demands: a write handler that stages
+1. **Demand after a write.** The page never demands: a write handler that stages
    an edit and returns leaves the derived Views unrun, and their plates sit at
    `suspect` until something asks. Call `read_outputs` (or `read_outputs_general`)
    in the handler, as every host here does.
-3. **Send one edit, not a new document.** `TextDocument::replace_with(&text)`
+2. **Send one edit, not a new document.** `TextDocument::replace_with(&text)`
    diffs the buffer against what you hold, so the lexer and parser stay local.
    `TextDocument::new(text)` throws the ancestry away and everything relexes.
 
 A complete, runnable version of that file is
-[`examples/observatory_min.rs`](../../crates/reactive/examples/observatory_min.rs)
-— two Views, one component, and no renderer at all. Start there and delete what
-you do not need.
+[`examples/observatory_min.rs`](../../crates/irrigation/examples/observatory_min.rs)
+— two Views, one component. Start there and delete what you do not need.
 
 Run it from the repository root and the built page is found automatically
 (`OBSERVATORY_DIST` overrides). For a host outside this workspace, build the page
@@ -95,8 +85,16 @@ server says so in plain text if it cannot find it.
 ### Small things that make it pleasant
 
 - `--bind <addr>` is read by `.bind_from_args()`; two hosts can run at once.
-- `Fit` (or `f`), `Tidy`, wheel to pan, ⌘/ctrl + wheel to zoom; a plate drags and
-  remembers where it landed.
+- `Fit` (or `f`), `Tidy`, `Overview`, wheel to pan, ⌘/ctrl + wheel to zoom. A
+  plate is dragged by the grip in its top-left corner and remembers where it
+  landed; a dropped plate is moved clear of any plate it would overlap. Its body
+  keeps normal selection and scrolling. `Overview` folds every View to its
+  header, which is the compact whole-DAG reading; opening a detail shows the
+  content again.
+- Double-click a View to open its detail in the side panel. The chevron in a
+  plate's header folds it to its title, and the fold survives a reload. While
+  `Overview` is on, individual chevrons are hidden and the whole board is
+  header-only.
 - The page is dark by default and prints nothing about itself: open the URL and
   read the plate titles.
 - With `ObserveLevel::Summary` the board still gets revisions and counts, but no
@@ -104,13 +102,21 @@ server says so in plain text if it cannot find it.
 
 ## The board
 
-The layout is the runtime's own structure: View → component for every recorded
-read, component → View for every definition. Ranks come from the longest path,
-order inside a rank from the mean position of neighbours, and the ranks fold into
-as many columns as the surface needs — the same graph is three strips on a wide
-window and two on a tablet. Every column starts on one line, every plate in a
-rank shares a bottom edge, and a rank that holds one node sits under what it
-reads.
+The layout is the runtime's own DAG: View → component for every recorded read,
+component → View for every definition. Ranks come from the longest path, order
+inside a rank from the mean position of neighbours, and every rank is one
+horizontal band drawn downward. Each plate is then placed over the mean centre
+of its neighbours, top-down: a one-to-one chain is one vertical line, and a merge
+or split fans through ports instead of converging on one point. Plates in one
+band share a top edge and a height, so a level reads as a level; a wide band is
+panned through rather than folded into a second row. A rank that holds one node
+sits under what it reads.
+
+A single edge is a single cubic, leaving its port along that side's normal. It
+does not turn through intermediate lanes: a long dependency is one smooth wire,
+and the port distribution is what keeps many relations from sharing one point.
+Edges take the ink of their component, with the arrowhead and port marker
+matching.
 
 A View is a plate; a component is a chip on the wire between them. There is one
 chip design for every family — a root, a general component and an invoked one are
@@ -118,13 +124,21 @@ the same object to the runtime, so the board draws them the same, and the family
 is a word on the chip. A plate's dot is the ink of the component that defines it;
 a View the host writes has no such component and takes the neutral ink.
 
-The board is dark by default, one ground with one accent on the data: the plates
-and their rows carry the colour, the chrome stays neutral.
+The board is dark by default, one ground with component inks on the data: the
+plates, rows, wires and legend carry the colour, the chrome stays neutral. The
+minimap in the top-left is a rank diagram of the whole structure, not a reduced
+screenshot: one row per rank, one bar per node, component-coloured wires, a
+right-edge bar for the camera, and a small signal dot for a plate that changed
+or a component that ran. Long wires fade so they do not become a second graph.
+Click or drag it to move the camera; arrow keys nudge it. `Fit` leaves the
+minimap's corner clear.
 
-A plate drags itself and remembers where it landed; `Tidy` forgets the dragged
-positions and lays the board out again. Wheel pans, ⌘/ctrl + wheel zooms at the
-pointer. Dragging never selects text — the board is an instrument, not a
-document; text is selectable in the editor and the facts panel.
+The grip at a plate's top-left drags it and remembers where it landed; `Tidy`
+forgets the dragged positions and lays the board out again. Wheel pans, ⌘/ctrl +
+wheel zooms at the pointer. A scrollable plate body consumes the wheel, so rows
+are reachable; text is selectable there and in the facts panel. A View opens in
+the side panel on double-click, with the same projection, change marks, live
+updates and editor as its plate.
 
 ## Annotations
 
@@ -151,7 +165,8 @@ because a row's unit version describes "now".
   are display rows, and the plate's footer says `whole value`.
 - It never derives an old change from a current node field: rows are marked only
   for the newest revision.
-- It never invents a value. A View without a formatter shows its unit kind and
+- It never invents a value outside the View's own spelling. A value its type
+  cannot `Debug` is listed by identity; the facts panel shows the unit kind and
   size, not a guess.
 - It never parses the host's language. The editor sends text, shows the host's
   reply or its error verbatim, and leaves the committed document untouched when
@@ -163,12 +178,15 @@ because a row's unit version describes "now".
 |---|---|
 | `src/state/store.ts` | external store, SSE application, render cache, placement persistence |
 | `src/state/reduce.ts` | pure frame reduction (revision bookkeeping, gap detection) |
-| `src/state/types.ts` | the wire contract, mirroring `reactive-observe::wire` |
+| `src/state/types.ts` | the wire contract, mirroring `irrigation-observe::wire` |
 | `src/canvas/Canvas.tsx` | the surface: camera, fit, drag, edges, the revision on screen |
-| `src/canvas/layout.ts` | ranks, ordering, column folding, plate sizes, edge geometry |
-| `src/canvas/ViewCard.tsx` | one View: fields, native render, change annotation, editor |
+| `src/canvas/layout.ts` | ranks, level bands, parent-aligned coordinates, collision escape, plate sizes, ports, edge geometry |
+| `src/canvas/Minimap.tsx` | whole-structure thumbnail, camera window, change marks, navigation |
+| `src/canvas/viewInfo.ts` | the words and counts the plate and side panel share |
+| `src/canvas/ViewCard.tsx` | one View: fields, drawn model, change annotation, editor |
 | `src/canvas/ComponentCard.tsx` | one component: family, reads/writes, when it ran |
-| `src/components/Render.tsx` | native drawings: tree, list, map, set, graph, scalar, reduced, opaque |
+| `src/components/Render.tsx` | field drawings: tree, list, map, set, scalar, reduced |
+| `src/components/Graph.tsx` | the graph drawing: force layout, directed edges, labels |
 | `src/components/Tape.tsx` | revision tape and the exact reaction strip |
 | `src/components/Inspector.tsx` | facts, dependencies, View and component metadata |
 | `src/design/` | tokens and layout |

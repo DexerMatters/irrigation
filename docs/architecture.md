@@ -6,28 +6,28 @@ invariants instead of rediscovering them.
 ## Crate direction
 
 ```
-reactive-core      identities, errors, frames, values, keys, descriptors
+irrigation-core      identities, errors, frames, values, keys, descriptors
    ^        ^
    |        |
-reactive-store   persistent structures, field storage
+irrigation-store   persistent structures, field storage
    ^        ^
    |        |
-reactive-runtime   nodes, demand, edits, regions, pool, general, fixed points
+irrigation-runtime   nodes, demand, edits, regions, pool, general, fixed points
    ^        ^
    |        |
-reactive-collections   list/map/set/graph/tree/join/reduce
+irrigation-collections   list/map/set/graph/tree/join/reduce
    ^
-reactive-macros    view/component/tree lowering (proc-macro)
+irrigation-macros    view/component/tree lowering (proc-macro)
    ^
-reactive           facade + tests + examples
+irrigation           facade + tests + examples
 ```
 
-`reactive-core` never depends on the runtime. `reactive-macros` only emits code
+`irrigation-core` never depends on the runtime. `irrigation-macros` only emits code
 that names the facade, so generated code compiles in user crates.
 
 Two crates sit beside the kernel and are not part of its invariants:
-`reactive-observe` reads committed state (it never demands a node) and serves it
-over std HTTP; `reactive-syntax` is a consumer that implements an incremental
+`irrigation-observe` reads committed state (it never demands a node) and serves it
+over std HTTP; `irrigation-syntax` is a consumer that implements an incremental
 text → lexer → parser pipeline as ordinary general components. This document
 specifies the kernel, not those consumers.
 
@@ -324,7 +324,7 @@ field edit on a leaf keeps that leaf's id.
 
 ## Component lowering
 
-- Every value-producing expression becomes `reactive::eval(site, || ...)`, keyed
+- Every value-producing expression becomes `irrigation::eval(site, || ...)`, keyed
   by `(scope, site)`. Site ids are sequential per component; component bodies
   are isolated by their scopes.
 - `let mut` locals are rejected: locals are immutable bindings in the lowered
@@ -342,14 +342,25 @@ field edit on a leaf keeps that leaf's id.
   restores per-member identity.
 - `map`/`filter`/`flat_map` on a collection handle are tracked nodes; on a
   standard iterator chain they are lazy, decided by the receiver's shape.
+- `#[view]` emits one typed `Field` constant per declared field. The constant
+  carries the descriptor, field position, and family handle, so component and
+  `GeneralComponent` code names a field instead of constructing a `UnitKey`.
 - Calls to component functions become invocations keyed by argument equality;
   each output is a separate node.
-- Unsupported constructs (loops, `return`, effect macros, unsafe, async) are
-  rejected rather than silently coarsened.
+- `&View` parameters are optional zero-sized singleton handles. The generated
+  accessors read ambiently and record the exact units either way. With explicit
+  `#[component(root)]`/`#[component(callable)]`, a component needs only its
+  semantic parameters; the root returns the View handles it registers.
+- Unsupported constructs (loops, effect macros, unsafe, async) are rejected
+  rather than silently coarsened. Top-level `return` lowers to a labeled block;
+  `if let` lowers to a two-arm match with the same observation point.
 
 ## Custom algorithms
 
-`GeneralComponent` retains state and consumes a `ChangeBatch` of changed units.
+`#[general_component]` fills the identity, View lists, and reset `update` for
+the common producer; the trait remains the extension point for algorithms that
+need full control. `GeneralComponent` retains state and consumes a
+`ChangeBatch` of changed units.
 An update must retain the dependencies it did not re-read: `GeneralCx::observe`
 records an observation without using the value, and the join uses it for the
 key-set structure units and untouched joined keys. `TypedGeneralComponent`
@@ -379,7 +390,7 @@ are built on this boundary.
 
 ## Where to extend
 
-- New View family: add a field type in `reactive-collections`, a unit layout,
+- New View family: add a field type in `irrigation-collections`, a unit layout,
   descriptor vtable, and macro recognition.
 - New operator: prefer a per-member scope with `Param`; fall back to
   `GeneralComponent` when the algorithm needs retained state.

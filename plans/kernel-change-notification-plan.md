@@ -150,7 +150,7 @@ second invalidation path to measure, and the counter would always read zero.
 
 ## 5. Tests
 
-`crates/reactive/tests/change_notification.rs` (6 tests):
+`crates/irrigation/tests/change_notification.rs` (6 tests):
 
 ```text
 unchanged_output_does_not_invalidate_consumers   reader of an unchanged unit does not run
@@ -161,7 +161,7 @@ subscription_fires_only_for_observed_units       View subscription ignores sibli
 change_batch_reports_the_moved_units             the batch names exactly the moved unit
 ```
 
-`crates/reactive-syntax/tests/json_ast_delta.rs`:
+`crates/irrigation-syntax/tests/json_ast_delta.rs`:
 
 ```text
 value_reader_is_not_scheduled_for_unrelated_edits   AST value reader survives two unrelated edits
@@ -173,7 +173,7 @@ value_reader_is_not_scheduled_for_unrelated_edits   AST value reader survives tw
 
 ```text
 cargo test --workspace    # 0 failures
-cargo fmt --check         # runtime, reactive, syntax
+cargo fmt --check         # runtime, irrigation, syntax
 ```
 
 Observed effect on the parser pipeline: an edit re-parses locally, and a reader

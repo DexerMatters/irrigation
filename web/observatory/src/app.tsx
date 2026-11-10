@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Canvas } from "./canvas/Canvas";
 import { Inspector } from "./components/Inspector";
 import { Tape } from "./components/Tape";
+import { displayName } from "./canvas/layout";
 import { connect, useStore } from "./state/store";
 
 const statusWord = (connection: string): string =>
@@ -66,5 +67,9 @@ export function App() {
 
 function shortRuntime(name: string): string {
   const parts = name.split("::");
-  return parts.slice(-2).join("::");
+  return parts
+    .slice(-2, -1)
+    .concat(displayName(parts[parts.length - 1] ?? name))
+    .filter(Boolean)
+    .join("::");
 }

@@ -11,6 +11,9 @@ export function Tape() {
   const newest = state.revision;
   const oldest = revisions.length > 0 ? revisions[0].revision : newest;
   const span = Math.max(1, newest - oldest);
+  const stats = state.stats;
+  const arbitration =
+    stats.write_claims + stats.write_conflicts + stats.deferred_writes + stats.demand_retries + stats.reader_waits;
 
   return (
     <footer className="tape-dock">
@@ -21,6 +24,18 @@ export function Tape() {
             ? "nothing published yet"
             : `${oldest}–${newest} · ${revisions.length} retained`}
         </span>
+        {arbitration > 0 ? (
+          <span
+            className="meta"
+            title="Cumulative write arbitration: claims, conflicts, deferred write groups, demand retries, and reader waits."
+          >
+            {stats.write_claims} claims
+            {stats.write_conflicts > 0 ? ` · ${stats.write_conflicts} conflicts` : ""}
+            {stats.deferred_writes > 0 ? ` · ${stats.deferred_writes} deferred` : ""}
+            {stats.demand_retries > 0 ? ` · ${stats.demand_retries} retries` : ""}
+            {stats.reader_waits > 0 ? ` · ${stats.reader_waits} waits` : ""}
+          </span>
+        ) : null}
         {/* The board's key, on the strip rather than over the cards: the two
             marks at the ends of an edge, and which way each one points. */}
         <span className="edge-key" aria-label="Edge marks">

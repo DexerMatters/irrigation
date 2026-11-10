@@ -4,7 +4,7 @@
 **Revision:** 2 — View-native board, modular viewports, collapse/expand  
 **Date:** 2026-11-03  
 **Feature:** opt-in runtime observation, projection service, and a React page  
-**Touches:** `reactive-runtime`, `reactive`, a new `reactive-observe` crate, a new
+**Touches:** `irrigation-runtime`, `irrigation`, a new `irrigation-observe` crate, a new
 `web/observatory` app, and one reference host example
 
 > Show, truthfully and at a glance, what changed, what the runtime did in
@@ -53,7 +53,7 @@ records exactly what shipped, the semantic divergences above, and what remains
 
 Build a first-class, **opt-in** observation path:
 
-1. **A compile-time `observe` feature on `reactive-runtime`.** With it off, no
+1. **A compile-time `observe` feature on `irrigation-runtime`.** With it off, no
    observation module, event, or event branch is compiled. The existing runtime
    behavior is unchanged; the only additive metadata is small and measured.
    With it on but no observer attached, every instrumentation point is one
@@ -62,7 +62,7 @@ Build a first-class, **opt-in** observation path:
    lock-free ring. They never format names, never call back into the runtime,
    and never wait for a UI. A dropped event increments a counter and is reported
    as a drop; it is never silently lost.
-3. **A projection layer in a new `reactive-observe` crate.** It maps internal
+3. **A projection layer in a new `irrigation-observe` crate.** It maps internal
    IDs, versions, and trace facts into revision-tagged, read-only JSON:
    native View renders, graph nodes/edges, View facts, node explanations,
    revision records.
@@ -145,7 +145,7 @@ incremental reaction. The missing pieces are:
    explicit resynchronization when a client falls behind.
 4. **Honest value display.** `Value` is type-erased; the generated
    `ViewDescriptor::content.debug` currently returns only the View name
-   (`crates/reactive-macros/src/view.rs`, `#debug_fn`). There is no generic
+   (`crates/irrigation-macros/src/view.rs`, `#debug_fn`). There is no generic
    payload rendering, and inventing one would be a lie. The plan uses host
    renderers for View bodies, optional formatters for scalar/row values, and
    shows type/size otherwise.
@@ -331,7 +331,7 @@ Values are the easiest place to fabricate. The rules:
 Example registration in the reference host:
 
 ```rust
-use reactive_observe::{Observatory, ValuePreview};
+use irrigation_observe::{Observatory, ValuePreview};
 
 Observatory::new(runtime)
     .formatter::<Diagnostics>(|snapshot| {
@@ -1066,7 +1066,7 @@ is an event push into a preallocated ring and an occasional atomic counter.
 ### 4.1 Crate and file layout
 
 ```
-crates/reactive-runtime/
+crates/irrigation-runtime/
   src/observe/
     mod.rs            observation levels, observer trait, event types
     event.rs          compact RuntimeEvent definitions
@@ -1074,7 +1074,7 @@ crates/reactive-runtime/
   src/observe_surface.rs   inspect_snapshot, probe, try_explain_node
   src/runtime.rs           with_observer, cause plumbing, edit/probe APIs
 
-crates/reactive-observe/          (new; std + serde)
+crates/irrigation-observe/          (new; std + serde)
   src/lib.rs
   src/wire.rs          JSON projection types, protocol version
   src/project.rs       View metadata, granularity, counts, GraphFacts
@@ -1099,14 +1099,14 @@ web/observatory/                  (new; React + TypeScript + Vite)
   src/fixtures/        recorded event/snapshot render fixtures
   e2e/
 
-crates/reactive/examples/observatory.rs   reference host (required-features)
+crates/irrigation/examples/observatory.rs   reference host (required-features)
 plans/runtime-visualization-plan.md
 ```
 
-`reactive-observe` depends on `reactive-runtime` (with `observe`) and
-`reactive-core`; it does not depend on the `reactive` facade. The facade gets an
+`irrigation-observe` depends on `irrigation-runtime` (with `observe`) and
+`irrigation-core`; it does not depend on the `irrigation` facade. The facade gets an
 optional `observe` feature for the recorder/projection types and an
-`observatory` convenience feature that adds `reactive-observe/server` and
+`observatory` convenience feature that adds `irrigation-observe/server` and
 `demo`. No cycle is introduced.
 
 Renderer state is split cleanly: the server produces bounded render models from
@@ -1116,7 +1116,7 @@ interaction. Neither side invents a row's runtime identity.
 ### 4.2 Runtime observation contract
 
 ```rust
-// crates/reactive-runtime/src/observe/mod.rs (feature = "observe")
+// crates/irrigation-runtime/src/observe/mod.rs (feature = "observe")
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ObserveLevel {
@@ -1507,7 +1507,7 @@ discards a snapshot/probe pair whose revisions differ and retries; a frame is
 never assembled from two revisions. This is the same consistency rule as a
 snapshot, applied to the projection.
 
-The wire layer (`reactive-observe::wire`) maps these facts to names and adds:
+The wire layer (`irrigation-observe::wire`) maps these facts to names and adds:
 
 - `NodeView { key, title, subtitle, group, state, flags, activity }`
 - `EdgeView { from, to, kind, recorded_version, current_version, status }`
@@ -1887,12 +1887,12 @@ module is still at that version.
 ## 5. Reference scenario and demo host
 
 The first host is the existing name resolver
-([`crates/reactive/examples/name_resolver.rs`](../crates/reactive/examples/name_resolver.rs)).
+([`crates/irrigation/examples/name_resolver.rs`](../crates/irrigation/examples/name_resolver.rs)).
 It exercises a tree View, a component with recursion, two derived Views, a
 cutoff, and a changed output — enough to demonstrate every widget without
 inventing a domain.
 
-`crates/reactive/examples/observatory.rs` (new, `required-features = [ "observatory" ]`):
+`crates/irrigation/examples/observatory.rs` (new, `required-features = [ "observatory" ]`):
 
 ```rust
 use std::sync::Arc;
@@ -1942,7 +1942,7 @@ The demo modules show the three shapes that matter most for a compiler:
 `Diagnostics` as a whole-value list (changed). The board can collapse
 `Symbols` to its header and expand `Syntax` without losing the selected `Var`
 row. A follow-up host uses the
-[`reactive-syntax`](../crates/reactive-syntax/src/lib.rs) pipeline
+[`irrigation-syntax`](../crates/irrigation-syntax/src/lib.rs) pipeline
 (Source → Tokens → CstTree → AstTree → Symbols/Diagnostics) to exercise six
 modules, a graph View, and a large tree with virtualization; the name resolver
 is the smallest honest first host.
@@ -2070,11 +2070,11 @@ page's truthfulness. Both are tested.
 | G5 no-op | A no-op edit does not advance the tape and is reported as "no revision published". |
 | G6 accessibility | Keyboard-only path works; AA contrast; reduced motion; screen-reader table available. |
 | G7 overhead | Summary ≤ 3%, Nodes ≤ 10%, Full ≤ 20% on the release scaling benchmark, or the level is made cheaper before shipping. |
-| G8 off | `cargo test -p reactive-runtime -p reactive` with the observation crate excluded builds and passes with no `observe` code or event branch. |
+| G8 off | `cargo test -p irrigation-runtime -p irrigation` with the observation crate excluded builds and passes with no `observe` code or event branch. |
 | G9 security | Loopback default; token required off-loopback; demo disabled by default; no unformatted payloads. |
 | G10 scale | Modular board with 10+ Views remains usable; 800-node Runtime graph interactive; 50k-node runtime capped with exact totals and scoped drill-down; tree/list virtualization. |
 | G11 failure | Renderer/formatter/server/runtime failures are visible and isolated; no silent empty state. |
-| G12 build | `cargo test --workspace`, `cargo test -p reactive --features observe`, `cargo test -p reactive-observe --features server`, `cargo run --example observatory -p reactive --features observatory`, `pnpm test`, `pnpm build`, `pnpm e2e` all pass. |
+| G12 build | `cargo test --workspace`, `cargo test -p irrigation --features observe`, `cargo test -p irrigation-observe --features server`, `cargo run --example observatory -p irrigation --features observatory`, `pnpm test`, `pnpm build`, `pnpm e2e` all pass. |
 | G13 native | Each field kind has a distinct drawing and a renderer test: tree, list, map, set, graph, scalar, reduced, opaque. |
 | G14 granularity | A whole-value list/set never shows per-row unit changes; a keyed/source collection does; tests fail if the UI claims otherwise. |
 | G15 modular | Every module collapses to a header and expands to focus; state persists; collapsed modules still report changed/cutoff/version; expansion never demands computation. |
@@ -2186,7 +2186,7 @@ critical path is M1 → M2 → M3 → M5; M0 and M4 can overlap.
 | Drag-to-reorder modules | **No in v1; `Move earlier` / `Move later`.** | Keeps the grid stable and keyboard-accessible; drag is a follow-up. |
 | Graph field drawing | **Deterministic small layout ≤80 nodes; adjacency table above.** | No force jitter; a table is more honest than a hairball. |
 | Site source spans in v1? | **No.** `expr #N` + scope path; add spans in v2. | The macro currently has no span metadata; logical mode is the primary surface. |
-| Server embedded in the runtime crate? | **No.** Optional `reactive-observe` crate. | Keeps the runtime dependency-free and the observation path optional. |
+| Server embedded in the runtime crate? | **No.** Optional `irrigation-observe` crate. | Keeps the runtime dependency-free and the observation path optional. |
 | SSE vs WebSocket | **SSE.** Commands are REST; one-way is enough. | Simpler proxy behavior, reconnect semantics, and tests. |
 | EventSource vs fetch streaming | **Fetch streaming** with `Last-Event-ID` and `Authorization`. | Header auth, explicit reconnect, and gap handling are first-class. |
 | Runtime graph layout | **Custom deterministic layered layout.** | Stable positions, grouping, and no force jitter; no heavy layout dependency. |
@@ -2203,7 +2203,7 @@ critical path is M1 → M2 → M3 → M5; M0 and M4 can overlap.
 A user can run:
 
 ```sh
-cargo run --example observatory -p reactive --features observatory
+cargo run --example observatory -p irrigation --features observatory
 # Observatory: http://127.0.0.1:7777
 ```
 

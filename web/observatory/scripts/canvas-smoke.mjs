@@ -14,13 +14,13 @@
 import { chromium } from "playwright-core";
 
 const base = process.env.OBSERVATORY_URL ?? "http://127.0.0.1:7777";
-const view = process.env.SMOKE_VIEW ?? "Syntax";
+const view = process.env.SMOKE_VIEW ?? "SourceFile";
 // The default text carries a stamp, so running the script twice in a row is two
 // edits and not a no-op.
 const stamp = String(Date.now() % 100_000);
 // `{{stamp}}` is replaced, so a caller can write one template and still get a
 // fresh edit on every run.
-const text = (process.env.SMOKE_TEXT ?? `x := {{stamp}}\ny := 2\nprint(show(x), 3)`).replaceAll(
+const text = (process.env.SMOKE_TEXT ?? `x := {{stamp}}\ny := 2\nprint(x, y)`).replaceAll(
   "{{stamp}}",
   stamp,
 );
@@ -49,7 +49,16 @@ const before = await page.evaluate(async () => {
 });
 
 const card = page.locator(".card", { has: page.locator(".card-name", { hasText: view }) }).first();
+// Double-click opens the View detail in the side panel; its Edit control is the
+// one text channel. The plate's own Edit control opens the same editor.
 await card.dblclick();
+await page.waitForTimeout(350);
+const detailEdit = page.locator(".view-detail-actions .btn").first();
+if ((await detailEdit.count()) > 0) {
+  await detailEdit.click();
+} else {
+  await card.locator(".card-action").first().click();
+}
 await page.waitForSelector(".editor-area", { timeout: 10000 });
 await page.fill(".editor-area", text);
 // No submit: the edit commits by itself.
@@ -73,7 +82,11 @@ const board = await page.evaluate(() => ({
     (node) => node.textContent,
   ),
 }));
-const reply = await card.locator(".editor-reply").textContent().catch(() => "");
+const reply = await page
+  .locator(".view-detail .editor-reply, .card .editor-reply")
+  .first()
+  .textContent()
+  .catch(() => "");
 
 const advanced = after.revision > before.revision;
 const marked = board.changed.length > 0;

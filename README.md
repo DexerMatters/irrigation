@@ -1,10 +1,13 @@
-# Reactive: a concurrent, fine-grained incremental computation system
+# Irrigation: a concurrent, fine-grained incremental computation system
 
 A Rust workspace implementing the design in
 [`plans/concurrent-incremental-system-plan.md`](plans/concurrent-incremental-system-plan.md):
 user-defined components generate dependency graphs over typed **Views**, the
 runtime records primitive-level observations, and changes repair only the
-computations whose inputs actually changed.
+computations whose inputs actually changed. The authoring surface added by
+[`plans/component-authoring-api-plan.md`](plans/component-authoring-api-plan.md)
+generates typed field handles, makes root/callable kind explicit, and gives
+`GeneralComponent` authors a macro for the boilerplate.
 
 The observable contract is:
 
@@ -15,7 +18,7 @@ The observable contract is:
 ## Quick start
 
 ```rust
-use reactive::{component, reactive, view, Runtime};
+use irrigation::prelude::*;
 
 #[view(source)]
 pub struct Inputs {
@@ -26,51 +29,52 @@ pub struct Inputs {
 #[view(derived)]
 pub struct Squares(Map<u32, u32>);
 
-#[reactive]
-mod analysis {
-    use super::{Inputs, Squares};
-
-    #[component]
-    pub fn analyze(inputs: &Inputs) -> (Squares, u64) {
-        let numbers = inputs.numbers();
-        let doubled = numbers.map(|n| *n * 2);
-        let total = doubled.iter().sum::<u64>();
-        let squares = Squares::from(numbers.map(|n| (*n * 2, *n * *n)));
-        (squares, total)
-    }
+#[component(root)]
+pub fn analyze(inputs: &Inputs) -> (Squares, u64) {
+    let numbers = inputs.numbers();
+    let doubled = numbers.map(|n| u64::from(*n) * 2);
+    let total = doubled.iter().sum::<u64>();
+    let squares = Squares::from(numbers.map(|n| (*n * 2, *n * *n)));
+    (squares, total)
 }
 
 let runtime = Runtime::new();
-runtime.install(analysis::Analyze)?;
+let app = runtime.install_root(Analyze)?;
 
-runtime.edit(|edit| {
-    let mut inputs = edit.view::<Inputs>();
+runtime.edit_view::<Inputs>(|inputs| {
     let mut numbers = inputs.numbers();
     numbers.push(1);
     numbers.push(2);
 })?;
 
 let snapshot = runtime.read()?;
-let entries = snapshot.view::<Squares>().field0();
+println!("{:?}", snapshot.view::<Squares>().value());
+let (_, total) = app.read()?;
+println!("total {total}");
 
-let subscription = runtime.observe::<Squares>(|snapshot| {
-    println!("{:?}", snapshot.view::<Squares>().field0());
+let subscription = runtime.observe_view::<Squares>(|squares| {
+    println!("{:?}", squares.value());
 });
 ```
+
+`#[component]` without an argument keeps the legacy rule (a component whose
+parameters are all `&View` is a root). New code can say `#[component(root)]` or
+`#[component(callable)]` explicitly. `#[irrigation]` is optional: a direct
+`#[component]` on a free function behaves the same.
 
 ## Architecture
 
 | Crate | Responsibility |
 |---|---|
-| `reactive-core` | identities, structured errors, ambient computation frames, type-erased values, collision-safe dynamic keys, change contracts, View descriptors |
-| `reactive-store` | persistent AVL map/sequence/set, graph and tree stores, field storage contracts |
-| `reactive-runtime` | node arena, ordered validation, change cutoff, reverse-edge invalidation, edits, derived regions, snapshots, subscriptions, worker pool, fixed points |
-| `reactive-collections` | source list/map/set with per-entity observations, tracked parameter handles, per-member operators, derived collections |
-| `reactive-macros` | `#[view]`, `#[component]`, `#[reactive]` lowering to tracked primitives |
-| `reactive-test` | deterministic generators, oracle trait, execution accounting |
-| `reactive-observe` | bounded event recorder, revision journal, View projection, std HTTP server for the board |
-| `reactive-syntax` | text → lexer → AST pipeline published as ordinary general components (a consumer, not the kernel) |
-| `reactive` | public facade |
+| `irrigation-core` | identities, structured errors, ambient computation frames, type-erased values, collision-safe dynamic keys, change contracts, View descriptors |
+| `irrigation-store` | persistent AVL map/sequence/set, graph and tree stores, field storage contracts |
+| `irrigation-runtime` | node arena, ordered validation, change cutoff, reverse-edge invalidation, edits, derived regions, snapshots, subscriptions, worker pool, fixed points |
+| `irrigation-collections` | source list/map/set with per-entity observations, tracked parameter handles, per-member operators, derived collections |
+| `irrigation-macros` | `#[view]`, `#[component(root|callable)]`, optional `#[irrigation]`, `#[tree_view]`, and `#[general_component]` lowering to tracked primitives and typed field handles |
+| `irrigation-test` | deterministic generators, oracle trait, execution accounting |
+| `irrigation-observe` | bounded event recorder, revision journal, View projection, std HTTP server for the board |
+| `irrigation-syntax` | text → lexer → AST pipeline published as ordinary general components (a consumer, not the kernel) |
+| `irrigation` | public facade |
 
 ### How a change flows
 
@@ -99,31 +103,50 @@ events and the committed Views into one live board.
 
 ```sh
 cd web/observatory && npm install && npm run build && cd ../..
-cargo run --example observatory -p reactive --features observatory
+cargo run --example observatory -p irrigation --features observatory
 # Observatory listening on http://127.0.0.1:7777
 ```
 
 The board is a single zoomable surface. Every View is a plate, drawn in its own
 idiom — a syntax tree as an outline, a token stream or a value map as rows, a
 reduction as one figure — and every component is a plate of its own, between the
-Views it reads and the Views it defines, with an ink that also marks the plates
-that produce or consume it. The layout is the runtime's own structure: ranks from
-the longest path, ordered by their neighbours, folded into as many columns as the
-window needs. A plate drags; `Tidy` puts the board back. Reading the page never
-demands computation.
+Views it reads and the Views it defines, in an ink that also colours its wires,
+ports and legend entry. The layout is the runtime's own DAG, drawn downward:
+ranks from the longest path, one horizontal band per level, and each plate sits
+over the mean centre of what feeds it — a one-to-one chain is one vertical line,
+and a merge or split reaches it through distributed ports. Every relation is a
+single cubic; a long dependency is a long smooth wire, not a detour through
+turns. The top-left minimap is a rank diagram of the whole structure, with the
+camera and the current changes marked. A plate's grip at its top-left drags it;
+a dropped plate is walked clear of its neighbours instead of overlapping them.
+Its body scrolls, selects and edits. `Overview` folds every plate to its header
+so the whole DAG fits the viewport, and opening a detail brings its content
+back. `Tidy` puts the board back. Reading the page never demands computation.
 
-Edit a source View in place: double-click the plate, type, and the change commits
-as you type. The host parses the text, the runtime stages only the units that
-differ, and the board says what moved: the plate takes a signal bar, each changed
-row takes a mark and a `changed at r<rev>` title, the footer counts the rows
+Open a View's detail with a double-click; the side panel shows the same live
+content, marks and editor as the plate. A plate folds to its header with the
+chevron when the board needs room. Edit a source View from its plate or from the
+panel: type, and the change commits as you type. The host commits the text edit,
+the framework's lexer and parser components re-run over the delta, the runtime
+stages only the units that differ,
+and the board says what moved: the plate takes a signal bar, each changed row
+takes a mark and a `changed at r<rev>` title, the footer counts the rows
 (`3 of 33 rows at r2`) or says `whole value` when the View has no per-row
 identity, a component that ran says `ran at r2`, and one that ran without
 changing anything says `same content`. Selecting an older revision on the tape
-re-annotates the board from the journal.
+re-annotates the board from the journal. A plate is drawn from its View — shape,
+entities, values, and unit versions — never from a host-supplied renderer.
 
-Three hosts ship with the workspace: the JSON pipeline, the smaller syntax
-pipeline, and the demo. Their commands, the page's editing workflow, and the
-frontend's own notes live in [`web/observatory/README.md`](web/observatory/README.md).
+Four hosts ship with the workspace: the JSON pipeline, the smaller syntax
+pipeline, the demo, and a simply typed lambda calculus whose name resolver is
+the scope-graph resolution calculus. All four install the same framework
+components; only the source text is editable, lexing and parsing are components
+on the board, and the raw AST is visible. The STLC host's scope graph is a
+`Graph` View, so the board paints it as one. Its notes, the scope-graph
+literature it follows, and the incremental experiments it encodes live in
+[`crates/irrigation/examples/stlc_scope_graphs/README.md`](crates/irrigation/examples/stlc_scope_graphs/README.md).
+The hosts' commands, the page's editing workflow, and the frontend's own notes
+live in [`web/observatory/README.md`](web/observatory/README.md).
 `--example observe_board` puts ten Views on one board, one per module kind, and
 `cargo run --release --example observe_cost` reports what recording costs on the
 scaling workload.
@@ -139,6 +162,7 @@ and [`plans/runtime-visualization-status.md`](plans/runtime-visualization-status
 | Dynamic branches; inactive branches have no active trace entries | implemented |
 | Negative dependencies (`get(k) == None`, `contains(x) == false`) | implemented |
 | Unique definitions and dispatcher-free composition | implemented |
+| Shared output arbitration: write claims, structural requirements, deferred drains, port providers | implemented, with the boundaries recorded in the plan |
 | Recursive and mutually recursive components with argument interning | implemented |
 | Transient parameters (component args and per-member `Param`) | implemented |
 | Expression-level lowering: each primitive is a node; unsupported constructs are rejected | implemented |
@@ -164,6 +188,10 @@ and [`plans/runtime-visualization-status.md`](plans/runtime-visualization-status
 | `Reduced<R>` View field with a declared lawful reduction | implemented |
 | Cache reclamation and memory accounting | implemented (`collect`, `memory_report`) |
 | Async `GeneralComponent` futures | implemented (`ComponentFuture` + `AsyncAdapter`, driven on the owning worker) |
+| Typed field handles | implemented (`Field` constants, typed reads/writes, `if let`, top-level `return`) |
+| `#[general_component]` | implemented (stateless function form and trait-impl form) |
+| Explicit component kind | implemented (`#[component(root)]` / `#[component(callable)]`) |
+| Typed install handles | implemented (`Runtime::install_root` + `Installed`, general root/producer handles) |
 
 The pending items are tracked in
 [`plans/implementation-status.md`](plans/implementation-status.md).
@@ -183,9 +211,10 @@ The pending items are tracked in
   are reused. The pool is one shared ready queue, so there are no per-worker
   deques to steal from. Parallel operators additionally use scoped threads per
   chunk, so their closures can borrow the environment.
-* **Loops and `return` are rejected** inside components. Iteration goes through
-  collection operators; the macro reports the unsupported construct instead of
-  silently coarsening it.
+* **Loops are rejected** inside components. Iteration goes through collection
+  operators; the macro reports the unsupported construct instead of silently
+  coarsening it. Top-level `return` and `if let` lower to ordinary control flow
+  with the same dependency trace.
 * **Tracked locals are cloned on use** (`observe_clone`) so a local remains
   usable after an observation. Handles are cheap to clone; large payloads should
   be `Arc`-backed by the View API.
@@ -201,11 +230,13 @@ The pending items are tracked in
 ```sh
 cargo test --workspace          # unit, kernel, macro, and acceptance-gate tests
 cargo test --release --workspace # the same suite with optimizations on
-cargo run --release --example scaling -p reactive
-cargo run --release --example reduction -p reactive
-cargo run --release --example workloads -p reactive
-cargo run --release --example parallel -p reactive
-cargo run --example name_resolver -p reactive   # AST tree view -> symbols + diagnostics
+cargo run --release --example scaling -p irrigation
+cargo run --release --example reduction -p irrigation
+cargo run --release --example workloads -p irrigation
+cargo run --release --example parallel -p irrigation
+cargo run --example name_resolver -p irrigation   # AST tree view -> symbols + diagnostics
+cargo test --example stlc_scope_graphs -p irrigation --features observatory
+cargo run --example stlc_scope_graphs -p irrigation --features observatory  # STLC + scope graphs on the page
 ```
 
 The gates CI holds, and the ones to run before a change lands:
@@ -214,9 +245,9 @@ The gates CI holds, and the ones to run before a change lands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cargo check -p reactive-runtime --no-default-features   # observation stays optional
-cargo check -p reactive --all-targets                   # and absent from the facade
-cargo build -p reactive --examples --features observatory
+cargo check -p irrigation-runtime --no-default-features   # observation stays optional
+cargo check -p irrigation --all-targets                   # and absent from the facade
+cargo build -p irrigation --examples --features observatory
 python3 scripts/check-md-links.py                        # every link in docs/plans resolves
 ```
 
@@ -266,8 +297,8 @@ The chunk threads run the member work in parallel; the remainder is the serial
 commit path, where every member re-execution takes the metadata lock to publish
 its value.
 
-Balanced reduction (`cargo run --release --example reduction -p reactive
-cargo run --release --example workloads -p reactive`) grows
+Balanced reduction (`cargo run --release --example reduction -p irrigation
+cargo run --release --example workloads -p irrigation`) grows
 logarithmically:
 
 | elements | combines for a set | combines for an insert |
@@ -278,7 +309,7 @@ logarithmically:
 | 1,000,000 | 40 | 42 | Wall time grows with the member trace the runtime must
 validate (`E_v` in the plan's cost model), not with executed user code.
 
-The acceptance gates in `crates/reactive/tests/gates.rs` cover:
+The acceptance gates in `crates/irrigation/tests/gates.rs` cover:
 
 * 2,000 randomized edit transactions checked against a from-scratch oracle;
 * no-op transactions publishing nothing;
@@ -309,7 +340,7 @@ The acceptance gates in `crates/reactive/tests/gates.rs` cover:
   concurrent host reads of a certified revision executing no node bodies,
   32 parallel members sharing one invocation under 2–4 workers without
   deadlock, and six rounds of contended host demand on a two-worker pool;
-* `crates/reactive/tests/suspension.rs`: a waiting demand yields its worker so a
+* `crates/irrigation/tests/suspension.rs`: a waiting demand yields its worker so a
   third-party demand runs and releases the blocked computation (the same test
   fails if waits park the worker), cancellation reaches a suspended task, many
   concurrent demands share one invocation across suspensions, and progress

@@ -99,7 +99,7 @@
   color: var(--ink);
 }
 
-/* --------------------------------------------------------------- renderers */
+/* ---------------------------------------------------------------- drawings */
 
 .tree,
 .list,
@@ -221,15 +221,79 @@
   color: var(--signal);
 }
 
+/* --------------------------------------------------------------- graphs */
+
+/* A graph fills its plate. The server owns the topology; this file owns the
+   picture: placed nodes, curved directed wires, arrowheads, and labels. */
 .graph-wrap {
-  padding: 6px 10px 8px;
-  overflow: auto;
+  padding: 2px 2px 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .graph-wrap svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+}
+
+.graph-wire {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 1.1;
+  opacity: 0.85;
+}
+
+.graph-wire.is-changed {
+  stroke: color-mix(in srgb, var(--signal) 70%, var(--edge));
+  opacity: 1;
+}
+
+.graph-arrow {
+  fill: var(--edge);
+}
+
+.graph-edge-label {
+  fill: var(--muted);
+  font-size: 8.5px;
+  font-variation-settings: var(--mono), "wght" 470;
+  letter-spacing: -0.01em;
+  paint-order: stroke;
+  stroke: var(--field);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.graph-node-box {
+  fill: var(--field);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.graph-node-label {
+  fill: var(--ink);
+  font-size: 9.5px;
+  font-variation-settings: var(--mono), "wght" 460;
+  letter-spacing: -0.015em;
+  pointer-events: none;
+}
+
+.graph-node.is-changed .graph-node-box {
+  fill: var(--signal-soft);
+  stroke: var(--signal);
+}
+
+.graph-node.is-suspect .graph-node-box {
+  stroke: var(--suspect);
+  stroke-dasharray: 3 2;
+}
+
+.graph-node.is-removed {
+  opacity: 0.45;
+}
+
+.graph-node-mark {
+  fill: var(--signal);
 }
 
 .adjacency {
@@ -523,4 +587,114 @@
 .glyph.hollow {
   background: transparent;
   border: 1px solid currentColor;
+}
+
+/* --------------------------------------------------------- View detail */
+
+.view-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+}
+
+.view-detail .state-line {
+  margin-top: 0;
+}
+
+.view-detail-rev {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.view-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+}
+
+.view-detail-note {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.view-detail-content {
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.view-detail-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 0 7px;
+}
+
+.field-chip-moved-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.view-detail-body {
+  max-height: min(54vh, 560px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 3px 2px;
+}
+
+.view-detail-body:focus-visible {
+  outline-offset: -2px;
+}
+
+.view-detail-body .row:hover {
+  background: var(--hover);
+}
+
+.view-detail-body-graph {
+  height: 330px;
+  max-height: 52vh;
+}
+
+.view-detail-body-graph .graph-wrap {
+  height: 100%;
+}
+
+.view-detail-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.view-detail .section-head {
+  margin-top: 16px;
+}
+
+.view-detail .kv {
+  border-top: 1px solid var(--line-soft);
+}
+
+.view-detail .kv-row {
+  padding: 5px 0;
+}
+
+@media (max-width: 1080px) {
+  .view-detail-body {
+    max-height: 30vh;
+  }
+
+  .view-detail-body-graph {
+    height: 260px;
+  }
 }

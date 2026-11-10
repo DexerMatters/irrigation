@@ -27,8 +27,9 @@ await page.waitForTimeout(800);
 const keyboard = [];
 await page.keyboard.press("Tab");
 keyboard.push(await page.evaluate(() => document.activeElement?.className ?? "none"));
-// Open the first editable card's editor from the keyboard.
-const edit = page.locator(".card-action").first();
+// Open the first editable card's editor from the keyboard. The fold control is
+// also a `.card-action`, so select the one that carries the pressed state.
+const edit = page.locator(".card-action[aria-pressed]").first();
 await edit.focus();
 keyboard.push(await page.evaluate(() => document.activeElement?.textContent ?? "none"));
 await page.keyboard.press("Enter");

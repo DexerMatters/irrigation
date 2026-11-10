@@ -14,7 +14,7 @@
 | §8.5–§8.7 concurrency, progress, failure, cancellation | implemented: pool, suspension, single-flight, wait graph on task identities, cancellation, panic isolation, progress counters, contention | suspension and concurrency gates |
 | §9 recursion and transient parameters | implemented | recursion gates |
 | §9.5 fixed points | implemented | fixed-point gates |
-| §10 public API | implemented (`#[view]`, `#[component]`, `#[reactive]`, `#[tree_view]`, `GeneralComponent` sync/async, observers with change summaries, explanations) | end-to-end tests |
+| §10 public API | implemented (`#[view]`, `#[component(root|callable)]`, optional `#[irrigation]`, `#[tree_view]`, `#[general_component]`, typed field handles, `GeneralComponent` sync/async, observers with change summaries, `Installed`, explanations) | end-to-end and authoring tests |
 | §11 architecture, effects, explainability | implemented (explain_node, docs/architecture.md) | explanation gate |
 | §12 correctness and cost model | exercised by gates; measured by examples | workload matrix |
 | §13 verification | randomized oracle and counterexample gates | gates file |
@@ -42,8 +42,8 @@ evidence is, and what remains. It is deliberately conservative: a feature is
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| Views are singleton typed namespaces per runtime | implemented | `reactive-core::descriptor`, generated `ViewSchema` impls |
-| Components are singleton generators with many invocations | implemented | `reactive-runtime::component`, invocation interning by argument equality |
+| Views are singleton typed namespaces per runtime | implemented | `irrigation-core::descriptor`, generated `ViewSchema` impls |
+| Components are singleton generators with many invocations | implemented | `irrigation-runtime::component`, invocation interning by argument equality |
 | Inputs/outputs are heterogeneous products with independent projections | implemented | separate output nodes; `changing_one_output_does_not_change_the_other` |
 | Observable result equals from-scratch evaluation | implemented | `randomized_transactions_match_from_scratch_evaluation` (2,000 transactions) |
 | Snapshot isolation | implemented | `snapshots_keep_their_revision_after_edits` |
@@ -116,7 +116,7 @@ both directions, including that an unrelated key executes no consumer work.
 | Item | Status |
 |---|---|
 | `#[view(source)]`, `#[view(derived)]` | implemented |
-| `#[reactive]` / `#[component]` | implemented |
+| `#[irrigation]` / `#[component]` / `#[general_component]` | implemented; the module wrapper is optional and an explicit `root`/`callable` kind is available |
 | `runtime.install` / `edit` / `read` / `observe` | implemented |
 | Snapshots with typed View handles | implemented |
 | `#[tree_view]` | implemented |

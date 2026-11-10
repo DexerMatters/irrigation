@@ -1,3 +1,4 @@
+import { displayName } from "./layout";
 import type { ComponentWire } from "../state/types";
 
 /**
@@ -31,7 +32,7 @@ export function componentInks(components: ComponentWire[]): ComponentInk[] {
   return components.map((component, index) => ({
     key: component.component,
     label: component.name,
-    short: component.name.split("::").pop() ?? component.name,
+    short: displayName(component.name),
     ink: INKS[index % INKS.length],
     reads: component.reads.length,
     writes: component.writes.length,

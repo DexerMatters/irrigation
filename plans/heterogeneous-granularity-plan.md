@@ -62,10 +62,10 @@ The invariants the finished system should state and test:
 
 ## 2. Audit method
 
-- Read the unit plumbing: `reactive-runtime::{inner, edit, state, helpers,
-  field}`, `reactive-store::{field, aggregate, graph, tree}`, and every handle
-  in `reactive-collections`.
-- Read every generated accessor in `reactive-macros::{view, tree}` and compared
+- Read the unit plumbing: `irrigation-runtime::{inner, edit, state, helpers,
+  field}`, `irrigation-store::{field, aggregate, graph, tree}`, and every handle
+  in `irrigation-collections`.
+- Read every generated accessor in `irrigation-macros::{view, tree}` and compared
   what the macro exposes with what the handle reads.
 - Ran the workspace suite (`cargo test --workspace`, 127 passing) and built
   small throwaway examples against the public API to confirm or refute each
@@ -122,9 +122,9 @@ from 7 executions to 0.
 
 ### F1 — Derived maps have a stale structure unit (critical)
 
-**Evidence.** `crates/reactive-collections/src/map.rs:132-180`: `keys()` reads
+**Evidence.** `crates/irrigation-collections/src/map.rs:132-180`: `keys()` reads
 `structure_unit(view, field)`, `len()` is `keys().len()`, `to_vec()` is
-`keys()` + `get()`. `crates/reactive-runtime/src/inner.rs:839-1010`:
+`keys()` + `get()`. `crates/irrigation-runtime/src/inner.rs:839-1010`:
 `apply_definitions` and `retract_unit` write per-key value/membership units and
 the region content, but never the structure unit. The source `MapEditor` writes
 it (`map.rs:331`); definitions have no equivalent. `single_field_forwarding`
@@ -144,7 +144,7 @@ updated afterwards, so the stale set depends on when that first read happened.
 **Effect.** `keys/len/is_empty/to_vec/map_values` return wrong results for
 derived maps, and `to_vec` can silently return an empty list for a non-empty
 map. `EquiJoin` reads `structure_unit` for both inputs
-(`crates/reactive-collections/src/join.rs:218-250`), so a join over derived maps
+(`crates/irrigation-collections/src/join.rs:218-250`), so a join over derived maps
 is wrong for the same reason. This contradicts the README row "Derived Map (per
 key)" and the architecture table's "structure, per-key membership, per-key
 value".
@@ -172,7 +172,7 @@ is per-unit on retraction; batching is part of the Phase 1.1 unification.
 
 ### F2 — Derived `Reduced` and `Graph` fields fail to compile with macro-internal errors (high)
 
-**Evidence.** `crates/reactive-macros/src/view.rs:503-537` is the
+**Evidence.** `crates/irrigation-macros/src/view.rs:503-537` is the
 `define_accessors` block for derived views. The `Reduced` arm emits read
 methods (`fn <field>()`, `fn <field>_aggregate()`) that reference
 `self.content`, which does not exist on the handle, and duplicates the live
@@ -208,7 +208,7 @@ then, the macro rejection itself is the deliverable.
 
 ### F3 — A committed edit returns an error and observers never fire on a source-only runtime (high)
 
-**Evidence.** `crates/reactive-runtime/src/runtime.rs:548`:
+**Evidence.** `crates/irrigation-runtime/src/runtime.rs:548`:
 `notify_subscribers` starts with `let snapshot = self.read()?;`. `read()`
 demands the installed root and fails with "no root component installed". `edit`
 commits the transaction first and calls `notify_subscribers` afterwards
@@ -236,7 +236,7 @@ edit returns `Ok`.
 
 ### F4 — Retirement can clear a node another task is executing (high, inspection)
 
-**Evidence.** `crates/reactive-runtime/src/inner.rs:694-735`: `commit` retires
+**Evidence.** `crates/irrigation-runtime/src/inner.rs:694-735`: `commit` retires
 old trace entries through `retire_unreachable`, which clears value, trace, and
 definitions and sets `state = Vacant` after checking only that the node has no
 dependents and is not a unit/content node. It does not check `is_running()` and
@@ -264,7 +264,7 @@ detect two commits for one node/revision).
 
 ### F5 — A failed definition install can leave partial region state (medium, inspection)
 
-**Evidence.** `crates/reactive-runtime/src/inner.rs:765-837`:
+**Evidence.** `crates/irrigation-runtime/src/inner.rs:765-837`:
 `install_definitions` retracts old definitions, then installs drafts view by
 view. If `apply_definitions` fails for a later view (for example
 `DefinitionDenied` for an unregistered view), the function returns `Err` after
@@ -290,7 +290,7 @@ error and that the valid unit is still undefined.
 
 ### F6 — Derived lists and sets are whole-value definitions, and per-member operators are source-only (structural)
 
-**Evidence.** `crates/reactive-collections/src/list.rs:521-575`:
+**Evidence.** `crates/irrigation-collections/src/list.rs:521-575`:
 `DerivedListRef` has one value unit and no `map/filter/flat_map`.
 `set.rs:324-375`: `DerivedSetRef` is the same. The per-member operators live in
 `impl SourceListRef` (`list.rs:114`, methods at 200/258/296).
@@ -327,7 +327,7 @@ only inside a single `map` call, not across definitions.
 
 ### F7 — Derived graphs and derived trees have no path at all (structural)
 
-**Evidence.** `crates/reactive-macros/src/tree.rs:405`: the tree descriptor
+**Evidence.** `crates/irrigation-macros/src/tree.rs:405`: the tree descriptor
 hardcodes `ViewKind::Source`; `#[tree_view]` has no derived form. Graph
 definitions fail to compile (F2). Graph snapshot accessors expose only
 `nodes/edges` (`view.rs:392-420`) while the live handle exposes topology,
@@ -350,7 +350,7 @@ design today.
 
 ### F8 — The join publishes one whole map value (structural)
 
-**Evidence.** `crates/reactive-collections/src/join.rs:196`:
+**Evidence.** `crates/irrigation-collections/src/join.rs:196`:
 `type Output = BTreeMap<Key, Joined>`. `initialize`/`update` read
 `structure_unit` of both inputs (`join.rs:218-250`). Nothing stages per-key
 units for the joined result.
@@ -372,7 +372,7 @@ but add an optional View target.
 
 ### F9 — Observation granularity is the whole View (structural)
 
-**Evidence.** `crates/reactive-runtime/src/runtime.rs` (`observe`,
+**Evidence.** `crates/irrigation-runtime/src/runtime.rs` (`observe`,
 `observe_with_changes`) subscribes per View; `notify_subscribers` fires when the
 View's content version changes; there is no per-unit or per-entry subscription.
 
@@ -391,7 +391,7 @@ version. The existing whole-View observer stays.
 
 ### F10 — Retention is lifetime-shaped, not policy-shaped (structural)
 
-**Evidence.** `crates/reactive-runtime/src/state.rs:273`: `ScopeTable` only
+**Evidence.** `crates/irrigation-runtime/src/state.rs:273`: `ScopeTable` only
 grows; `State::nodes` is an append-only `Vec` (`state.rs:396`); `collect`
 (`inner.rs`) clears records but never frees slots or prunes scopes. Component
 invocations are retained per distinct argument tuple with no bound; plan §9.2
@@ -435,7 +435,7 @@ in §1 can be checked against.
 
 ### F12 — Minor: `TaskStatus::Done` is never constructed (low)
 
-`crates/reactive-runtime/src/task.rs:37-46` defines it, `runtime.rs:415` matches
+`crates/irrigation-runtime/src/task.rs:37-46` defines it, `runtime.rs:415` matches
 it, and `finish_attempt` removes the task without assigning it. Either remove
 the variant or set it before removal so diagnostics can distinguish "finished"
 from "never existed".
@@ -470,7 +470,7 @@ present and demonstrably failing before its fix (where a reproducer exists).
    with a per-field structure value and equality: map keys, list id sequence,
    set members, graph topology, reduced sequence. This is the one runtime change
    that makes structure universal. It touches the hand-built descriptors in
-   `crates/reactive-runtime/tests/kernel.rs`; update them.
+   `crates/irrigation-runtime/tests/kernel.rs`; update them.
 2. **Runtime maintenance.** Every definition commit recomputes structure for
    the fields it touched, compares against the previous unit value, and bumps
    only on change. Retraction recomputes too. Source editors keep writing
@@ -651,7 +651,7 @@ pub struct Flag { on: bool }
 #[view(derived)]
 pub struct Registry(Map<u32, u32>);
 
-#[reactive]
+#[irrigation]
 mod m {
     use super::{Flag, Registry};
 
@@ -724,14 +724,14 @@ error[E0609]: no field `content` on type `&Topology`
 
 Files read end to end or in the relevant sections:
 
-- `crates/reactive-runtime/src/{inner,edit,state,runtime,task,demand,gate,general,helpers}.rs`
-- `crates/reactive-runtime/tests/kernel.rs`
-- `crates/reactive-collections/src/{list,map,set,graph,tree,reduce,join}.rs`
-- `crates/reactive-macros/src/{view,tree,component,lower}.rs`
-- `crates/reactive/tests/{gates,suspension,tree_view}.rs`, `crates/reactive/examples/{workloads,scaling,parallel,name_resolver}.rs`
+- `crates/irrigation-runtime/src/{inner,edit,state,runtime,task,demand,gate,general,helpers}.rs`
+- `crates/irrigation-runtime/tests/kernel.rs`
+- `crates/irrigation-collections/src/{list,map,set,graph,tree,reduce,join}.rs`
+- `crates/irrigation-macros/src/{view,tree,component,lower}.rs`
+- `crates/irrigation/tests/{gates,suspension,tree_view}.rs`, `crates/irrigation/examples/{workloads,scaling,parallel,name_resolver}.rs`
 - `README.md`, `docs/architecture.md`, `plans/{implementation-status,evidence,routing-generations-plan}.md`
 
 Commands: `cargo test --workspace --offline` (128 passing), `cargo test
 --release --workspace --offline`, `cargo clippy --workspace --all-targets
 --offline -- -D warnings`, plus the throwaway reproducers in Appendix A (run
-from `crates/reactive/examples/` and deleted afterwards).
+from `crates/irrigation/examples/` and deleted afterwards).

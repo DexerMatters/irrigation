@@ -26,15 +26,15 @@ jobs:
       # Observation is opt-in; the off state is a build contract, not a wish.
       - name: Observation off
         run: |
-          cargo check -p reactive-runtime --no-default-features --locked
-          cargo test -p reactive-runtime --no-default-features --locked
+          cargo check -p irrigation-runtime --no-default-features --locked
+          cargo test -p irrigation-runtime --no-default-features --locked
 
       # The facade must build without the observation path, and the examples
       # only with it.
       - name: Facade feature matrix
         run: |
-          cargo check -p reactive --all-targets --locked
-          cargo build -p reactive --examples --features observatory --locked
+          cargo check -p irrigation --all-targets --locked
+          cargo build -p irrigation --examples --features observatory --locked
 
   docs:
     runs-on: ubuntu-latest

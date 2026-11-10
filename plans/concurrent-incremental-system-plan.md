@@ -623,7 +623,7 @@ struct Diagnostics(List<Diagnostic>);
 ### 10.2 Functions become dependency builders
 
 ```rust
-#[reactive]
+#[irrigation]
 mod analysis {
     #[component]
     pub fn analyze(syntax: &Syntax, options: &Options)
@@ -797,15 +797,15 @@ Ordinary component users never implement this trait. It is the deliberate algori
 ### 11.1 Crate boundaries
 
 ```text
-reactive-core       schemas, typed handles, change contracts, erased descriptors
-reactive-store      revisioned units, sequence/map/graph storage, identity
-reactive-runtime    demand, validation, worker scheduling, publication, progress
-reactive-collections incremental collection operators and indexes
-reactive-macros     view/component/tree-group lowering and diagnostics
-reactive-test       from-scratch oracle hooks, event traces, property generators
+irrigation-core       schemas, typed handles, change contracts, erased descriptors
+irrigation-store      revisioned units, sequence/map/graph storage, identity
+irrigation-runtime    demand, validation, worker scheduling, publication, progress
+irrigation-collections incremental collection operators and indexes
+irrigation-macros     view/component/tree-group lowering and diagnostics
+irrigation-test       from-scratch oracle hooks, event traces, property generators
 ```
 
-These are responsibility boundaries, not a demand to publish seven packages immediately. Start in one workspace and split crates only where dependencies and compile times justify it. The macro crate must be separate because Rust requires a `proc-macro` crate. Two consumers sit outside the kernel and are not boundaries it must preserve: `reactive-observe` (the observation path and its server) and `reactive-syntax` (an incremental text/lexer/parser pipeline).
+These are responsibility boundaries, not a demand to publish seven packages immediately. Start in one workspace and split crates only where dependencies and compile times justify it. The macro crate must be separate because Rust requires a `proc-macro` crate. Two consumers sit outside the kernel and are not boundaries it must preserve: `irrigation-observe` (the observation path and its server) and `irrigation-syntax` (an incremental text/lexer/parser pipeline).
 
 ### 11.2 Heterogeneous tuples and type erasure
 
@@ -958,8 +958,8 @@ The tests were written and observed failing before the model implementation. The
 To reproduce from the directory containing the model:
 
 ```sh
-rustc --edition=2024 --test verification-model.rs -o /tmp/reactive-model-tests
-/tmp/reactive-model-tests
+rustc --edition=2024 --test verification-model.rs -o /tmp/irrigation-model-tests
+/tmp/irrigation-model-tests
 ```
 
 ### 13.3 Counterexamples used to refine the design

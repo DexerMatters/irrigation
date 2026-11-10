@@ -6,6 +6,7 @@ import type {
   NodeDetailWire,
   RevisionWire,
   Selection,
+  StatsWire,
   ViewRender,
   ViewWire,
   WorkspaceWire,
@@ -31,6 +32,7 @@ export type State = {
   historyFrom: number | null;
   views: ViewWire[];
   components: ComponentWire[];
+  stats: StatsWire;
   renders: Record<string, ViewRender>;
   renderErrors: Record<string, string>;
   loading: Record<string, boolean>;
@@ -50,6 +52,10 @@ export type State = {
   drafts: Record<string, string>;
   /** Last reply per View, replaced on the next edit. */
   replies: Record<string, { text: string; error: boolean }>;
+  /** Views the reader folded down to their header. */
+  collapsed: Record<string, boolean>;
+  /** True when every plate is folded to its header for a structural overview. */
+  overview: boolean;
 };
 
 /**
@@ -59,7 +65,12 @@ export type State = {
  */
 const storageKey = `observatory:${location.host}:canvas:v2`;
 
-type Stored = { placement?: Record<string, Placement>; camera?: Camera };
+type Stored = {
+  placement?: Record<string, Placement>;
+  camera?: Camera;
+  collapsed?: Record<string, boolean>;
+  overview?: boolean;
+};
 
 function load(): Stored {
   try {
@@ -83,6 +94,29 @@ const initial: State = {
   historyFrom: null,
   views: [],
   components: [],
+  stats: {
+    nodes: 0,
+    nodes_created: 0,
+    revisions: 0,
+    executions: 0,
+    validations: 0,
+    validation_attempts: 0,
+    validation_failures: 0,
+    execution_failures: 0,
+    cutoffs: 0,
+    suspensions: 0,
+    demands: 0,
+    notifications: 0,
+    invalidations: 0,
+    write_claims: 0,
+    write_conflicts: 0,
+    deferred_writes: 0,
+    demand_retries: 0,
+    reader_waits: 0,
+    queued: 0,
+    running: 0,
+    waiting: 0,
+  },
   renders: {},
   renderErrors: {},
   loading: {},
@@ -99,6 +133,8 @@ const initial: State = {
   editing: null,
   drafts: {},
   replies: {},
+  collapsed: stored.collapsed ?? {},
+  overview: stored.overview ?? false,
 };
 
 let state: State = initial;
@@ -113,7 +149,12 @@ function set(patch: Partial<State>, persist = false) {
     try {
       localStorage.setItem(
         storageKey,
-        JSON.stringify({ placement: state.placement, camera: state.camera }),
+        JSON.stringify({
+          placement: state.placement,
+          camera: state.camera,
+          collapsed: state.collapsed,
+          overview: state.overview,
+        }),
       );
     } catch {
       // A blocked store only loses layout, never data.
@@ -154,6 +195,24 @@ export function place(node: string, at: Placement) {
 
 export function resetLayout() {
   set({ placement: {}, camera: { x: 40, y: 40, zoom: 1 } }, true);
+}
+
+/** Fold every plate down to its header, or bring the content back. */
+export function toggleOverview() {
+  set({ overview: !state.overview }, true);
+}
+
+/** Fold one View down to its header, or open it again. */
+export function toggleCollapsed(view: string) {
+  set(
+    {
+      collapsed: {
+        ...state.collapsed,
+        [view]: !state.collapsed[view],
+      },
+    },
+    true,
+  );
 }
 
 // --------------------------------------------------------------------- views
@@ -382,6 +441,7 @@ export function applyWorkspace(workspace: WorkspaceWire, seq: number) {
     level: workspace.level,
     views: workspace.views,
     components: workspace.components,
+    stats: workspace.stats,
     dropped: workspace.dropped,
     lastNoop:
       workspace.last_noop && workspace.last_noop_revision

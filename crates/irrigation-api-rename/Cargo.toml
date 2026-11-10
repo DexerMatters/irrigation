@@ -1,0 +1,14 @@
+[package]
+name = "irrigation-api-rename"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Compile fixture: the macros resolve a renamed facade dependency"
+
+[lints]
+workspace = true
+
+[dependencies]
+irr = { package = "irrigation", path = "../irrigation" }

@@ -1,0 +1,23 @@
+[package]
+name = "irrigation-observe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-only observation and projection for the incremental runtime"
+
+[lints]
+workspace = true
+
+[dependencies]
+irrigation-core.workspace = true
+irrigation-runtime = { workspace = true, features = ["observe"] }
+irrigation-collections.workspace = true
+irrigation-store.workspace = true
+crossbeam-queue.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+irrigation.workspace = true

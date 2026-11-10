@@ -1,6 +1,7 @@
+import type { CSSProperties } from "react";
 import { select, useStore } from "../state/store";
 import type { ComponentWire, Placement } from "../state/types";
-import { COMPONENT_BOX, componentNode, shortName } from "./layout";
+import { COMPONENT_BOX, componentNode, displayName } from "./layout";
 import { useNodeDrag } from "./drag";
 
 /**
@@ -37,9 +38,12 @@ export function ComponentCard({
   const stale = component.suspect_at === revision && component.suspect_at > 0;
   const flow = `${component.reads.length}→${component.writes.length}`;
 
+  const openFacts = () => {
+    void select({ kind: "component", key: component.component, label: component.name });
+  };
+
   return (
-    <button
-      type="button"
+    <div
       className={[
         "component",
         ran ? "component-changed" : "",
@@ -47,32 +51,64 @@ export function ComponentCard({
       ]
         .filter(Boolean)
         .join(" ")}
-      style={{
-        left: at.x,
-        top: at.y,
-        width: COMPONENT_BOX.width,
-        height: COMPONENT_BOX.height,
-      }}
+      style={
+        {
+          left: at.x,
+          top: at.y,
+          width: COMPONENT_BOX.width,
+          height: COMPONENT_BOX.height,
+          "--component-ink": ink,
+        } as CSSProperties
+      }
       data-blink={ran ? "1" : undefined}
       data-component={component.component}
-      {...drag}
-      onClick={(event) => {
-        event.stopPropagation();
-        void select({ kind: "component", key: component.component, label: component.name });
-      }}
-      title={`${component.name} · ${component.kind} component · reads ${component.reads.length}, defines ${component.writes.length}`}
+      onPointerDown={(event) => event.stopPropagation()}
     >
-      <span className="chip-line">
-        <span className="chip-port" style={{ background: ink }} aria-hidden="true" />
-        <span className="chip-name">{shortName(component.name)}</span>
-        <span className="chip-flow mono">{flow}</span>
-      </span>
-      <span className="chip-line chip-meta">
-        <span className="chip-kind">{component.kind}</span>
-        <span className={["chip-state", ran ? "ran" : "", stale ? "stale" : ""].filter(Boolean).join(" ")}>
-          {ran ? `ran r${component.executed_at}` : `last r${component.executed_at}`}
+      <button
+        type="button"
+        className="component-grip"
+        {...drag}
+        aria-label={`Drag ${displayName(component.name)}`}
+        title="Drag this component"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <GripIcon />
+      </button>
+      <button
+        type="button"
+        className="component-facts"
+        onClick={(event) => {
+          event.stopPropagation();
+          openFacts();
+        }}
+        title={`${component.name} · ${component.kind} component · reads ${component.reads.length}, defines ${component.writes.length}`}
+      >
+        <span className="chip-line">
+          <span className="chip-name">{displayName(component.name)}</span>
+          <span className="chip-flow mono">{flow}</span>
         </span>
-      </span>
-    </button>
+        <span className="chip-line chip-meta">
+          <span className="chip-kind">{component.kind}</span>
+          <span className={["chip-state", ran ? "ran" : "", stale ? "stale" : ""].filter(Boolean).join(" ")}>
+            {ran ? `ran r${component.executed_at}` : `last r${component.executed_at}`}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg className="grip-icon" viewBox="0 0 10 14" width="10" height="14" aria-hidden="true">
+      <g fill="currentColor">
+        <circle cx="3" cy="3" r="1.1" />
+        <circle cx="7" cy="3" r="1.1" />
+        <circle cx="3" cy="7" r="1.1" />
+        <circle cx="7" cy="7" r="1.1" />
+        <circle cx="3" cy="11" r="1.1" />
+        <circle cx="7" cy="11" r="1.1" />
+      </g>
+    </svg>
   );
 }

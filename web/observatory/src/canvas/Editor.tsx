@@ -1,3 +1,4 @@
+import { displayName } from "./layout";
 import { useEffect, useRef } from "react";
 import { commitText, scheduleCommit, setDraft, useStore } from "../state/store";
 import type { ViewWire } from "../state/types";
@@ -60,5 +61,5 @@ export function Editor({ view }: { view: ViewWire }) {
 }
 
 export function short(name: string): string {
-  return name.split("::").pop() ?? name;
+  return displayName(name);
 }

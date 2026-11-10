@@ -1,0 +1,25 @@
+[package]
+name = "irrigation-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Emit runtime observation events and expose the projection methods. Off by
+# default: the `irrigation` facade turns it on through its `observatory` feature.
+observe = []
+
+[dependencies]
+parking_lot.workspace = true
+smallvec.workspace = true
+irrigation-core.workspace = true
+irrigation-store.workspace = true
+
+[dev-dependencies]
+irrigation-test.workspace = true

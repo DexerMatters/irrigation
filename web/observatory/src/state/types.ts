@@ -26,7 +26,12 @@ export type MapRow = RowBase & { label: string; value: string | null };
 export type SetMember = RowBase & { member: string; present: boolean };
 export type ScalarRow = RowBase & { label: string; value: string };
 
-export type GraphNode = { id: string; label: string; unit: UnitWire | null; state: RowState };
+export type GraphNode = {
+  id: string;
+  label: string;
+  unit: UnitWire | null;
+  state: RowState;
+};
 export type GraphEdge = { from: string; to: string; label: string | null };
 
 export type Model =
@@ -50,7 +55,6 @@ export type ViewRender = {
   view: string;
   content_version: number;
   revision: number;
-  source: string;
   inconsistent: boolean;
   fields: FieldRender[];
 };
@@ -64,9 +68,6 @@ export type FieldWire = {
   elements: number | null;
   content_version: number;
   changed_units: number;
-  /** `host` when the host registered a drawing, `generic` when the server
-   *  built one from the runtime's facts. */
-  render: "host" | "generic";
 };
 
 export type ViewWire = {
@@ -75,6 +76,7 @@ export type ViewWire = {
   kind: "source" | "derived";
   fields: FieldWire[];
   producer: string | null;
+  contributors: string[];
   routing: number;
   content_version: number;
   demanded: boolean;
@@ -97,6 +99,7 @@ export type ComponentWire = {
 
 export type StatsWire = {
   nodes: number;
+  nodes_created: number;
   revisions: number;
   executions: number;
   validations: number;
@@ -107,6 +110,11 @@ export type StatsWire = {
   demands: number;
   notifications: number;
   invalidations: number;
+  write_claims: number;
+  write_conflicts: number;
+  deferred_writes: number;
+  demand_retries: number;
+  reader_waits: number;
   queued: number;
   running: number;
   waiting: number;

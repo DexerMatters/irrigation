@@ -17,7 +17,7 @@
 }
 
 .stage-split {
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 420px;
 }
 
 .canvas {
@@ -62,17 +62,17 @@
 
 .links path.edge {
   fill: none;
-  stroke-width: 1.4;
-  opacity: 0.32;
+  stroke-width: 1.5;
+  opacity: 0.5;
   transition: opacity 120ms linear, stroke-width 120ms linear;
 }
 
 /* A read is the lighter relation: the View feeds the component. A write is what
    the component publishes, drawn solid. */
 .links.reads path.edge {
-  stroke-width: 1;
+  stroke-width: 1.2;
   stroke-dasharray: 2.5 3.5;
-  opacity: 0.22;
+  opacity: 0.4;
 }
 
 .links.hot path.edge {
@@ -95,7 +95,7 @@
   opacity: 0.25;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1520px) {
   .hud-hint {
     display: none;
   }}
@@ -117,12 +117,12 @@
   border: 1px solid var(--line);
   border-top: 2px solid var(--line);
   border-radius: 2px;
-  cursor: grab;
+  cursor: default;
   user-select: none;
 }
 
-.card:active {
-  cursor: grabbing;
+.card-collapsed .card-head {
+  border-bottom: 0;
 }
 
 .card-changed::before {
@@ -151,9 +151,9 @@
 .card-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   height: 30px;
-  padding: 0 8px 0 9px;
+  padding: 0 6px 0 4px;
   border-bottom: 1px solid var(--line-soft);
   flex: none;
 }
@@ -189,6 +189,52 @@
   font-size: 12px;
 }
 
+/* The grip is the only draggable part of a plate. Everywhere else the pointer
+   selects, scrolls, edits or opens the plate. */
+.card-grip,
+.component-grip {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 17px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--faint);
+  cursor: grab;
+  touch-action: none;
+}
+
+.card-grip:hover,
+.component-grip:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.card-grip:active,
+.component-grip:active {
+  cursor: grabbing;
+}
+
+.grip-icon {
+  display: block;
+  opacity: 0.9;
+}
+
+.card-fold {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  padding: 0;
+  color: var(--faint);
+}
+
+.card-fold:hover {
+  color: var(--ink);
+}
+
 .card-action {
   border: 1px solid var(--line);
   background: transparent;
@@ -210,24 +256,25 @@
   min-height: 0;
   overflow: auto;
   cursor: auto;
-  /* A row is a hit target, not a paragraph: dragging a card must not leave a
-     selection behind. The editor below opts back in. */
-  user-select: none;
+  /* Text is text: the grip drags the plate, the body selects and scrolls. */
+  user-select: text;
+  -webkit-user-select: text;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
   padding: 3px 0;
+}
+
+/* A short projection sits in the middle of the level's band instead of leaving
+   one empty strip above the footer. A tall one still starts at the top. */
+.card-body-inner {
+  margin-block: auto;
 }
 
 .editor-area,
 .inspector {
   user-select: text;
   -webkit-user-select: text;
-}
-
-.generic-note {
-  color: var(--faint);
-  font-size: 10.5px;
-  font-variation-settings: var(--mono), "wght" 450;
-  letter-spacing: 0.02em;
-  margin-right: 2px;
 }
 
 .card-foot {
@@ -560,26 +607,59 @@
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 4px 8px 4px 7px;
+  padding: 0;
   text-align: left;
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--component-ink) 20%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--component-ink) 55%, var(--line));
   border-radius: 2px;
-  cursor: grab;
+  cursor: default;
   user-select: none;
 }
 
-.component:hover {
-  background: var(--raised);
+/* Two sibling controls: the grip drags, the body opens facts. */
+.component-facts {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 4px 8px 4px 22px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.component:active {
-  cursor: grabbing;
+.component-facts:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
+}
+
+.component-grip {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+
+.component:hover {
+  background: color-mix(in srgb, var(--component-ink) 28%, var(--raised));
+  border-color: color-mix(in srgb, var(--component-ink) 70%, var(--line));
+}
+
+.component:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
 }
 
 .component-changed {
-  background: var(--signal-soft);
-  border-color: color-mix(in srgb, var(--signal) 45%, var(--line));
+  background: color-mix(in srgb, var(--component-ink) 32%, var(--panel));
+  border-color: color-mix(in srgb, var(--component-ink) 72%, var(--line));
 }
 
 .component-selected {
@@ -593,13 +673,6 @@
   gap: 5px;
   min-width: 0;
   white-space: nowrap;
-}
-
-.chip-port {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 1px;
 }
 
 .chip-name {
@@ -720,6 +793,9 @@
   color: var(--faint);
   font-size: 11.5px;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .field-chip {
@@ -740,6 +816,26 @@
   border-color: var(--line);
   background: var(--panel);
   color: var(--ink);
+}
+
+/* A field the runtime reports changed at the revision on screen. The dot is a
+   hint, never the only carrier: the chip's title and its screen-reader text say
+   which field and which revision. */
+.field-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.field-chip-moved {
+  color: var(--ink);
+}
+
+.field-chip-moved .field-dot,
+.card-fields-single.field-chip-moved .field-dot {
+  background: var(--signal);
 }
 
 /* ------------------------------------------------------------------ chips */
@@ -871,6 +967,91 @@
 @media (max-width: 620px) {
   .hud-sep,
   .legend {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------- minimap */
+
+/* The whole structure, in a fixed window. It is a map, not a second board:
+   solid field, one muted wire colour, and the camera as the only strong mark. */
+.minimap {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  width: 166px;
+  height: 208px;
+  padding: 7px 8px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  user-select: none;
+}
+
+
+.minimap svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  cursor: crosshair;
+  touch-action: none;
+  outline: none;
+}
+
+.minimap svg:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.mini-camera {
+  fill: var(--muted);
+  opacity: 0.8;
+}
+
+.mini-links path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+  opacity: 0.86;
+}
+
+/* Fill opacity, not element opacity: the changed outline must stay readable
+   even on a small component block. */
+.mini-node.mini-view {
+  fill: var(--muted);
+  fill-opacity: 0.72;
+}
+
+.mini-node.mini-component {
+  fill: var(--muted);
+  fill-opacity: 0.96;
+}
+
+/* A changed subset gets a small dot, not an outline around every bar. */
+.mini-dot {
+  fill: var(--signal);
+}
+
+.mini-links path.mini-link-long {
+  opacity: 0.24;
+  stroke-width: 0.8;
+}
+
+.mini-links path.mini-link-hot {
+  opacity: 1;
+  stroke-width: 1.3;
+}
+
+.mini-links path.mini-link-long.mini-link-hot {
+  opacity: 0.55;
+  stroke-width: 1;
+}
+
+@media (max-width: 900px) {
+  .minimap {
     display: none;
   }
 }

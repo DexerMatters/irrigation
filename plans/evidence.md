@@ -5,11 +5,11 @@ file lists them so a reviewer can run one command per claim.
 
 ```sh
 cargo test --workspace                # everything below
-cargo test -p reactive --test gates   # acceptance gates
-cargo test -p reactive-runtime --test kernel   # kernel semantics
-cargo test -p reactive --test end_to_end       # macro surface
-cargo test -p reactive --test tree_view        # tree family
-cargo test -p reactive --test suspension       # suspended demand
+cargo test -p irrigation --test gates   # acceptance gates
+cargo test -p irrigation-runtime --test kernel   # kernel semantics
+cargo test -p irrigation --test end_to_end       # macro surface
+cargo test -p irrigation --test tree_view        # tree family
+cargo test -p irrigation --test suspension       # suspended demand
 ```
 
 ## Suspension (§8.5–§8.7)

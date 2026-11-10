@@ -1,5 +1,5 @@
-import { useMemo } from "react";
 import type { Model, RowState } from "../state/types";
+import { GraphView } from "./Graph";
 
 /** The words a mark stands for, so the mark is never the only carrier. */
 function markWords(state: RowState, revision: number): string | null {
@@ -108,7 +108,9 @@ export function ModelView({
               selected={selectedRow === row.key}
               revision={revision}
               onSelect={() => onSelectRow(row.key, `${row.kind} ${row.label}`)}
-              title={`${row.kind} at depth ${row.depth}`}
+              title={[`${row.kind} at depth ${row.depth}`, row.label, row.value]
+                .filter(Boolean)
+                .join(" · ")}
             >
               <span className="tree-depth" style={{ width: row.depth * 14 }} aria-hidden="true" />
               <span className="row-kind">{row.kind}</span>
@@ -131,6 +133,7 @@ export function ModelView({
               selected={selectedRow === row.key}
               revision={revision}
               onSelect={() => onSelectRow(row.key, `item ${row.index}`)}
+              title={row.value}
             >
               <span className="row-index mono">{row.index}</span>
               <span className="row-value">{row.value}</span>
@@ -151,6 +154,7 @@ export function ModelView({
               selected={selectedRow === row.key}
               revision={revision}
               onSelect={() => onSelectRow(row.key, row.label)}
+              title={`${row.label} = ${row.value ?? "absent"}`}
             >
               <span className="map-key">{row.label}</span>
               <span className="row-value">{row.value ?? "absent"}</span>
@@ -168,7 +172,9 @@ export function ModelView({
               <span
                 key={`${member.key}:${revision}`}
                 className={`chip ${member.present ? "present" : ""} state-${stateOf(member.state)}`}
-                title={markWords(stateOf(member.state), revision) ?? undefined}
+                title={[member.member, markWords(stateOf(member.state), revision)]
+                  .filter(Boolean)
+                  .join(" · ")}
               >
                 {member.member}
                 <Mark state={stateOf(member.state)} revision={revision} />
@@ -188,6 +194,7 @@ export function ModelView({
               selected={selectedRow === row.key}
               revision={revision}
               onSelect={() => onSelectRow(row.key, row.label)}
+              title={`${row.label} = ${row.value ?? "absent"}`}
             >
               <span className="map-key">{row.label}</span>
               <span className="row-value">{row.value}</span>
@@ -220,102 +227,4 @@ export function ModelView({
         </p>
       );
   }
-}
-
-/** A small deterministic layout: BFS layers, no force simulation. */
-function GraphView({ model }: { model: Extract<Model, { kind: "graph" }> }) {
-  const layout = useMemo(() => {
-    const adjacency = new Map<string, string[]>();
-    for (const node of model.nodes) adjacency.set(node.id, []);
-    for (const edge of model.edges) {
-      adjacency.get(edge.from)?.push(edge.to);
-      adjacency.get(edge.to)?.push(edge.from);
-    }
-    const depth = new Map<string, number>();
-    const roots = model.nodes.length > 0 ? [model.nodes[0].id] : [];
-    for (const root of roots) {
-      depth.set(root, 0);
-      const queue = [root];
-      while (queue.length > 0) {
-        const current = queue.shift() as string;
-        for (const next of adjacency.get(current) ?? []) {
-          if (!depth.has(next)) {
-            depth.set(next, (depth.get(current) ?? 0) + 1);
-            queue.push(next);
-          }
-        }
-      }
-    }
-    const layers = new Map<number, string[]>();
-    for (const node of model.nodes) {
-      const level = depth.get(node.id) ?? 0;
-      const bucket = layers.get(level) ?? [];
-      bucket.push(node.id);
-      layers.set(level, bucket);
-    }
-    const positions = new Map<string, { x: number; y: number }>();
-    const levels = [...layers.keys()].sort((a, b) => a - b);
-    levels.forEach((level, column) => {
-      const ids = layers.get(level) ?? [];
-      ids.forEach((id, row) => {
-        positions.set(id, { x: 24 + column * 84, y: 24 + row * 44 });
-      });
-    });
-    const width = Math.max(160, 48 + levels.length * 84);
-    const height = Math.max(
-      80,
-      40 + Math.max(...[...layers.values()].map((ids) => ids.length), 1) * 44,
-    );
-    return { positions, width, height };
-  }, [model]);
-
-  return (
-    <div className="graph-wrap">
-      <svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="group" aria-label="Module graph">
-        {model.edges.map((edge, index) => {
-          const from = layout.positions.get(edge.from);
-          const to = layout.positions.get(edge.to);
-          if (!from || !to) return null;
-          return (
-            <line
-              key={`${edge.from}-${edge.to}-${index}`}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke="#b9c6be"
-              strokeWidth={1}
-            />
-          );
-        })}
-        {model.nodes.map((node) => {
-          const position = layout.positions.get(node.id);
-          if (!position) return null;
-          const fill = node.state === "changed" ? "var(--signal-soft)" : "var(--field)";
-          return (
-            <g key={node.id}>
-              <rect
-                x={position.x - 6}
-                y={position.y - 6}
-                width={54}
-                height={18}
-                rx={2}
-                fill={fill}
-                stroke="var(--line)"
-              />
-              <text
-                x={position.x}
-                y={position.y + 7}
-                fontSize={9}
-                fill="var(--ink)"
-                className="mono"
-              >
-                {node.label.slice(0, 7)}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
 }
