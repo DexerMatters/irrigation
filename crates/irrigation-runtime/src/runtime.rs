@@ -1083,6 +1083,15 @@ impl Runtime {
         }
     }
 
+    /// Reclaims before a demand when the configured interval has elapsed.
+    ///
+    /// Called at the front of the four demand roots -- `read_outputs`, `read_projection`,
+    /// `read_outputs_general` and `call` -- and deliberately nowhere else. Those are the entry points
+    /// that *create* work: a root's nodes, its projections, a host call. Annotation-free reads such as
+    /// [`Self::read`] and the inspection surface only observe what already exists, so a host that polls
+    /// them cannot grow the graph and has nothing to reclaim. Keeping the call at the four roots rather
+    /// than inside the shared demand path is intentional: the shared path runs under the metadata lock,
+    /// and `maybe_collect` takes that same lock.
     fn auto_collect(&self) {
         let _ = self.inner.maybe_collect();
     }
