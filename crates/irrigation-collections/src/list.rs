@@ -1534,6 +1534,13 @@ impl ListOutputExt for irrigation_runtime::general::GeneralCx {
     ) where
         T: Clone + PartialEq + Send + Sync + 'static,
     {
+        // The handle publisher claims this field through `write_group`; a
+        // general component has to claim it explicitly, or two publishers of one
+        // field race without arbitration. The tree publisher does the same.
+        self.claim_scope(
+            irrigation_core::descriptor::WriteScope::Field(view, field),
+            "list_output_keyed",
+        );
         let items: PSeq<(u64, T)> = items.into_iter().collect();
         let ids: PSeq<u64> = items.iter().map(|(id, _)| *id).collect();
         for (id, value) in items.iter() {
