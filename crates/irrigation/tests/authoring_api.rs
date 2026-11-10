@@ -558,7 +558,13 @@ fn two_closure_joins_over_the_same_fields_are_rejected() {
         |left: &u64, right: &u64| left + right,
     )
     .publish_to(JoinedRows::ROWS);
-    assert!(runtime.install_general_producer(second).is_err());
+    let error = runtime
+        .install_general_producer(second)
+        .expect_err("a second producer for the same View must be refused");
+    assert!(
+        format!("{error}").contains("already has a producer"),
+        "the refusal names the contended View: {error}"
+    );
 }
 
 #[view(derived)]

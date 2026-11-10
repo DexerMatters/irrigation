@@ -134,7 +134,13 @@ fn ordinary_root_component_demands_a_general_producer() {
 fn a_view_has_exactly_one_general_producer() {
     let runtime = Runtime::new();
     runtime.install_general_producer(Producer).expect("first");
-    assert!(runtime.install_general_producer(Producer).is_err());
+    let error = runtime
+        .install_general_producer(Producer)
+        .expect_err("a second producer for the same View must be refused");
+    assert!(
+        format!("{error}").contains("component id is already installed"),
+        "the refusal names the duplicate, not some other install failure: {error}"
+    );
 }
 
 struct NoOutput;
