@@ -7,6 +7,8 @@
 use super::*;
 
 /// Adds a row for every entity the content order names that no cell backs.
+#[cfg(feature = "observe")]
+#[allow(dead_code)]
 ///
 /// The board draws one row per entity and spells each row's value through the content
 /// projection, so an entity the content defines must be listed even when nothing has

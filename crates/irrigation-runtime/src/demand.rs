@@ -250,7 +250,12 @@ impl Inner {
             // The abandoned attempt's staged groups are not this retry's: a group
             // it deferred would otherwise be drained by the next attempt, which
             // publishes a superseded write set and invalidates its dependents for
-            // work it is about to redo.
+            // work it is about to redo. `reassign_pending_writes` with no parent is
+            // that discard -- its doc names "a retried attempt" as the case that has
+            // no drain left for the group.
+            if !exhausted {
+                Self::reassign_pending_writes(&mut state, id, None);
+            }
             drop(state);
             // The arbitration is host code: emit it once the transition it
             // reports is complete and the metadata lock is released.
