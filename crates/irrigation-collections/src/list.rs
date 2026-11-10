@@ -6,9 +6,15 @@
 //! existing element's payload observation untouched, which is what keeps
 //! identity-based mapped work alive across an insertion.
 //!
-//! A derived list is defined as one whole value. A producer that reconstructs a
-//! sequence has no occurrence identity to offer, and the plan requires that
-//! boundary to be explicit rather than guessed from content equality.
+//! A derived list has two publication modes, and the producer chooses per
+//! definition rather than letting the runtime guess from content equality.
+//!
+//! `define_all` states the sequence as one whole value: a producer that
+//! reconstructs a sequence has no occurrence identity to offer, so every
+//! restatement is a new sequence. `define_keyed` states it as one value draft per
+//! element plus a `Structure` draft, and that structure draft is what declares
+//! the keyed protocol — the same protocol a source list carries, so an element's
+//! payload observation survives a reorder or an insertion elsewhere.
 
 use std::any::Any;
 use std::marker::PhantomData;
@@ -291,9 +297,10 @@ where
 
     /// Maps every element through `f`, memoizing per element identity.
     ///
-    /// The closure receives a [`Param`] that records the element observation on
-    /// every dereference, so a primitive inside the closure depends on exactly
-    /// the element it read. With more than one worker, chunks run in parallel;
+    /// The closure receives a `Param` (`irrigation_runtime::Param`, which this
+    /// crate does not depend on) that records the element observation on every
+    /// dereference, so a primitive inside the closure depends on exactly the
+    /// element it read. With more than one worker, chunks run in parallel;
     /// the result order is fixed by element order, not completion order.
     #[must_use]
     pub fn map<U, F>(&self, f: F) -> Vec<U>

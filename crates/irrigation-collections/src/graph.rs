@@ -440,12 +440,13 @@ where
         )
     }
 
-    /// Reads the graph's *published* topology.
+    /// Reads the graph's topology: its nodes and edges in order.
     ///
-    /// This is the `Structure` unit's value, not the committed content. A
-    /// shared graph can publish a manifest that is a subgraph (see
-    /// [`Self::define_topology`]); use [`Self::content_topology`] to read the
-    /// committed union of every writer instead.
+    /// The answer is the `Structure` unit's value, which the field's owner
+    /// publishes with the graph it defines. There is no separate published
+    /// manifest to compare it against: the abandoned `define_topology` /
+    /// `content_topology` split was removed, and `nodes` / `edges` read this
+    /// same whole graph.
     #[must_use]
     pub fn topology(&self) -> GraphTopology {
         read_unit_value(self.topology_unit(), |content| {
@@ -629,8 +630,9 @@ where
     ///
     /// Use this when the same write group defines both endpoints (a builder
     /// emitting a complete graph fragment). [`Self::define_edge`] is the checked
-    /// form for an edge whose endpoints may come from another writer or a
-    /// [`PortProvider`]; it waits or defers instead of trusting the caller.
+    /// form for an edge whose endpoints may come from another writer or a port
+    /// provider (`irrigation_runtime::PortProvider`, which this crate does not
+    /// depend on); it waits or defers instead of trusting the caller.
     ///
     /// The edge still claims its own port, so two writers cannot define the
     /// same edge. The caller is responsible for both node definitions being in
