@@ -765,6 +765,16 @@ impl Runtime {
         &self,
         callback: impl Fn(&Snapshot) + Send + Sync + 'static,
     ) -> Result<Subscription> {
+        self.subscribe::<V>(crate::state::Observer::Plain(Arc::new(callback)))
+    }
+
+    /// Registers one subscription, whatever the callback shape.
+    ///
+    /// Both public observers did this themselves, in twenty identical lines that
+    /// differed only in the `Observer` variant -- including the seeding of
+    /// `last_version` from the region's content version, which decides whether the
+    /// first refresh is owed a callback.
+    fn subscribe<V: ViewSchema>(&self, observer: crate::state::Observer) -> Result<Subscription> {
         if self.inner.view_descriptor(V::view_id()).is_none() {
             return Err(ComputeError::internal(format!(
                 "cannot observe unregistered view `{}`",
@@ -782,7 +792,7 @@ impl Runtime {
         state.subscriptions.push(SubscriptionRecord {
             id,
             view: V::view_id(),
-            callback: crate::state::Observer::Plain(Arc::new(callback)),
+            callback: observer,
             last_version: version,
             units: Vec::new(),
             last_versions: Vec::new(),
@@ -977,35 +987,7 @@ impl Runtime {
         &self,
         callback: impl Fn(&Snapshot, &crate::snapshot::ChangeSummary) + Send + Sync + 'static,
     ) -> Result<Subscription> {
-        if self.inner.view_descriptor(V::view_id()).is_none() {
-            return Err(ComputeError::internal(format!(
-                "cannot observe unregistered view `{}`",
-                V::DESCRIPTOR.name
-            )));
-        }
-        let mut state = self.inner.lock();
-        let id = state.next_subscription;
-        state.next_subscription += 1;
-        let active = Arc::new(AtomicBool::new(true));
-        let version = state
-            .regions
-            .get(&V::view_id())
-            .map_or(0, |region| state.node(region.content_node).changed_at);
-        state.subscriptions.push(SubscriptionRecord {
-            id,
-            view: V::view_id(),
-            callback: crate::state::Observer::WithChanges(Arc::new(callback)),
-            last_version: version,
-            units: Vec::new(),
-            last_versions: Vec::new(),
-            routing: false,
-            active: Arc::clone(&active),
-        });
-        Ok(Subscription {
-            inner: Arc::clone(&self.inner),
-            id,
-            active,
-        })
+        self.subscribe::<V>(crate::state::Observer::WithChanges(Arc::new(callback)))
     }
 
     /// Number of worker threads available to derived computation.
