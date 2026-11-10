@@ -16,6 +16,17 @@ impl Inner {
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
+        // `state.lock()` is a non-reentrant mutex, so a thread that calls back
+        // into the runtime from inside host code running under it would wait on
+        // itself forever. Host code does run under it — an argument `PartialEq`
+        // during invocation matching, and a unit accessor's initializer — so the
+        // case is reachable, and a named refusal beats a silent hang.
+        if user_code_depth() > 0 {
+            panic_engine(ComputeError::ReentrantUse {
+                operation: "runtime accessor",
+                reason: "host code is running under the metadata lock and called back into the runtime",
+            });
+        }
         self.state.lock()
     }
 

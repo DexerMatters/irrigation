@@ -277,7 +277,7 @@ impl RuntimeOps for Inner {
         let revision = state.revision;
         if let Some(entries) = state.invocations.get_mut(&(component, args_hash)) {
             for invocation in entries.iter_mut() {
-                if args_eq(invocation.args.as_ref(), args.as_ref()) {
+                if under_user_code(|| args_eq(invocation.args.as_ref(), args.as_ref())) {
                     invocation.last_used = revision;
                     return (invocation.body, invocation.outputs.clone());
                 }

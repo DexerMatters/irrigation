@@ -213,6 +213,46 @@ fn node_is_live(state: &State, id: NodeId) -> bool {
         .is_some_and(|record| record.generation == id.generation() && !record.freed)
 }
 
+thread_local! {
+    /// Depth of host callbacks currently running under the metadata lock.
+    ///
+    /// The lock is a `parking_lot::Mutex`, so a callback that asks the runtime
+    /// for anything would wait on the mutex its own thread holds. Nothing can be
+    /// done about the wait from inside the mutex, so the entry point refuses
+    /// instead: this counter is how `Inner::lock` knows the call came from host
+    /// code the runtime itself invoked.
+    static USER_CODE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// How many host callbacks are running on this thread under the lock.
+pub(super) fn user_code_depth() -> u32 {
+    USER_CODE.with(std::cell::Cell::get)
+}
+
+/// Marks the span in which host code runs under the metadata lock.
+#[must_use]
+pub(super) struct UserCode;
+
+impl UserCode {
+    /// Enters one host callback.
+    pub(super) fn enter() -> Self {
+        USER_CODE.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for UserCode {
+    fn drop(&mut self) {
+        USER_CODE.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// Runs host code that the runtime invokes while the metadata lock is held.
+pub(super) fn under_user_code<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = UserCode::enter();
+    f()
+}
+
 /// The committed presence a membership cell stores, when it holds one.
 fn membership_of(state: &State, node: NodeId) -> Option<bool> {
     state
@@ -416,14 +456,14 @@ impl Inner {
                 && !state.unit_owned_by_live_provider(&typed)
                 && Self::cell_is_unfilled(&state, node);
             if stale || unfilled {
-                let initial = init(Self::region_content(&state, view).as_ref());
+                let initial = under_user_code(|| init(Self::region_content(&state, view).as_ref()));
                 if stale || initial.is_some() {
                     Self::republish_cell(&mut state, node, initial);
                 }
             }
             return node;
         }
-        let initial = init(Self::region_content(&state, view).as_ref());
+        let initial = under_user_code(|| init(Self::region_content(&state, view).as_ref()));
         Self::ensure_unit_node(&mut state, typed, initial)
     }
 
@@ -1626,6 +1666,47 @@ pub struct MemoryReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Host code the runtime invokes with the metadata lock held must not be
+    /// able to wait on that lock: a `parking_lot::Mutex` has no reentrancy, so
+    /// the call would hang the worker forever. It is refused by name instead.
+    #[test]
+    fn a_unit_initializer_that_calls_back_is_refused() {
+        let inner = Inner::new(RuntimeConfig::default());
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            inner.unit_node_init(
+                irrigation_core::ids::ViewId(0x6161),
+                irrigation_core::key::any_key(1u32),
+                &mut |_content| {
+                    let _ = inner.memory_report();
+                    None
+                },
+            )
+        }));
+        assert!(
+            outcome.is_err(),
+            "host code calling back under the metadata lock must be refused, not deadlocked"
+        );
+    }
+
+    /// The refusal is scoped to host code: an ordinary initializer still runs.
+    #[test]
+    fn an_ordinary_unit_initializer_is_not_refused() {
+        let inner = Inner::new(RuntimeConfig::default());
+        let first = inner.unit_node_init(
+            irrigation_core::ids::ViewId(0x6262),
+            irrigation_core::key::any_key(1u32),
+            &mut |_content| None,
+        );
+        // The same unit answers with the same cell, so the guard did not disturb
+        // the ordinary path.
+        let again = inner.unit_node_init(
+            irrigation_core::ids::ViewId(0x6262),
+            irrigation_core::key::any_key(1u32),
+            &mut |_content| None,
+        );
+        assert_eq!(first, again);
+    }
 
     #[test]
     fn wait_cycles_reports_a_task_cycle() {
