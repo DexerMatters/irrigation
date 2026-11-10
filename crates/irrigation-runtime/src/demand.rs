@@ -29,6 +29,15 @@ impl Inner {
         cause: DemandCause,
         body: impl FnMut() -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        // The edit closure holds the write side of the gate; a demand from
+        // inside it would wait for a permit only this thread can release, so it
+        // is refused before any branch below can wait.
+        if crate::gate::in_edit() {
+            return Err(ComputeError::ReentrantUse {
+                operation: "read",
+                reason: "an edit transaction is open on this thread and holds the revision gate",
+            });
+        }
         let started = std::time::Instant::now();
         if cause.evaluates() {
             self.lock().stats.demands.fetch_add(1, Ordering::Relaxed);

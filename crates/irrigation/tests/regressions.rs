@@ -808,3 +808,60 @@ fn a_keyed_restatement_retires_the_members_it_drops() {
         "a member the restatement stops listing must read absent"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A read or an edit from inside an edit transaction refuses instead of hanging
+// (runtime-api-02)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_demand_inside_an_edit_transaction_is_refused() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_verbs::Keys).expect("install");
+
+    // A read from the closure used to wait for the write side of the revision
+    // gate, which this same thread holds, so it never returned.
+    // The refusal is the closure's value; the transaction itself still commits,
+    // which is why the outer `edit` succeeds.
+    let error = runtime
+        .edit(|_edit| runtime.read_outputs::<ledger_verbs::Keys>())
+        .expect("the transaction still commits")
+        .expect_err("a demand inside an edit cannot run");
+    assert!(
+        matches!(
+            error,
+            irrigation::ComputeError::ReentrantUse {
+                operation: "read",
+                ..
+            }
+        ),
+        "expected the structured refusal, got {error:?}"
+    );
+
+    // The runtime is still usable afterwards.
+    assert_eq!(
+        runtime.read_outputs::<ledger_verbs::Keys>().expect("read"),
+        (vec![1], 1)
+    );
+}
+
+#[test]
+fn an_edit_inside_an_edit_transaction_is_refused() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_verbs::Keys).expect("install");
+
+    let error = runtime
+        .edit(|_outer| runtime.edit(|edit| edit.set(ledger_value(1), 20u64)))
+        .expect("the outer transaction still commits")
+        .expect_err("a nested edit cannot open the gate its parent holds");
+    assert!(
+        matches!(error, irrigation::ComputeError::ReentrantUse { .. }),
+        "expected the structured refusal, got {error:?}"
+    );
+    assert_eq!(
+        runtime.read_outputs::<ledger_verbs::Keys>().expect("read"),
+        (vec![1], 1)
+    );
+}

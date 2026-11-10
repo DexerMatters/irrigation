@@ -724,8 +724,21 @@ impl Runtime {
     /// Fails when the transaction cannot be committed, including when it writes
     /// a unit a derived View's provider owns.
     pub fn edit<T>(&self, f: impl FnOnce(&mut Edit) -> T) -> Result<T> {
+        // An edit from inside a computation would wait for a demand's read
+        // permit that the same thread holds, and an edit nested in another edit
+        // would wait for the write side it already holds. Neither can open the
+        // gate, so both are refused.
+        if irrigation_core::frame::current().is_some() || crate::gate::in_edit() {
+            return Err(ComputeError::ReentrantUse {
+                operation: "edit",
+                reason: "the calling thread is inside a component body, which holds a read permit for its whole demand",
+            });
+        }
         let (value, changed) = {
             let _gate = self.inner.gate.write();
+            // Marked so a demand issued from the closure refuses instead of
+            // waiting for this thread's own write side.
+            let _edit = crate::gate::enter_edit();
             let mut edit = Edit::new(Arc::clone(&self.inner));
             let value = f(&mut edit);
             let changed = edit.commit()?;

@@ -20,6 +20,41 @@ struct GateState {
     writers_waiting: usize,
 }
 
+thread_local! {
+    /// Set while an edit closure runs, and only on the thread running it.
+    ///
+    /// The gate's permits are counters with no thread affinity — that is what
+    /// lets a suspended task resume on another worker — so the gate itself
+    /// cannot tell that the thread asking for a read permit is the one holding
+    /// the write side. It would simply wait for itself. This flag is how the
+    /// demanding entry points recognise that case and refuse it with an error
+    /// instead of hanging.
+    static EDIT_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks the current thread as running an edit closure until the guard drops.
+#[must_use]
+pub fn enter_edit() -> EditDepth {
+    EDIT_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    EditDepth
+}
+
+/// Whether this thread is inside an edit closure.
+#[must_use]
+pub fn in_edit() -> bool {
+    EDIT_DEPTH.with(|depth| depth.get() > 0)
+}
+
+/// The guard that clears the edit marker.
+#[derive(Debug)]
+pub struct EditDepth;
+
+impl Drop for EditDepth {
+    fn drop(&mut self) {
+        EDIT_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 /// Protects the revision protocol: many demands or one edit.
 #[derive(Debug, Default)]
 pub struct Gate {

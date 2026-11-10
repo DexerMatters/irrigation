@@ -119,6 +119,17 @@ pub enum ComputeError {
         /// The operation that required a computation frame.
         operation: &'static str,
     },
+    /// A demand or an edit was issued from inside one that already holds the
+    /// gate, where waiting for it would wait forever.
+    #[error(
+        "`{operation}` cannot run here: {reason}. The calling thread already holds the revision gate, so waiting for it would never return; use the transaction itself (`Edit::current`, `Edit::content`) or do the read outside it"
+    )]
+    ReentrantUse {
+        /// The operation that was refused.
+        operation: &'static str,
+        /// Why it cannot run, in terms of what the caller already holds.
+        reason: &'static str,
+    },
     /// A construct was rejected by the lowering macro or by an adapter.
     #[error("unsupported construct: {operation}")]
     Unsupported {
