@@ -440,38 +440,6 @@ pub fn wait_for_port(ports: &[UnitKey]) -> bool {
         .unwrap_or_else(|error| panic_engine(error))
 }
 
-/// Requires a value predicate, waiting for a live writer when it is false.
-///
-/// The predicate is re-evaluated after the wait. When no live writer claims a
-/// port, the condition is a hard failure: value conditions are never deferred.
-///
-/// # Panics
-///
-/// Panics with `PreconditionUnmet { ValueMismatch }` when the condition cannot
-/// become true.
-pub fn require_value_await(
-    mut condition: impl FnMut() -> bool,
-    ports: &[UnitKey],
-    description: &'static str,
-) {
-    for _ in 0..32 {
-        if condition() {
-            return;
-        }
-        if !wait_for_port(ports) {
-            break;
-        }
-    }
-    if condition() {
-        return;
-    }
-    panic_engine(ComputeError::PreconditionUnmet {
-        condition: description.to_string(),
-        ports: ports.iter().map(|unit| format!("{unit:?}")).collect(),
-        reason: irrigation_core::error::PreconditionReason::ValueMismatch,
-    });
-}
-
 /// Requires a value predicate to hold before the write commits.
 ///
 /// Value conditions are evaluated eagerly because the body already used the

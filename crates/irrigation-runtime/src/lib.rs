@@ -46,8 +46,8 @@ pub use general::{
 };
 pub use helpers::{
     WriteGroup, claim_field, claim_ports, claim_unit, define_unit, plan_ports, provide_ports,
-    read_unit_value, require_condition, require_value, require_value_await, retract_unit,
-    try_read_unit_value, view_content, wait_for_port,
+    read_unit_value, require_condition, require_value, retract_unit, try_read_unit_value,
+    view_content, wait_for_port,
 };
 pub use inner::{DefinitionDraft, MemoryReport, ReclaimStats, RuntimeConfig, WriteArbitration};
 pub use param::Param;
