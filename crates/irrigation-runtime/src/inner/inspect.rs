@@ -291,6 +291,12 @@ impl Inner {
             // the single owner -- answers for it from the content revision. Rows came from
             // materialized cells alone, so such an entity was given a position in this order
             // and then dropped from the list.
+            //
+            // This only reaches fields whose order decodes, which is `PSeq<u64>`: a **list**.
+            // A set, map or graph spells its structure as typed keys, and `Structure` carries
+            // only a type-erased value, so enumerating those needs a vtable capability
+            // (`ContentVtable` with an `entities` method, implemented per family). Until then
+            // a map or set with content-spelled entities and no cells still lists none of them.
             if declared.is_some_and(|field| field.kind != FieldKind::Scalar) {
                 let seen_ids: std::collections::HashSet<u64> = rows
                     .iter()
