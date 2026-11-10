@@ -522,3 +522,80 @@ fn a_presence_filled_from_the_content_invalidates_its_negative_readers() {
         "the definition filled the presence its reader observed as vacant"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A provider-owned structure is the provider's to publish, on every path
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct GraphMode {
+    nodes: u64,
+}
+
+#[view(derived)]
+pub struct SizeGraph(Graph<u64, u64>);
+
+#[irrigation]
+mod owned_structure {
+    use super::{GraphMode, SizeGraph};
+
+    /// `define_graph` owns the field's structure unit (the topology) and
+    /// retracts the node units a smaller definition no longer contains.
+    #[component]
+    pub fn publish(_tag: u32) -> u32 {
+        irrigation::ensure_view(<SizeGraph as irrigation::ViewSchema>::DESCRIPTOR);
+        let nodes = match GraphMode.nodes() {
+            1 => vec![(1u64, 10u64)],
+            _ => vec![(1u64, 10u64), (2u64, 20u64)],
+        };
+        SizeGraph.define_graph(&nodes, &[]);
+        0
+    }
+
+    #[component]
+    pub fn read() -> Vec<u64> {
+        SizeGraph.nodes()
+    }
+}
+
+#[test]
+fn a_provider_owned_structure_is_not_republished_by_a_node_retraction() {
+    let runtime = Runtime::new();
+    runtime.register_view(<GraphMode as ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<SizeGraph as ViewSchema>::DESCRIPTOR);
+    runtime.install(owned_structure::Read).expect("install");
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_nodes(2))
+        .expect("mode");
+    runtime
+        .call::<owned_structure::__PublishSpec>(owned_structure::PublishArgs { _tag: 0 })
+        .expect("define two nodes");
+    assert_eq!(
+        runtime
+            .read_outputs::<owned_structure::Read>()
+            .expect("read"),
+        vec![1, 2]
+    );
+
+    // The provider shrinks the graph: the stale node unit is retracted, and the
+    // field's structure is restated by the provider itself.
+    let before = runtime.stats().structure_refreshes;
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_nodes(1))
+        .expect("mode");
+    runtime
+        .call::<owned_structure::__PublishSpec>(owned_structure::PublishArgs { _tag: 0 })
+        .expect("define one node");
+    assert_eq!(
+        runtime
+            .read_outputs::<owned_structure::Read>()
+            .expect("read"),
+        vec![1]
+    );
+    assert_eq!(
+        runtime.stats().structure_refreshes,
+        before,
+        "the structure cell belongs to the provider; a node retraction must not \
+         republish it"
+    );
+}

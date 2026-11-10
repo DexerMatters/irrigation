@@ -144,6 +144,14 @@ fn run(script: &Script) -> (Counters, String) {
             script.name,
             row.failure
         );
+        // Every script checks the tree against the tokens it walked. This is
+        // the check a separate consistency gate used to name; it lives here so
+        // it costs no second pipeline run.
+        assert!(
+            session.ast_covers_tokens(),
+            "{}: the AST must cover the significant tokens",
+            script.name
+        );
         counters.record(&row);
     }
     (counters, session.document.text().to_owned())
@@ -174,9 +182,73 @@ fn fixture_work_is_proportional_to_the_edit() {
     );
 }
 
+/// The incremental AST equals a from-scratch parse of the same text.
+///
+/// Work counters say an edit was *local*; they say nothing about whether the
+/// tree that locality preserved is the tree the text describes. The signature
+/// carries node kinds, child order and token text, so it is independent of node
+/// and token identity: an incremental tree and a fresh parse of the same
+/// document must produce the same signature at every revision.
+fn assert_ast_matches_from_scratch(session: &support::Session, what: &str) {
+    let fresh = support::Session::new(session.document.text());
+    assert_eq!(
+        session.text_signature(),
+        fresh.text_signature(),
+        "{what}: the incremental AST disagrees with a from-scratch parse"
+    );
+}
+
+/// The from-scratch oracle, at every revision of a small document.
+///
+/// The oracle parses the whole text again in a fresh pipeline, so it costs one
+/// full parse per revision. That is why it runs on `small.json`: the corpus in
+/// [`load_scripts`] lives on a document whose full parse dominates a debug
+/// build, and a gate that costs minutes is not run. The corpus gate below keeps
+/// its own job (the pipeline must not fail, the AST must cover the tokens, and
+/// the work must stay proportional), and this one owns equivalence.
+#[test]
+fn the_incremental_ast_equals_a_from_scratch_parse_at_every_revision() {
+    let text = load_doc("small");
+    let mut session = support::Session::new(&text);
+    assert_ast_matches_from_scratch(&session, "initial");
+
+    // A value, a key, a member, and a nested array: each edit changes the tree,
+    // so an equality that ignored the tree would not survive all four.
+    let edits: [(Range<usize>, &str); 4] = [
+        (find(&text, "\"value\":0"), "\"value\":41"),
+        (find(&text, "\"name\":\"item 1\""), "\"name\":\"renamed\""),
+        (find(&text, "\"beta\"]"), "\"beta\",\"gamma\"]"),
+        (find(&text, "\"tags\""), "\"tags\""),
+    ];
+    for (step, (range, replacement)) in edits.into_iter().enumerate() {
+        let start = range.start;
+        let len = range.end - range.start;
+        let row = session.replace(start..start + len, replacement);
+        assert!(row.failure.is_none(), "step {step}: {:?}", row.failure);
+        assert_ast_matches_from_scratch(&session, &format!("edit {step}"));
+    }
+
+    // And back to the original text, so the round trip is exact too.
+    session.replace(0..session.document.text().len(), &text);
+    assert_ast_matches_from_scratch(&session, "round trip");
+}
+
+/// The byte range of the first occurrence of `needle`.
+fn find(haystack: &str, needle: &str) -> Range<usize> {
+    let start = haystack
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle} is not in the fixture document"));
+    start..start + needle.len()
+}
+
+/// Every script's tree covers the tokens it walked.
+///
+/// The assertion itself lives in [`run`], so it holds for the report table and
+/// the proportionality gate too; this test exists to run the corpus when a
+/// change is about AST consistency rather than about counters.
 #[test]
 fn fixture_keeps_the_ast_consistent() {
-    for script in load_scripts() {
+    for script in load_scripts().into_iter().filter(|script| script.gated) {
         let _ = run(&script);
     }
 }

@@ -3287,7 +3287,7 @@ impl Inner {
             let structure = UnitKey::field(descriptor.id, field, UnitKind::Structure);
             let materialized =
                 region.units.get(&structure).is_some() || state.units.get(&structure).is_some();
-            if !materialized || region.owners.get(&owner_key(&structure)).is_some() {
+            if !materialized || Self::structure_is_published(region, field) {
                 continue;
             }
             Self::refresh_structure(state, region, field, revision, changed_nodes);
@@ -3686,23 +3686,43 @@ impl Inner {
         // The structure follows the content, not the presence cell: a
         // definition-path retraction can remove an entity the content spells
         // while no membership cell ever held `true` (a content-only key), and
-        // the key set then moves without `removed_membership` saying so. A
-        // structure another live provider publishes is that provider's cell
-        // and stays untouched, the rule `refresh_structures_of` applies.
+        // the key set then moves without `removed_membership` saying so.
         if removed_membership
             || content_moved
             || (unit.entity.is_none()
                 && (descriptor.content.structure)(&region.content, unit.field).is_some())
         {
-            let structure = UnitKey::field(unit.view, unit.field, UnitKind::Structure);
-            let owned_elsewhere = region
-                .owners
-                .get(&owner_key(&structure))
-                .is_some_and(|owner| owner.node != provider);
-            if !owned_elsewhere {
-                Self::refresh_structure(state, region, unit.field, revision, changed_nodes);
-            }
+            Self::refresh_unowned_structure(state, region, unit.field, revision, changed_nodes);
         }
+    }
+
+    /// Refreshes one field's structure projection unless a provider publishes
+    /// that unit.
+    ///
+    /// A field's structure is the projection of its content, so every path that
+    /// moves content has to republish a materialized structure cell — the
+    /// replacement path and the retraction path alike. The cell is not always
+    /// the runtime's to write: a keyed publisher stages the structure unit
+    /// itself, and a provider-owned cell is the provider's to publish on every
+    /// path. Both callers ask [`Self::structure_is_published`], because a rule
+    /// answered twice drifts.
+    fn refresh_unowned_structure(
+        state: &mut State,
+        region: &mut Region,
+        field: FieldId,
+        revision: Revision,
+        changed_nodes: &mut Vec<NodeId>,
+    ) {
+        if Self::structure_is_published(region, field) {
+            return;
+        }
+        Self::refresh_structure(state, region, field, revision, changed_nodes);
+    }
+
+    /// Whether a field's structure unit is a provider's output.
+    fn structure_is_published(region: &Region, field: FieldId) -> bool {
+        let structure = UnitKey::field(region.descriptor.id, field, UnitKind::Structure);
+        region.owners.get(&owner_key(&structure)).is_some()
     }
 
     /// Whether retracting `unit` still describes its field's committed content.
