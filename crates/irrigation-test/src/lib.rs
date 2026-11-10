@@ -115,8 +115,9 @@ impl StatsProbe {
 mod tests {
     use super::*;
 
+    /// The generator is `StdRng`, not the linear congruential one this test was named for.
     #[test]
-    fn lcg_is_reproducible() {
+    fn the_seeded_rng_replays_the_same_sequence() {
         let mut first = TestRng::new(7);
         let mut second = TestRng::new(7);
         for _ in 0..16 {
