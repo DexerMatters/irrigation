@@ -297,9 +297,15 @@ impl GeneralCx {
         }
     }
 
-    fn define_capable<T: PartialEq + Send + Sync + 'static>(
+    /// The checked form of [`Self::define`]: it refuses a unit outside the
+    /// component's declared output Views.
+    ///
+    /// `#[track_caller]` matters here as well as on `define`. Without it the
+    /// location recorded for a definition is this wrapper, so a host mistake is
+    /// reported against the runtime's own source line.
+    #[track_caller]
+    fn define_output<T: PartialEq + Send + Sync + 'static>(
         &mut self,
-        _capability: &DefinitionCapability,
         unit: UnitKey,
         value: T,
         label: &'static str,
@@ -311,7 +317,7 @@ impl GeneralCx {
         self.define(unit, value, label);
     }
 
-    fn retract_capable(&mut self, _capability: &DefinitionCapability, unit: UnitKey) {
+    fn retract_output(&mut self, unit: UnitKey) {
         if !self.allows_output_view(unit.view) {
             self.definition_error = Some(format!("retraction outside output views: {:?}", unit));
             return;
@@ -529,10 +535,14 @@ pub trait FieldWrite {
     fn open<'a>(self, cx: &'a mut GeneralCx) -> Self::Writer<'a>;
 }
 
-/// A dispatcher-issued permission to stage output definitions.
+/// The scope an output transaction was opened for.
 ///
-/// The runtime creates the capability when it opens an output transaction; the
-/// private field prevents external construction.
+/// This is a marker, not an authority. The runtime creates it when it opens a
+/// transaction, and its private field keeps external code from constructing one,
+/// but it does not gate anything: [`GeneralCx::define`] stages the same
+/// definition without it, and the checked wrapper around this type differs only
+/// in refusing units outside the component's declared output Views. Read it as
+/// "which scope we are writing", never as a permission.
 pub struct DefinitionCapability {
     scope: irrigation_core::ids::ScopeId,
     _private: (),
@@ -554,6 +564,7 @@ pub struct OutputTxn<'a> {
 
 impl std::fmt::Debug for OutputTxn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let _ = &self.capability;
         f.write_str("OutputTxn")
     }
 }
@@ -561,8 +572,7 @@ impl std::fmt::Debug for OutputTxn<'_> {
 impl OutputTxn<'_> {
     /// Defines one logical unit.
     pub fn define<T: PartialEq + Send + Sync + 'static>(&mut self, unit: UnitKey, value: T) {
-        self.cx
-            .define_capable(&self.capability, unit, value, "output");
+        self.cx.define_output(unit, value, "output");
     }
 
     /// Defines one scalar field of a View.
@@ -603,7 +613,7 @@ impl OutputTxn<'_> {
     /// Absence is not a retraction: a unit keeps its committed value until it
     /// is either restaged or retracted here.
     pub fn retract(&mut self, unit: UnitKey) {
-        self.cx.retract_capable(&self.capability, unit);
+        self.cx.retract_output(unit);
     }
 
     /// Restates every definition: units this run does not stage are retracted.
