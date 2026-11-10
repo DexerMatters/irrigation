@@ -360,36 +360,18 @@ where
     }
 }
 
+/// Evaluates a node through the ambient frame's runtime.
+///
+/// Delegates: only the runtime handle differs from [`eval_node_with`], and the body it
+/// used to copy decided three things -- that a compute closure runs once, how `T` is
+/// compared for the cutoff, and how a result of the wrong type is reported. Two copies of
+/// that were two places for a node to be evaluated under different rules.
 fn eval_node_in<T, F>(frame: &Frame, node: NodeId, f: F) -> T
 where
     T: PartialEq + Clone + Send + Sync + 'static,
     F: FnOnce() -> T,
 {
-    let mut compute = {
-        let mut f = Some(f);
-        move || {
-            let f = f.take().unwrap_or_else(|| {
-                panic_engine(ComputeError::internal(
-                    "node compute closure was invoked more than once",
-                ))
-            });
-            Ok(value_of(f()))
-        }
-    };
-    let eq =
-        |left: &Value, right: &Value| match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        };
-    match frame.runtime().eval(node, &mut compute, &eq) {
-        Ok(value) => match value.downcast_ref::<T>() {
-            Some(value) => value.clone(),
-            None => panic_engine(ComputeError::TypeMismatch {
-                expected: std::any::type_name::<T>(),
-            }),
-        },
-        Err(error) => panic_engine(error),
-    }
+    eval_node_with(frame.runtime(), node, f)
 }
 
 /// Reads a logical View unit and records the observation.
