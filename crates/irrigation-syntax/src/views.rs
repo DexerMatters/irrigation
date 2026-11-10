@@ -4,8 +4,8 @@
 //!
 //! * [`Tokens`] — the token stream plus one metadata record per token (kind,
 //!   text, range, flags, error) and the latest delta;
-//! * [`AstTree`] — the AST *structure*: what each node is and which children it
-//!   has;
+//! * `AstTree` (the generated View in [`ast_tree`]) — the AST *structure*: what
+//!   each node is and which children it has;
 //! * [`AstMeta`] — everything about an AST node that is not structure: spans,
 //!   token identity, semantic value, named fields, diagnostics.
 //!

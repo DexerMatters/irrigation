@@ -1,8 +1,9 @@
 //! The narrow interface between generated code and the runtime.
 //!
 //! Everything a component body does goes through [`eval`], [`read_unit`], and
-//! [`define`]. The runtime decides whether an evaluation may be reused, which
-//! observations were consumed, and when staged definitions commit.
+//! the output transaction's `define`. The runtime decides whether an evaluation
+//! may be reused, which observations were consumed, and when staged definitions
+//! commit.
 
 use std::any::Any;
 use std::sync::Arc;

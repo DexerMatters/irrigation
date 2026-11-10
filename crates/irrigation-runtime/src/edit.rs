@@ -33,7 +33,7 @@ pub struct UnitUpdate {
 /// A transaction over source Views.
 ///
 /// The transaction holds no lock while user code runs; it stages updates and
-/// applies them atomically in [`Edit::commit`].
+/// applies them atomically when it commits.
 pub struct Edit {
     inner: Arc<Inner>,
     updates: Vec<UnitUpdate>,

@@ -211,7 +211,8 @@ impl Inner {
     /// A list follows its sequence, a set and a map follow their key table
     /// (sorted by the key's display text, so the board is stable across
     /// revisions), and a scalar field answers with its single value unit. A tree
-    /// field answers empty: its nodes live in slot units, see [`Self::tree_rows`].
+    /// field answers empty: its nodes live in slot units, which a tree-aware
+    /// reader resolves from the structure unit rather than from this call.
     #[cfg(feature = "observe")]
     #[must_use]
     pub fn field_entities(

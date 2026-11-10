@@ -6,9 +6,9 @@
 //! subscriber receive the old and new value without a copy.
 //!
 //! Element identity is always explicit and separate from position: sequences
-//! store stable [`EntityId`]s, maps key by the user's key, and trees address
-//! nodes by [`EntityId`]. Balancing nodes are private implementation detail and
-//! never become identities.
+//! store stable `u64` identities, maps key by the user's key, and trees address
+//! nodes by a `u64` identity too. Balancing nodes are private implementation
+//! detail and never become identities.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
