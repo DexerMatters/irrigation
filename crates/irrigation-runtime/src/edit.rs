@@ -28,6 +28,12 @@ pub struct UnitUpdate {
     pub value: Value,
     /// Semantic equality for the value type.
     pub eq: fn(&Value, &Value) -> bool,
+    /// Whether this update removes the unit instead of writing it.
+    ///
+    /// A field can install a per-entity cell without ever removing one, which
+    /// leaves the cell serving a value the field no longer holds -- and, for a
+    /// positional field, a value that is not even at that position any more.
+    pub retract: bool,
 }
 
 /// A transaction over source Views.
@@ -96,12 +102,45 @@ impl Edit {
             key,
             value: value_of(value),
             eq: values_equal::<T>,
+            retract: false,
         });
     }
 
     /// Stages a type-erased unit write.
     pub fn set_value(&mut self, key: UnitKey, value: Value, eq: fn(&Value, &Value) -> bool) {
-        self.updates.push(UnitUpdate { key, value, eq });
+        self.updates.push(UnitUpdate {
+            key,
+            value,
+            eq,
+            retract: false,
+        });
+    }
+
+    /// Stages the removal of one unit.
+    ///
+    /// The unit's cell is retired when the transaction commits, so a later read
+    /// of it is answered by the content -- or by nothing -- rather than by the
+    /// value it held. Use this whenever a field stops holding an entity: a
+    /// positional field that renumbers on removal, or any field whose cells are
+    /// keyed by something the content no longer contains.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a unit that is not entity-scoped: a field-level unit is
+    /// plural (`Membership = false` states one member's absence), so it has no
+    /// removal of its own.
+    #[track_caller]
+    pub fn retract(&mut self, key: UnitKey) {
+        assert!(
+            key.entity.is_some(),
+            "only an entity unit can be retracted; state a field-level absence instead"
+        );
+        self.updates.push(UnitUpdate {
+            key,
+            value: irrigation_core::value::value_of(()),
+            eq: |_, _| false,
+            retract: true,
+        });
     }
 
     /// Stages a replacement for a View's immutable content.
@@ -286,7 +325,7 @@ impl Edit {
             // the entity: the pair must stay exempt from the replacement, or it
             // would reopen a payload the retraction just cleared.
             let written = installed.entry(update.key.view).or_default();
-            if retractions.contains(&update.key) {
+            if update.retract || retractions.contains(&update.key) {
                 written.insert(payload_key(&update.key));
             }
             written.insert(update.key.clone());

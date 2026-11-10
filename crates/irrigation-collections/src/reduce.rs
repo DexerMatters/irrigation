@@ -298,8 +298,33 @@ impl<R: Reduction> ReducedEditor<'_, R> {
 
     /// Removes one element.
     pub fn remove(&mut self, index: usize) {
+        self.require_range(index, true);
         let (next, _) = self.storage.remove(index);
         *self.storage = next;
+        // Identity here is the position, so a removal renumbers everything after
+        // it: those cells have to be restaged with their new values, and the cell
+        // at the old last position no longer exists. Restaging alone would leave
+        // it serving an element the field no longer holds anywhere.
+        let len = self.storage.len();
+        for position in index..len {
+            if let Some(item) = self.storage.get(position).cloned() {
+                self.edit.set(
+                    UnitKey::entity(
+                        self.view,
+                        self.field,
+                        UnitKind::Value,
+                        irrigation_core::key::any_key(position as u64),
+                    ),
+                    item,
+                );
+            }
+        }
+        self.edit.retract(UnitKey::entity(
+            self.view,
+            self.field,
+            UnitKind::Value,
+            irrigation_core::key::any_key(len as u64),
+        ));
         self.stage();
     }
 
