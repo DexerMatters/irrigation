@@ -517,6 +517,21 @@ impl Inner {
                     ids.dedup();
                     ids
                 };
+                // `producer` and `provider_node` describe one owner, chosen
+                // deterministically: the smallest contributing component id, which
+                // is `contributors.first()`.
+                let producer_component = contributors.first().copied();
+                let provider_node = region
+                    .owners
+                    .iter()
+                    .find_map(|(_, provider)| {
+                        let record = state.node(provider.node);
+                        let component = record
+                            .component
+                            .or_else(|| component_of(&state, record.scope));
+                        (component == producer_component).then_some(provider.node)
+                    })
+                    .or_else(|| state.producers.get(&descriptor.id).copied());
                 crate::observe::ViewFacts {
                     view: descriptor.id,
                     name: descriptor.name,
@@ -526,29 +541,20 @@ impl Inner {
                     // the component beside the View. An installed definition
                     // names its provider; a registered producer (a general
                     // component, the root) is the fallback.
-                    producer: region
-                        .owners
-                        .iter()
-                        .next()
-                        .map(|(_, provider)| provider.node)
-                        .or_else(|| state.producers.get(&descriptor.id).copied())
-                        .and_then(|node| {
-                            let record = state.node(node);
-                            record
-                                .component
-                                .or_else(|| component_of(&state, record.scope))
-                        }),
+                    // The first *contributor*, not the first entry of a hash table:
+                    // a shared View has several owners and `iter().next()` gave
+                    // whichever the hash order happened to yield, so the same board
+                    // could name a different producer on consecutive calls.
+                    // `contributors` is sorted, so its head is stable and this is
+                    // consistent with it.
+                    producer: producer_component,
                     contributors,
                     routing: region.routing_version,
                     content_version,
                     demanded: descriptor.kind == irrigation_core::descriptor::ViewKind::Source
                         || !region.owners.is_empty(),
                     content_node: region.content_node,
-                    provider_node: region
-                        .owners
-                        .iter()
-                        .next()
-                        .map(|(_, provider)| provider.node),
+                    provider_node,
                     suspect: {
                         // A definition's dependents are invalidated, not the
                         // unit node itself. The provider of any installed unit

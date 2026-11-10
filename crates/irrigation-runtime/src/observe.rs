@@ -361,8 +361,10 @@ pub struct ViewFacts {
     /// The primary component that supplies this View, if the projection can
     /// name one.
     ///
-    /// A shared View may have several contributors; this is the first owner,
-    /// kept for the existing plate/ink and for compatibility. Use
+    /// A shared View may have several contributors; this is the smallest of them,
+    /// which is exactly `contributors.first()`, kept for the existing plate/ink and
+    /// for compatibility. It used to be the first entry of a hash table, so the same
+    /// board could name a different producer on consecutive calls. Use
     /// [`Self::contributors`] when every writer matters.
     pub producer: Option<irrigation_core::ids::ComponentId>,
     /// Every distinct component that owns at least one unit of this View, in
