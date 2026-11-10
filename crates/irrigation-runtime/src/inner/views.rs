@@ -521,7 +521,7 @@ impl Inner {
             self.emit(crate::observe::RuntimeEvent::TaskWoken { task, node });
         }
         #[cfg(not(feature = "observe"))]
-        let _ = woken;
+        let _ = (self, woken);
     }
 
     /// Emits an invalidation event for one reverse-dependency walk.

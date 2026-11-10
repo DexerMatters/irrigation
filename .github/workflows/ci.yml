@@ -28,6 +28,12 @@ jobs:
         run: |
           cargo check -p irrigation-runtime --no-default-features --locked
           cargo test -p irrigation-runtime --no-default-features --locked
+      # ... but the clippy job above runs with every feature on, so a field or
+      # receiver that is dead only when `observe` is off is invisible to it. This
+      # lints the off state with warnings denied, which is what caught the
+      # `Delivery::moved` warning in the audit loop.
+      - name: Observation off lints clean
+        run: cargo clippy -p irrigation-runtime --no-default-features --all-targets --locked -- -D warnings
 
       # The facade must build without the observation path, and the examples
       # only with it.

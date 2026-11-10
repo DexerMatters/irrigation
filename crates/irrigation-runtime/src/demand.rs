@@ -99,8 +99,10 @@ impl Inner {
     fn note_demand_started(&self, task: TaskId, cause: DemandCause) {
         #[cfg(feature = "observe")]
         self.emit(crate::observe::RuntimeEvent::DemandStarted { task, cause });
+        // The receiver exists for the observation build; without it the helper is
+        // a no-op that must still look the same to its callers.
         #[cfg(not(feature = "observe"))]
-        let _ = (task, cause);
+        let _ = (self, task, cause);
     }
 
     fn note_demand_finished(&self, task: TaskId, ok: bool, started: std::time::Instant) {
@@ -111,7 +113,7 @@ impl Inner {
             duration_ns: started.elapsed().as_nanos() as u64,
         });
         #[cfg(not(feature = "observe"))]
-        let _ = (task, ok, started);
+        let _ = (self, task, ok, started);
     }
 
     /// Reports a retried attempt, after the caller releases the metadata lock.
@@ -123,7 +125,7 @@ impl Inner {
             port: format!("task {task}"),
         });
         #[cfg(not(feature = "observe"))]
-        let _ = task;
+        let _ = (self, task);
     }
 
     /// Runs a demand on the calling thread, parking it when it has to wait.
