@@ -668,3 +668,59 @@ fn a_keyed_to_whole_flip_invalidates_a_negative_membership_read() {
         "the flip must invalidate the keyed-branch reader, not leave it certified"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A batch that retracts nothing must publish nothing
+// ---------------------------------------------------------------------------
+
+#[view(derived)]
+pub struct AbsentSet(Set<u32>);
+
+#[irrigation]
+mod absent_verbs {
+    use super::{AbsentSet, absent_member};
+
+    /// Publishes member 1 keyed, so the field's content is `{1}`.
+    #[component]
+    pub fn publish(_tag: u32) -> u32 {
+        irrigation::ensure_view(<AbsentSet as irrigation::ViewSchema>::DESCRIPTOR);
+        AbsentSet.field0().define_keyed([1u32], "absent_publish");
+        0
+    }
+
+    /// Retracts member 2, which this field never held.
+    #[component]
+    pub fn withdraw_absent(_tag: u32) -> u32 {
+        irrigation::ensure_view(<AbsentSet as irrigation::ViewSchema>::DESCRIPTOR);
+        irrigation::retract_unit(absent_member(2), "absent_withdraw");
+        0
+    }
+}
+
+fn absent_member(member: u32) -> UnitKey {
+    irrigation::membership_unit(
+        <AbsentSet as ViewSchema>::view_id(),
+        irrigation::FieldId(0),
+        member,
+    )
+}
+
+#[test]
+fn a_retraction_of_an_absent_member_publishes_no_content() {
+    let runtime = Runtime::new();
+    runtime.register_view(<AbsentSet as ViewSchema>::DESCRIPTOR);
+    runtime
+        .call::<absent_verbs::__PublishSpec>(absent_verbs::PublishArgs { _tag: 0 })
+        .expect("publish member 1");
+    let before = runtime.stats().content_commits;
+
+    runtime
+        .call::<absent_verbs::__WithdrawAbsentSpec>(absent_verbs::WithdrawAbsentArgs { _tag: 0 })
+        .expect("retract the absent member");
+    assert_eq!(
+        runtime.stats().content_commits,
+        before,
+        "retracting a member the content never held moves no content, so the \
+         field must not publish a new content version"
+    );
+}
