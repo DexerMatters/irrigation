@@ -285,6 +285,41 @@ impl Inner {
                 push(unit.clone(), node);
             }
         }
+        if let Some(order) = &order {
+            // An entity the content spells but that has no cell yet is still an entity: the
+            // board reads its value through the content projection, and `unit_version_of` --
+            // the single owner -- answers for it from the content revision. Rows came from
+            // materialized cells alone, so such an entity was given a position in this order
+            // and then dropped from the list.
+            if declared.is_some_and(|field| field.kind != FieldKind::Scalar) {
+                let seen_ids: std::collections::HashSet<u64> = rows
+                    .iter()
+                    .filter_map(|row| {
+                        row.unit
+                            .entity
+                            .as_ref()
+                            .and_then(|entity| entity.as_any().downcast_ref::<u64>().copied())
+                    })
+                    .collect();
+                for id in order {
+                    if seen_ids.contains(id) {
+                        continue;
+                    }
+                    let unit = UnitKey::entity(
+                        view,
+                        field,
+                        UnitKind::Membership,
+                        irrigation_core::key::any_key(*id),
+                    );
+                    let version = crate::state::unit_version_of(&state, &unit).unwrap_or(0);
+                    rows.push(crate::observe::EntityFacts {
+                        unit,
+                        version,
+                        changed: version == revision,
+                    });
+                }
+            }
+        }
         if let Some(order) = order {
             // A list answers in sequence order: the ids are the entities.
             rows.sort_by_key(|row| {
