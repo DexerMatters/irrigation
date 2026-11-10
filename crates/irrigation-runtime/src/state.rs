@@ -463,8 +463,6 @@ pub struct PendingConflict {
 pub struct UnitSlot {
     /// The node holding the unit's value.
     pub node: NodeId,
-    /// Whether the unit is currently defined.
-    pub present: bool,
 }
 
 /// The provider that owns one unit.

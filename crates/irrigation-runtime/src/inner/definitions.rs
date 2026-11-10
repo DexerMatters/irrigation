@@ -491,13 +491,9 @@ impl Inner {
                 Some(slot) => slot.node,
                 None => {
                     let node = Self::ensure_unit_node(state, draft.unit.clone(), None);
-                    region.units.insert(
-                        any_key(draft.unit.clone()),
-                        UnitSlot {
-                            node,
-                            present: false,
-                        },
-                    );
+                    region
+                        .units
+                        .insert(any_key(draft.unit.clone()), UnitSlot { node });
                     node
                 }
             };
@@ -539,22 +535,19 @@ impl Inner {
                     Some(slot) => slot.node,
                     None => {
                         let node = Self::ensure_unit_node(state, membership.clone(), None);
-                        region.units.insert(
-                            any_key(membership.clone()),
-                            UnitSlot {
-                                node,
-                                present: false,
-                            },
-                        );
+                        region
+                            .units
+                            .insert(any_key(membership.clone()), UnitSlot { node });
                         node
                     }
                 };
-                // A membership draft states presence itself; every other
-                // entity unit installs the entity, so its membership is true. A
+                // A membership draft states presence itself; every other entity
+                // unit installs the entity, so its membership cell is `true`. A
                 // false presence never reaches here: the group's retraction
-                // decided it before any cell installed.
-                let present = draft.unit.kind != UnitKind::Membership
-                    || draft.value.downcast_ref::<bool>().copied().unwrap_or(true);
+                // decided it before any cell installed. The cell below is the
+                // only record of that answer — the slot used to keep a second
+                // copy that nothing read.
+                //
                 // Presence is one question with two spellings: the cell, or the
                 // committed content while the cell holds no answer. A payload
                 // draft whose entity the content already holds materializes the
@@ -590,9 +583,6 @@ impl Inner {
                     } else {
                         changed_nodes.push(member_node);
                     }
-                }
-                if let Some(slot) = region.units.get_mut(&membership) {
-                    slot.present = present;
                 }
                 if changed && !dirty_fields.contains(&draft.unit.field) {
                     dirty_fields.push(draft.unit.field);
@@ -856,10 +846,6 @@ impl Inner {
             }
         }
         let removed_membership = if unit.entity.is_some() {
-            let membership = membership_key(unit);
-            if let Some(slot) = region.units.get_mut(&membership) {
-                slot.present = false;
-            }
             Self::retract_entity(state, unit, revision, changed_nodes)
         } else {
             false
@@ -938,10 +924,6 @@ impl Inner {
                 }
             }
             region.owners.remove(&owner);
-            let membership = membership_key(unit);
-            if let Some(slot) = region.units.get_mut(&membership) {
-                slot.present = false;
-            }
             Self::retract_entity(state, unit, revision, changed_nodes);
         }
         if moved {

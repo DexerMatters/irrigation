@@ -257,8 +257,7 @@ impl Inner {
             } else {
                 true
             };
-            if let Some(slot) = region.units.get_mut(&membership) {
-                slot.present = present;
+            if let Some(slot) = region.units.get(&membership) {
                 let node = slot.node;
                 Self::commit_unit_value(state, node, value_of(present), revision, changed_nodes);
             }

@@ -28,13 +28,7 @@ impl Inner {
             Some(slot) => slot.node,
             None => {
                 let node = Self::ensure_unit_node(state, key.clone(), None);
-                region.units.insert(
-                    any_key(key.clone()),
-                    UnitSlot {
-                        node,
-                        present: true,
-                    },
-                );
+                region.units.insert(any_key(key.clone()), UnitSlot { node });
                 node
             }
         };
