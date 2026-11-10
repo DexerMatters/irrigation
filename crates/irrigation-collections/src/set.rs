@@ -205,9 +205,13 @@ where
     }
 
     /// Number of members.
+    ///
+    /// Counts the structure projection, which is already the whole membership as a
+    /// persistent set. It used to call `to_vec().len()`, cloning every member into a
+    /// fresh `Vec` only to count them -- the same one read, many more allocations.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.to_vec().len()
+        self.members().len()
     }
 
     /// Returns `true` when the set has no members.
