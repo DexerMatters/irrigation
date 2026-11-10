@@ -96,13 +96,35 @@ impl Inner {
             .is_none_or(|old| !under_user_code(|| eq(old, &content)));
         if changed {
             state.stats.content_commits.fetch_add(1, Ordering::Relaxed);
-            let value_version = state.alloc_value_version();
-            let record = state.node_mut(region.content_node);
-            record.install_value(Some(content.clone()), value_version, revision);
-            changed_nodes.push(region.content_node);
+            Self::install_content_cell(
+                state,
+                region.content_node,
+                content.clone(),
+                revision,
+                changed_nodes,
+            );
         }
         region.content = content;
         changed
+    }
+
+    /// Publishes one content value into the region's content cell.
+    ///
+    /// The content cell is not a unit: it has no routing generation and no
+    /// protocol of its own, so it takes the version and the stamp and nothing
+    /// else. Both commit paths above did this write by hand.
+    fn install_content_cell(
+        state: &mut State,
+        node: NodeId,
+        content: Arc<dyn Any + Send + Sync>,
+        revision: Revision,
+        changed_nodes: &mut Vec<NodeId>,
+    ) {
+        let value_version = state.alloc_value_version();
+        state
+            .node_mut(node)
+            .install_value(Some(content), value_version, revision);
+        changed_nodes.push(node);
     }
 
     /// Publishes content already known to have moved.
@@ -119,10 +141,13 @@ impl Inner {
         changed_nodes: &mut Vec<NodeId>,
     ) {
         state.stats.content_commits.fetch_add(1, Ordering::Relaxed);
-        let value_version = state.alloc_value_version();
-        let record = state.node_mut(region.content_node);
-        record.install_value(Some(content.clone()), value_version, revision);
-        changed_nodes.push(region.content_node);
+        Self::install_content_cell(
+            state,
+            region.content_node,
+            content.clone(),
+            revision,
+            changed_nodes,
+        );
         region.content = content;
     }
 

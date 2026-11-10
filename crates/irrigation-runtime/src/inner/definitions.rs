@@ -399,11 +399,7 @@ impl Inner {
                 node
             }
         };
-        let value_version = state.alloc_value_version();
-        let record = state.node_mut(node);
-        record.install_value(Some(value_of(keyed)), value_version, revision);
-        record.routing_at = revision;
-        changed_nodes.push(node);
+        Self::commit_unit_value(state, node, value_of(keyed), revision, changed_nodes);
     }
 
     #[allow(clippy::too_many_arguments)]
