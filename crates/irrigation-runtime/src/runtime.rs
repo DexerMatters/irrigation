@@ -1972,6 +1972,13 @@ pub struct RuntimeStats {
 /// A host-installed recipe that can produce a missing port on demand.
 pub trait PortProvider: Send + Sync + 'static {
     /// Runs the producer for `port`, if it can.
+    ///
+    /// # Errors
+    ///
+    /// Returns the producer's own failure. `Ok(())` means the provider ran and the port is
+    /// now present; an error aborts the demanding group rather than being retried, so a
+    /// provider that cannot supply a port yet should return `ComputeError::Absent` instead of
+    /// a failure it expects to recover from.
     fn provide(&self, port: &irrigation_core::descriptor::UnitKey) -> Result<()>;
 }
 
