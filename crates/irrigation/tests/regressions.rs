@@ -599,3 +599,72 @@ fn a_provider_owned_structure_is_not_republished_by_a_node_retraction() {
          republish it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// collections-seq-12 — a keyed/whole flip must invalidate keyed-branch readers
+// ---------------------------------------------------------------------------
+
+#[view(source)]
+pub struct FlipMode {
+    keyed: bool,
+}
+
+#[view(derived)]
+pub struct FlipSet(Set<u32>);
+
+#[irrigation]
+mod flip_verbs {
+    use super::{FlipMode, FlipSet};
+
+    /// Publishes the member keyed, or the same members as one whole value.
+    #[component]
+    pub fn publish(_tag: u32) -> u32 {
+        irrigation::ensure_view(<FlipSet as irrigation::ViewSchema>::DESCRIPTOR);
+        let set = FlipSet.field0();
+        if FlipMode.keyed() {
+            set.define_keyed([1u32], "flip_keyed");
+        } else {
+            set.define_all([1u32, 2], "flip_whole");
+        }
+        0
+    }
+
+    /// A negative membership read. Under the keyed protocol it observes the
+    /// member's own presence cell and nothing else, so only the protocol
+    /// certificate can tell it that the field changed mode.
+    #[component]
+    pub fn absent() -> bool {
+        FlipSet.field0().contains(&2)
+    }
+}
+
+#[test]
+fn a_keyed_to_whole_flip_invalidates_a_negative_membership_read() {
+    let runtime = Runtime::new();
+    runtime.register_view(<FlipMode as ViewSchema>::DESCRIPTOR);
+    runtime.register_view(<FlipSet as ViewSchema>::DESCRIPTOR);
+    runtime.install(flip_verbs::Absent).expect("install");
+    runtime
+        .edit(|edit| edit.view::<FlipMode>().set_keyed(true))
+        .expect("mode");
+    runtime
+        .call::<flip_verbs::__PublishSpec>(flip_verbs::PublishArgs { _tag: 0 })
+        .expect("publish keyed");
+    assert!(
+        !runtime.read_outputs::<flip_verbs::Absent>().expect("read"),
+        "under the keyed protocol member 2 is absent"
+    );
+
+    // Flip the field to the whole-value protocol. A from-scratch evaluation of
+    // this revision takes the whole branch and answers true.
+    runtime
+        .edit(|edit| edit.view::<FlipMode>().set_keyed(false))
+        .expect("mode");
+    runtime
+        .call::<flip_verbs::__PublishSpec>(flip_verbs::PublishArgs { _tag: 0 })
+        .expect("publish whole");
+    assert!(
+        runtime.read_outputs::<flip_verbs::Absent>().expect("read"),
+        "the flip must invalidate the keyed-branch reader, not leave it certified"
+    );
+}
