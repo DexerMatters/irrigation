@@ -482,6 +482,25 @@ fn respond_empty(stream: &mut TcpStream, status: u16) -> std::io::Result<()> {
     stream.flush()
 }
 
+/// The file one request target names inside `dir`, or `None` when the target escapes it.
+///
+/// A request target is not a filesystem path: it may not climb with `..`, start at the root, or name
+/// a volume. `Prefix` matters because `Path::join` *replaces* the base when its argument starts with
+/// one, so on Windows `C:/anything` -- and `/C:/anything` after the leading slash is trimmed -- would
+/// read outside the directory that only `ParentDir` and `RootDir` were refused for.
+fn static_candidate(dir: &Path, relative: &str) -> Option<PathBuf> {
+    let candidate = Path::new(relative);
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(dir.join(candidate))
+}
+
 fn serve_static(stream: &mut TcpStream, config: &HttpConfig, path: &str) {
     let Some(dir) = &config.static_dir else {
         let _ = respond(
@@ -500,15 +519,10 @@ repository root, or point OBSERVATORY_DIST at the built directory.\n",
     } else {
         relative
     };
-    let candidate = Path::new(relative);
-    if candidate
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
-    {
+    let Some(file) = static_candidate(dir, relative) else {
         let _ = respond_json(stream, 400, &json!({ "error": "bad path" }));
         return;
-    }
-    let file = dir.join(candidate);
+    };
     match std::fs::read(&file) {
         Ok(bytes) => {
             let content_type = mime(file.as_path());
@@ -663,5 +677,56 @@ mod tests {
             ..HttpConfig::default()
         };
         assert!(!config.static_dir.is_none());
+    }
+}
+
+#[cfg(test)]
+mod static_path_tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_target_resolves_inside_the_directory() {
+        let dir = Path::new("/srv/observatory");
+        assert_eq!(
+            static_candidate(dir, "assets/app.js"),
+            Some(PathBuf::from("/srv/observatory/assets/app.js"))
+        );
+        assert_eq!(
+            static_candidate(dir, "index.html"),
+            Some(PathBuf::from("/srv/observatory/index.html"))
+        );
+    }
+
+    #[test]
+    fn a_target_that_escapes_the_directory_is_refused() {
+        let dir = Path::new("/srv/observatory");
+        assert_eq!(static_candidate(dir, "../etc/passwd"), None, "climbs out");
+        assert_eq!(static_candidate(dir, "a/../../b"), None, "climbs out");
+        assert_eq!(static_candidate(dir, "/etc/passwd"), None, "absolute");
+    }
+
+    /// A volume is refused where the platform has one.
+    ///
+    /// `Path::join` replaces the base when its argument names a volume, so on Windows `C:/x` would
+    /// read outside the directory -- the case the `Prefix` arm exists for. On Unix there is no prefix
+    /// component, so the same target resolves *inside* the directory, which is harmless; the test
+    /// asserts the property each platform actually has rather than pretending they are the same.
+    #[test]
+    fn a_volume_target_cannot_escape_the_directory() {
+        let dir = Path::new("/srv/observatory");
+        for target in [
+            "C:/Windows/win.ini",
+            "C:\\Windows\\win.ini",
+            "\\\\server\\share\\x",
+        ] {
+            // Refused outright where the platform has volume prefixes; elsewhere the target is an
+            // ordinary relative path and must at least stay inside the directory.
+            if let Some(resolved) = static_candidate(dir, target) {
+                assert!(
+                    resolved.starts_with(dir),
+                    "{target} must not leave the directory: {resolved:?}"
+                );
+            }
+        }
     }
 }
