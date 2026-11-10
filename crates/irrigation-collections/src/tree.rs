@@ -1044,8 +1044,25 @@ impl<'a> TreeEditor<'a> {
 
     fn build(&mut self, build: &TreeBuild, parent: Option<TreeNodeId>) -> TreeNodeId {
         self.created += 1;
-        let id = self.storage.next_id;
-        self.storage.next_id = id + 1;
+        // `TreeBuild::id` is the optional stable identity, and `build_tree_node` honours it,
+        // so this path has to as well: the same build value used to denote a different tree
+        // depending on which writer consumed it. An id that is already present is refused
+        // rather than overwritten -- honouring an identity must not alias another node.
+        let id = match build.id {
+            Some(id) => {
+                assert!(
+                    self.storage.node(id).is_none(),
+                    "tree build reuses identity {id}, which another node already holds"
+                );
+                self.storage.next_id = self.storage.next_id.max(id.saturating_add(1));
+                id
+            }
+            None => {
+                let id = self.storage.next_id;
+                self.storage.next_id = id + 1;
+                id
+            }
+        };
         let node = TreeNode {
             type_index: build.type_index,
             variant: build.variant,
@@ -1940,4 +1957,39 @@ fn build_tree_node(
         )
         .0;
     id
+}
+
+#[cfg(test)]
+mod build_identity_tests {
+    use super::*;
+
+    /// Both writers must honour `TreeBuild::id`, and an id another node holds must be
+    /// refused rather than aliased.
+    ///
+    /// `build_tree_node` honoured it while `TreeEditor::build` renumbered every node, so one
+    /// construction input denoted two different trees.
+    #[test]
+    fn a_build_identity_is_honoured_and_never_aliased() {
+        let mut storage = TreeStorage::default();
+        let build = TreeBuild {
+            id: Some(41),
+            type_index: 0,
+            variant: 0,
+            fields: Vec::new(),
+            children: Vec::new(),
+        };
+        assert_eq!(
+            build_tree_node(&build, None, &mut storage),
+            41,
+            "the recursive builder honours the id"
+        );
+        assert!(
+            storage.node(41).is_some(),
+            "and the node is installed under it"
+        );
+        assert!(
+            storage.next_id > 41,
+            "the allocator cannot hand the same identity out again"
+        );
+    }
 }
