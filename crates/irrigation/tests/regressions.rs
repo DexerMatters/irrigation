@@ -865,3 +865,69 @@ fn an_edit_inside_an_edit_transaction_is_refused() {
         (vec![1], 1)
     );
 }
+
+// ---------------------------------------------------------------------------
+// One component identity, one component (runtime-api-r11-04)
+// ---------------------------------------------------------------------------
+
+#[irrigation]
+mod shared_identity {
+    use super::Ledger;
+
+    /// An ordinary root, so its identity is the one a producer could adopt.
+    #[component(root)]
+    pub fn root(ledger: &Ledger) -> usize {
+        ledger.entries().len()
+    }
+}
+
+/// A derived View for the producer to publish into.
+#[view(derived)]
+pub struct AdoptedOut(Set<u32>);
+
+/// A general component that claims the root's identity.
+struct AdoptsRootIdentity;
+
+impl irrigation::GeneralComponent for AdoptsRootIdentity {
+    type State = ();
+    type Output = ();
+
+    // Exactly the root's own identity, which is the input the check exists to
+    // reject: the root's id is derived from its path, not declared here.
+    const ID: irrigation::ComponentId = <shared_identity::Root as irrigation::RootComponent>::ID;
+    const NAME: &'static str = "regressions::AdoptsRootIdentity";
+    const VIEWS: &'static [&'static irrigation::ViewDescriptor] =
+        &[<AdoptedOut as ViewSchema>::DESCRIPTOR];
+    const OUTPUT_VIEWS: &'static [&'static irrigation::ViewDescriptor] =
+        &[<AdoptedOut as ViewSchema>::DESCRIPTOR];
+
+    fn initialize(
+        &self,
+        _cx: &mut irrigation::GeneralCx,
+    ) -> irrigation::Result<(Self::State, Self::Output)> {
+        Ok(((), ()))
+    }
+
+    fn update(
+        &self,
+        _cx: &mut irrigation::GeneralCx,
+        _state: &Self::State,
+        _changes: &irrigation::ChangeBatch,
+    ) -> irrigation::Result<(Self::State, Self::Output)> {
+        Ok(((), ()))
+    }
+}
+
+#[test]
+fn a_producer_cannot_adopt_the_roots_component_id() {
+    let runtime = Runtime::new();
+    runtime.register_view(<Ledger as ViewSchema>::DESCRIPTOR);
+    runtime.install(shared_identity::Root).expect("root");
+    let error = runtime
+        .install_general_component(AdoptsRootIdentity)
+        .expect_err("two live components cannot share one identity");
+    assert!(
+        format!("{error}").contains("component id is already installed"),
+        "expected the uniqueness error, got {error:?}"
+    );
+}

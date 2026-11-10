@@ -2292,7 +2292,16 @@ fn check_root_slot(state: &State) -> Result<()> {
 /// The table holds general roots and producers alike, so a root cannot be
 /// installed under an identity a producer already answers to.
 fn check_component_id(state: &State, id: ComponentId) -> Result<()> {
-    if state.generals.iter().any(|general| general.id() == id) {
+    // The root is a live component too: its identity is in
+    // `scope_components[ROOT]`, `root.component` and `component_names`, and the
+    // arbitration rules that read a component id -- plan authority, and the
+    // sibling exception a forced retraction may take over by -- cannot tell two
+    // components apart that share one. Scanning only the installed producers let
+    // a general component adopt the root's id, overwrite its name, and inherit
+    // both privileges over the root's units.
+    let taken = state.generals.iter().any(|general| general.id() == id)
+        || state.root.as_ref().is_some_and(|root| root.component == id);
+    if taken {
         return Err(ComputeError::internal("component id is already installed"));
     }
     Ok(())
