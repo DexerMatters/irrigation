@@ -637,10 +637,9 @@ impl Inner {
                     recorded: dep.version,
                     // `dep.version` is the node's value version, so the current
                     // side must be one too. `changed_at` is a *revision* -- a
-                    // different counter that advances with every commit, so the
-                    // two were never comparable and the drift label this feeds
-                    // was wrong for any cell born from committed content and
-                    // random elsewhere. `explain` asks the same question with
+                    // different counter, advanced by every commit -- so the two
+                    // were never comparable, and the drift label this feeds was
+                    // noise. `explain` answers the same question with
                     // `value_version`.
                     current: state.nodes[dep.node.index()].value_version,
                 });
