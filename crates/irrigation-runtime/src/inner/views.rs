@@ -497,13 +497,15 @@ impl Inner {
             .is_some_and(|observer| observer.level() >= level)
     }
 
-    /// Emits one observation event when an observer is installed and wants it.
+    /// Emits one observation event when an observer is installed.
+    ///
+    /// The level is not checked here: `Runtime::with_observer` wraps the host
+    /// observer in a `LevelFilter` that owns that rule for delivery. What the
+    /// kernel owes is the other half -- not *building* a payload the filter will
+    /// drop -- which is what [`Self::observes`] is for at the expensive sites.
     #[cfg(feature = "observe")]
     pub(crate) fn emit(&self, event: crate::observe::RuntimeEvent) {
-        let Some(observer) = self.observer.get() else {
-            return;
-        };
-        if event.level() <= observer.level() {
+        if let Some(observer) = self.observer.get() {
             observer.record(event);
         }
     }
