@@ -249,7 +249,18 @@ fn definitions_outside_output_views_fail_as_component_errors() {
     runtime
         .edit(|edit| edit.view::<Input>().set_value(1))
         .expect("edit");
-    assert!(runtime.read_outputs_general::<Consumer>().is_err());
+    let error = runtime
+        .read_outputs_general::<Consumer>()
+        .expect_err("the bad definition is reported");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("outside output views"),
+        "the report names the mistake: {message}"
+    );
+    assert!(
+        message.contains("general_producer.rs"),
+        "and the line it happened on, not the runtime's own source: {message}"
+    );
 }
 
 struct PreservingProducer;

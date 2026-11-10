@@ -296,15 +296,24 @@ impl GeneralCx {
         label: &'static str,
     ) {
         if !self.allows_output_view(unit.view) {
-            self.definition_error = Some(format!("definition outside output views: {:?}", unit));
+            self.definition_error = Some(format!(
+                "definition outside output views: {:?} (at {})",
+                unit,
+                std::panic::Location::caller()
+            ));
             return;
         }
         self.define(unit, value, label);
     }
 
+    #[track_caller]
     fn retract_output(&mut self, unit: UnitKey) {
         if !self.allows_output_view(unit.view) {
-            self.definition_error = Some(format!("retraction outside output views: {:?}", unit));
+            self.definition_error = Some(format!(
+                "retraction outside output views: {:?} (at {})",
+                unit,
+                std::panic::Location::caller()
+            ));
             return;
         }
         self.pending_claims.push(unit.clone());
@@ -413,7 +422,11 @@ impl GeneralCx {
         label: &'static str,
     ) {
         if !self.allows_output_view(unit.view) {
-            self.definition_error = Some(format!("definition outside output views: {:?}", unit));
+            self.definition_error = Some(format!(
+                "definition outside output views: {:?} (at {})",
+                unit,
+                std::panic::Location::caller()
+            ));
             return;
         }
         self.pending_claims.push(unit.clone());
