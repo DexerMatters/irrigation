@@ -31,6 +31,12 @@ const MAX_HEAD_LINE: usize = 8 * 1024;
 /// sent a byte: `read_request` blocks on the socket. The timeout bounds that wait; the stream route
 /// answers quickly and does not hold the socket open afterwards, so it is not affected.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Most connections served at once.
+///
+/// Each connection owns a thread, so the count is the bound on threads this server will create. The
+/// timeouts above cap how long one may be held; this caps how many may exist, which is the case they do
+/// not cover: many peers at once, each behaving.
+const MAX_CONNECTIONS: usize = 64;
 /// How long a write may block before the connection is dropped.
 ///
 /// The event stream writes a heartbeat every fifteen seconds and breaks on a write error, but a peer
@@ -127,6 +133,7 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
     let stop = Arc::new(AtomicBool::new(false));
     let accept_stop = Arc::clone(&stop);
     let config = Arc::new(config);
+    let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let accept = std::thread::Builder::new()
         .name(String::from("observatory-http"))
         .spawn(move || {
@@ -135,6 +142,19 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                     Ok((stream, _peer)) => {
                         let collector = Arc::clone(&collector);
                         let config = Arc::clone(&config);
+                        let live = Arc::clone(&live);
+                        // Refusing is the only option that keeps the bound: queueing the connection
+                        // would need a thread to wait in, which is the thing being bounded.
+                        if live.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                            live.fetch_sub(1, Ordering::AcqRel);
+                            let mut refused = stream;
+                            let _ = respond_json(
+                                &mut refused,
+                                503,
+                                &json!({ "error": "too many connections" }),
+                            );
+                            continue;
+                        }
                         std::thread::Builder::new()
                             .name(String::from("observatory-conn"))
                             .spawn(move || {
@@ -145,6 +165,7 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                                 // Nor must one that stops reading: the stream writes heartbeats.
                                 let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
                                 handle(&collector, &config, stream);
+                                live.fetch_sub(1, Ordering::AcqRel);
                             })
                             .ok();
                     }
@@ -508,6 +529,7 @@ fn respond(
         404 => "Not Found",
         405 => "Method Not Allowed",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     let head = format!(
@@ -856,5 +878,55 @@ mod silence_tests {
             Ok(read) => panic!("the server answered a silent connection with {read} bytes"),
             Err(error) => panic!("the connection was not closed by the server: {error}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod connection_cap_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn test_collector() -> Arc<Collector> {
+        let recorder = crate::recorder::recorder(irrigation_runtime::observe::ObserveLevel::Nodes);
+        let runtime = irrigation_runtime::Runtime::with_observer(
+            irrigation_runtime::RuntimeConfig::default(),
+            recorder.clone(),
+        );
+        Collector::new(runtime, recorder, 8)
+    }
+
+    /// A connection past the cap is refused rather than given a thread.
+    ///
+    /// Every held socket in this test is silent, so each owns a thread until the read timeout; the
+    /// point is that the peer past the cap is answered *without* one.
+    #[test]
+    fn a_connection_past_the_cap_is_refused() {
+        let server = serve(
+            test_collector(),
+            HttpConfig {
+                bind: String::from("127.0.0.1:0"),
+                ..HttpConfig::default()
+            },
+        )
+        .expect("bind");
+
+        // Fill the cap with silent peers, then ask once more and read the refusal.
+        let held: Vec<std::net::TcpStream> = (0..MAX_CONNECTIONS)
+            .map(|_| std::net::TcpStream::connect(server.addr()).expect("connect"))
+            .collect();
+        // The accept loop needs a moment to accept them all; the cap is what makes the next one fail.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let mut extra = std::net::TcpStream::connect(server.addr()).expect("connect");
+        extra
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut response = String::new();
+        extra.read_to_string(&mut response).expect("read");
+        assert!(
+            response.starts_with("HTTP/1.1 503"),
+            "the peer past the cap is refused: {response:?}"
+        );
+        drop(held);
     }
 }
