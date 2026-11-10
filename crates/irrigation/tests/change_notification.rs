@@ -1,8 +1,10 @@
 //! Kernel change notification: a consumer reruns only when an observed unit changed.
 
+#[cfg(feature = "observatory")]
+use std::sync::atomic::AtomicU64;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use irrigation::{

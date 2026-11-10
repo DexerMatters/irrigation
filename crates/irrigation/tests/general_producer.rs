@@ -1767,3 +1767,69 @@ fn a_local_state_destructor_may_register_a_component() {
         "the retained state's destructor ran"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A replaced host object is dropped outside the registry lock (runtime-api-r11-05)
+// ---------------------------------------------------------------------------
+
+/// Re-installs itself for another View when dropped, which is the natural
+/// teardown for a provider being swapped out -- and the thing that deadlocks a
+/// non-reentrant registry lock if the runtime drops it while holding that lock.
+struct SelfReplacing {
+    runtime: std::sync::Weak<Runtime>,
+}
+
+impl std::fmt::Debug for SelfReplacing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SelfReplacing")
+    }
+}
+
+impl irrigation::RouteSelector for SelfReplacing {
+    fn select(
+        &self,
+        _unit: &irrigation::UnitKey,
+        first: irrigation::NodeId,
+        _second: irrigation::NodeId,
+    ) -> irrigation::NodeId {
+        first
+    }
+}
+
+impl Drop for SelfReplacing {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            // The same registry the replacement holds, re-entered from a
+            // destructor. With the fix this runs after the guard is released.
+            runtime.set_route_selector(std::sync::Arc::new(SelfReplacing {
+                runtime: std::sync::Weak::new(),
+            }));
+        }
+    }
+}
+
+#[test]
+fn a_replaced_selector_is_dropped_outside_the_registry_lock() {
+    let runtime = std::sync::Arc::new(Runtime::new());
+    runtime.set_route_selector(std::sync::Arc::new(SelfReplacing {
+        runtime: std::sync::Arc::downgrade(&runtime),
+    }));
+
+    // The swap drops the first selector, whose destructor re-enters the setter.
+    // Parked on a thread so a regression reports a deadlock instead of hanging
+    // the whole suite.
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let swapping = std::sync::Arc::clone(&runtime);
+    let handle = std::thread::spawn(move || {
+        swapping.set_route_selector(std::sync::Arc::new(SelfReplacing {
+            runtime: std::sync::Weak::new(),
+        }));
+        let _ = done.send(());
+    });
+    let outcome = finished.recv_timeout(std::time::Duration::from_secs(5));
+    assert!(
+        outcome.is_ok(),
+        "a destroyed selector re-entering the registry deadlocked, so the runtime dropped it under the lock"
+    );
+    handle.join().expect("the swapping thread finished");
+}

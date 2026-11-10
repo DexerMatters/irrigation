@@ -1225,7 +1225,16 @@ impl Runtime {
 
     /// Installs the provider-selection policy for live definition conflicts.
     pub fn set_route_selector(&self, selector: Arc<dyn RouteSelector>) {
-        *self.inner.route_selector.lock() = Some(selector);
+        // The replaced selector is dropped outside the guard. It is host code,
+        // and host code is allowed to call back into the runtime -- a teardown
+        // that re-installs itself is the natural shape -- so dropping it under a
+        // non-reentrant mutex it may want is the same mistake `Subscription::drop`
+        // already avoids.
+        let previous = {
+            let mut slot = self.inner.route_selector.lock();
+            slot.replace(selector)
+        };
+        drop(previous);
     }
 
     /// Installs a demand recipe for missing ports of one View.
@@ -1234,7 +1243,13 @@ impl Runtime {
     /// and no live writer can satisfy it. It is host code: it decides how to
     /// invoke the producing component.
     pub fn install_port_provider(&self, view: ViewId, provider: Arc<dyn PortProvider>) {
-        self.inner.port_providers.lock().insert(view, provider);
+        // As above: the replaced provider is a host object, so it is dropped
+        // after the registry guard is released.
+        let previous = {
+            let mut providers = self.inner.port_providers.lock();
+            providers.insert(view, provider)
+        };
+        drop(previous);
     }
 
     /// Captures a revisioned routing certificate for one View region.
