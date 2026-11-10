@@ -1078,3 +1078,57 @@ fn an_edit_closure_may_read_a_second_runtime() {
         .expect("the transaction commits");
     assert_eq!(read, (vec![2], 1));
 }
+
+// ---------------------------------------------------------------------------
+// A commit whose value equals the committed one is counted as a cutoff
+// (runtime-kernel-08)
+// ---------------------------------------------------------------------------
+
+/// Answers with the parity of the summed payloads: a payload edit re-runs the
+/// body without changing the answer.
+#[irrigation]
+mod ledger_count {
+    use super::Ledger;
+
+    #[component(root)]
+    pub fn count(ledger: &Ledger) -> u64 {
+        let entries = ledger.entries();
+        entries
+            .keys()
+            .into_iter()
+            .map(|key| entries.get(&key).unwrap_or(0))
+            .sum::<u64>()
+            % 2
+    }
+}
+
+#[test]
+fn an_equal_commit_is_counted_as_a_cutoff() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+    runtime.install(ledger_count::Count).expect("install");
+    assert_eq!(
+        runtime.read_outputs::<ledger_count::Count>().expect("read"),
+        0
+    );
+    assert_eq!(
+        runtime.stats().cutoffs,
+        0,
+        "the first evaluation has no previous value to cut off against"
+    );
+
+    // The payload moves, so the body runs again -- and 12 keeps the parity, which
+    // is the cutoff.
+    runtime
+        .edit(|edit| edit.set(ledger_value(1), 12u64))
+        .expect("edit");
+    assert_eq!(
+        runtime.read_outputs::<ledger_count::Count>().expect("read"),
+        0
+    );
+    let cutoffs = runtime.stats().cutoffs;
+    assert!(
+        cutoffs > 0,
+        "a commit whose value did not move is a cutoff, and the counter says so"
+    );
+}

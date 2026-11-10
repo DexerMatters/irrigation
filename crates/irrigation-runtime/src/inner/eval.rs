@@ -975,6 +975,12 @@ impl Inner {
         if changed {
             let dependents = state.node(node).dependents.clone();
             changed_nodes.extend(dependents);
+        } else if previous_value.is_some() {
+            // The body ran and produced the answer the node already held: that is
+            // a cutoff, and it is what stops the dependents from being woken. The
+            // counter is published on the board and was never incremented, so it
+            // read zero however many cutoffs a run made.
+            state.stats.cutoffs.fetch_add(1, Ordering::Relaxed);
         }
         // Retire observations that the new trace no longer contains. A retired
         // branch must release its definitions and its value, so it re-executes
