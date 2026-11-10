@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use irrigation::{FieldId, Runtime, RuntimeConfig, UnitKey, UnitKind, ViewSchema, view};
+use irrigation::{Runtime, RuntimeConfig, ViewSchema, view};
 
 const BODY_NANOS: u64 = 150_000_000;
 
@@ -29,21 +29,15 @@ pub struct Pair {
     pub right: u64,
 }
 
-fn field(index: u16) -> UnitKey {
-    UnitKey::field(
-        <Pair as ViewSchema>::view_id(),
-        FieldId(index),
-        UnitKind::Value,
-    )
-}
-
 #[irrigation::irrigation]
 mod writers {
     #[component]
     pub fn left(tag: u32) -> u32 {
         irrigation::ensure_view(<super::Pair as irrigation::ViewSchema>::DESCRIPTOR);
         super::slow();
-        irrigation::define_unit(super::field(0), u64::from(tag), "left writer");
+        // The typed handle, not a literal `FieldId`: the field's identity is the
+        // generated constant, so a writer cannot name a field that does not exist.
+        irrigation::define_unit(super::Pair::LEFT.unit(), u64::from(tag), "left writer");
         0
     }
 
@@ -51,7 +45,7 @@ mod writers {
     pub fn right(tag: u32) -> u32 {
         irrigation::ensure_view(<super::Pair as irrigation::ViewSchema>::DESCRIPTOR);
         super::slow();
-        irrigation::define_unit(super::field(1), u64::from(tag), "right writer");
+        irrigation::define_unit(super::Pair::RIGHT.unit(), u64::from(tag), "right writer");
         0
     }
 }
