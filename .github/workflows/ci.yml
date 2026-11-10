@@ -40,8 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Markdown links
         run: python3 scripts/check-md-links.py
+      # A doc link that resolves to nothing is a public page telling a reader to
+      # look somewhere that does not exist -- including at types the crate never
+      # had. `-D warnings` also holds back bare URLs and invalid html tags.
+      - name: Rustdoc links
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 
   web:
     runs-on: ubuntu-latest
