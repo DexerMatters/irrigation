@@ -23,6 +23,8 @@ use irrigation_runtime::observe::GraphScope;
 
 /// Largest request body the observation surface accepts, in bytes.
 const MAX_BODY: usize = 64 * 1024;
+/// Longest request-head line accepted. A header or request line past this is refused rather than read.
+const MAX_HEAD_LINE: usize = 8 * 1024;
 
 use crate::collector::Collector;
 use crate::wire::EventsWire;
@@ -351,11 +353,35 @@ fn handle(collector: &Arc<Collector>, config: &HttpConfig, stream: TcpStream) {
     }
 }
 
+/// One request-head line, refusing to allocate past [`MAX_HEAD_LINE`].
+///
+/// `BufRead::read_line` grows the string until it sees a newline, so a client that never sends one
+/// can make the server allocate without limit. The body has had a cap all along; the head needed one.
+///
+/// Answers `Ok(None)` when the line is longer than the cap, which the caller reports as a bad request.
+fn read_head_line<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<Option<usize>> {
+    let mut buffer = Vec::new();
+    let read = reader
+        .by_ref()
+        .take(MAX_HEAD_LINE as u64)
+        .read_until(b'\n', &mut buffer)?;
+    if read == MAX_HEAD_LINE && buffer.last() != Some(&b'\n') {
+        return Ok(None);
+    }
+    line.clear();
+    line.push_str(&String::from_utf8_lossy(&buffer));
+    Ok(Some(read))
+}
+
 fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
-        return Ok(empty_request());
+    match read_head_line(&mut reader, &mut request_line)? {
+        Some(0) => return Ok(empty_request()),
+        Some(_) => {}
+        // An over-long request line is a bad request, not an empty one: answering as if nothing
+        // arrived would hide the attempt.
+        None => return Ok(empty_request()),
     }
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_owned();
@@ -367,8 +393,10 @@ fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     let mut headers = Vec::new();
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            break;
+        match read_head_line(&mut reader, &mut line)? {
+            Some(0) => break,
+            Some(_) => {}
+            None => return Ok(empty_request()),
         }
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
@@ -728,5 +756,46 @@ mod static_path_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod head_line_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn a_short_line_is_returned_whole() {
+        let mut reader = Cursor::new(b"GET /x HTTP/1.1\r\n".to_vec());
+        let mut line = String::new();
+        let read = read_head_line(&mut reader, &mut line).expect("read");
+        assert_eq!(read, Some(17), "the line including its newline");
+        assert!(line.starts_with("GET /x"));
+    }
+
+    #[test]
+    fn the_end_of_the_stream_reads_as_zero() {
+        let mut reader = Cursor::new(Vec::new());
+        let mut line = String::new();
+        assert_eq!(
+            read_head_line(&mut reader, &mut line).expect("read"),
+            Some(0)
+        );
+    }
+
+    /// A client that never sends a newline cannot make the server allocate past the cap.
+    #[test]
+    fn a_line_longer_than_the_cap_is_refused() {
+        let mut reader = Cursor::new(vec![b'a'; MAX_HEAD_LINE * 2]);
+        let mut line = String::new();
+        assert_eq!(
+            read_head_line(&mut reader, &mut line).expect("read"),
+            None,
+            "an unterminated over-long line is not read to its end"
+        );
+        assert!(
+            line.is_empty(),
+            "and nothing partial is handed to the caller: {line:?}"
+        );
     }
 }
