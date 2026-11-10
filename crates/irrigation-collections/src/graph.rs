@@ -838,8 +838,10 @@ where
 
     /// Defines a whole derived graph: node payloads, edge payloads, topology.
     ///
-    /// Edges whose endpoints are not defined are dropped, so a removed node
-    /// cannot leave a dangling edge behind.
+    /// Every edge's endpoints must appear in `nodes`: an edge that names a missing
+    /// endpoint is a caller mistake and fails the write with `PreconditionUnmet`
+    /// naming the edge and both endpoints. It used to claim such edges were dropped,
+    /// while the unit loop panicked on them -- so the documented drop never happened.
     #[track_caller]
     pub fn define_graph(
         &self,
@@ -865,11 +867,23 @@ where
     ) {
         let node_ids: irrigation_store::persistent::PSet<u64> =
             nodes.iter().map(|(id, _)| *id).collect();
+        // An edge whose endpoints are not both in this definition is refused, and it
+        // is refused here rather than while building topology and again while defining
+        // the unit: those two spellings disagreed -- one dropped the edge silently, the
+        // other panicked -- so the silent one was dead and this function's doc, which
+        // promised the drop, described behaviour that could not happen.
+        for (edge, from, to, _) in edges {
+            if !node_ids.contains(from) || !node_ids.contains(to) {
+                panic_engine(ComputeError::PreconditionUnmet {
+                    condition: String::from("graph edge endpoints exist in the same definition"),
+                    ports: vec![format!("{edge}"), format!("{from}"), format!("{to}")],
+                    reason: PreconditionReason::Contradiction,
+                });
+            }
+        }
         let mut topology_edges: PMap<u64, (u64, u64)> = PMap::new();
         for (edge, from, to, _) in edges {
-            if node_ids.contains(from) && node_ids.contains(to) {
-                topology_edges = topology_edges.insert(*edge, (*from, *to)).0;
-            }
+            topology_edges = topology_edges.insert(*edge, (*from, *to)).0;
         }
         // A whole-graph definition replaces the graph: retract node and edge
         // units that the new definition no longer contains. This makes the
@@ -886,13 +900,6 @@ where
             define_unit(self.node_key(*id), payload.clone(), label);
         }
         for (edge, from, to, payload) in edges {
-            if !node_ids.contains(from) || !node_ids.contains(to) {
-                panic_engine(ComputeError::PreconditionUnmet {
-                    condition: String::from("graph edge endpoints exist in the same definition"),
-                    ports: vec![format!("{edge}"), format!("{from}"), format!("{to}")],
-                    reason: PreconditionReason::Contradiction,
-                });
-            }
             define_unit(
                 self.edge_key(*edge),
                 Some(EdgePayload {

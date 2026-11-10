@@ -4338,6 +4338,9 @@ mod derived_graph {
     ) {
         if mode.mode() == 1 {
             DerivedGraph.define_graph(&[(1u64, 11u64), (2, 20)], &[(10u64, 1, 2, 100u64)]);
+        } else if mode.mode() == 3 {
+            // An edge naming a node this definition does not contain.
+            DerivedGraph.define_graph(&[(1u64, 10u64)], &[(10u64, 1, 2, 100u64)]);
         } else if mode.mode() == 2 {
             DerivedGraph.define_graph(&[(1u64, 10u64)], &[]);
         } else {
@@ -14486,5 +14489,25 @@ fn incremental_data_declares_a_view_schema() {
             .fields
             .len(),
         3
+    );
+}
+
+/// `define_graph` refuses an edge whose endpoint is not in the same definition. The
+/// docs used to promise such edges were dropped, while the unit loop panicked on them --
+/// so the documented drop never happened and one of the two spellings was dead.
+#[test]
+fn a_whole_graph_definition_refuses_an_edge_to_a_missing_node() {
+    let runtime = Runtime::new();
+    runtime.install(derived_graph::Root).expect("install");
+    runtime
+        .edit(|edit| edit.view::<GraphMode>().set_mode(3))
+        .expect("edit");
+    let error = runtime
+        .read_outputs::<derived_graph::Root>()
+        .expect_err("a dangling edge fails the write");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("graph edge endpoints exist in the same definition"),
+        "the refusal names the rule: {message}"
     );
 }
