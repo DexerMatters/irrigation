@@ -56,8 +56,8 @@ pub use irrigation_runtime::general::{
 pub use irrigation_runtime::helpers::{
     WriteGroup, claim_field, claim_ports, claim_unit, define_unit, ensure_view, node_of,
     observe_clone, observe_local, observe_ref, plan_ports, provide_ports, read_unit_value,
-    require_condition, require_value, require_value_await, retract_unit, try_read_unit_value,
-    values_equal, view_content, wait_for_port,
+    require_absent, require_condition, require_value, require_value_await, retract_unit,
+    try_read_unit_value, values_equal, view_content, wait_for_port,
 };
 pub use irrigation_runtime::{
     ChangeSummary, ComponentSpec, DependencyExplanation, DerivedView, Edit, EditableView, Explain,

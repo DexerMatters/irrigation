@@ -207,22 +207,58 @@ impl Inner {
     ///
     /// With no ports there is nothing to re-evaluate, so the answer has to be
     /// taken as given and a `false` is a contradiction now.
+    /// Records that `ports` must be absent when the group commits.
+    ///
+    /// This exists so absence and presence go through one owner: a caller that
+    /// built the requirement itself skipped the write-arbitration check below,
+    /// so an undeclared port could be required absent under `Strict` while the
+    /// same port required present was refused.
+    pub fn require_absence(&self, ports: &[UnitKey], description: &'static str) -> Result<()> {
+        self.check_ports_declared(ports)?;
+        if frame::current().is_none() {
+            return Err(ComputeError::OutsideComputation {
+                operation: "write requirement",
+            });
+        }
+        if ports.is_empty() {
+            return Err(ComputeError::PreconditionUnmet {
+                condition: description.to_string(),
+                ports: Vec::new(),
+                reason: irrigation_core::error::PreconditionReason::Contradiction,
+            });
+        }
+        frame::require(Requirement::absent(ports.to_vec(), description));
+        Ok(())
+    }
+
+    /// Refuses ports the group did not declare, under strict arbitration.
+    fn check_ports_declared(&self, ports: &[UnitKey]) -> Result<()> {
+        if self.config.write_arbitration != WriteArbitration::Strict {
+            return Ok(());
+        }
+        let state = self.lock();
+        for port in ports {
+            if !port_declared(&state, port) {
+                return Err(ComputeError::WriteOutOfScope {
+                    port: format!("{port:?}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Records a requirement that `ports` hold when the group commits.
+    ///
+    /// `observed` is the caller's own evaluation, from tracked reads it already
+    /// made; it is a hint, because with ports to re-read the runtime decides at
+    /// commit.
     pub fn require_condition(
         &self,
         observed: bool,
         ports: &[UnitKey],
         description: &'static str,
     ) -> Result<()> {
-        if self.config.write_arbitration == WriteArbitration::Strict {
-            let state = self.lock();
-            for port in ports {
-                if !port_declared(&state, port) {
-                    return Err(ComputeError::WriteOutOfScope {
-                        port: format!("{port:?}"),
-                    });
-                }
-            }
-        }
+        self.check_ports_declared(ports)?;
         if frame::current().is_none() {
             return Err(ComputeError::OutsideComputation {
                 operation: "write requirement",

@@ -74,6 +74,10 @@ impl RuntimeOps for Inner {
         Inner::unplan_writes(self, scopes)
     }
 
+    fn require_absence(&self, ports: &[UnitKey], description: &'static str) -> Result<()> {
+        Inner::require_absence(self, ports, description)
+    }
+
     fn require_condition(
         &self,
         condition: bool,

@@ -1664,3 +1664,50 @@ fn a_plan_can_be_withdrawn_before_writing() {
     assert_eq!(runtime.snapshot().view::<Waited>().field0(), vec![(1, 42)]);
     assert!(runtime.stats().unplanned_ports > 0);
 }
+
+// ---------------------------------------------------------------------------
+// Absence and presence share one owner, so strict arbitration covers both
+// (runtime-general-r5-05)
+// ---------------------------------------------------------------------------
+
+#[irrigation::irrigation]
+mod absence_strict {
+    use super::StrictValue;
+
+    /// Requires an undeclared port absent. Presence in the same position is
+    /// refused with `WriteOutOfScope`, so absence must be too: one protocol, one
+    /// owner.
+    #[component(root)]
+    pub fn root(value: &StrictValue) -> u64 {
+        let _ = value;
+        irrigation::require_absent(
+            &[irrigation::UnitKey::field(
+                <StrictValue as irrigation::ViewSchema>::view_id(),
+                irrigation::FieldId(0),
+                irrigation::UnitKind::Value,
+            )],
+            "undeclared absence",
+        );
+        7
+    }
+}
+
+#[test]
+fn strict_mode_refuses_an_undeclared_absence() {
+    use irrigation::{RootComponent, ViewSchema, WriteArbitration};
+
+    let runtime = Runtime::with_config(irrigation::RuntimeConfig {
+        write_arbitration: WriteArbitration::Strict,
+        ..irrigation::RuntimeConfig::default()
+    });
+    runtime.register_view(<StrictValue as ViewSchema>::DESCRIPTOR);
+    runtime.install(absence_strict::Root).expect("install");
+    let error = runtime
+        .read_outputs::<absence_strict::Root>()
+        .expect_err("an undeclared absence must be rejected like an undeclared write");
+    assert!(
+        matches!(error, irrigation::ComputeError::WriteOutOfScope { .. }),
+        "expected the arbitration refusal, got {error:?}"
+    );
+    let _ = <absence_strict::Root as RootComponent>::ID;
+}

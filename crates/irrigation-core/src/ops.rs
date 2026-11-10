@@ -105,6 +105,17 @@ pub trait RuntimeOps: Send + Sync + 'static {
         description: &'static str,
     ) -> Result<()>;
 
+    /// Records that `ports` must be absent when the current write group commits.
+    ///
+    /// The counterpart of [`Self::require_condition`], and the only owner of that
+    /// protocol: a caller that builds the requirement itself would skip the
+    /// write-arbitration check this method performs for both directions.
+    fn require_absence(
+        &self,
+        ports: &[crate::descriptor::UnitKey],
+        description: &'static str,
+    ) -> Result<()>;
+
     /// Runs any host-installed provider for the given ports.
     ///
     /// Returns `true` when at least one provider ran. The caller re-evaluates

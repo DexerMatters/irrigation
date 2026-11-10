@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use irrigation_core::descriptor::{UnitKey, UnitKind, WriteScope};
 use irrigation_core::error::ComputeError;
-use irrigation_core::frame::{Requirement, current_or_engine_panic};
+use irrigation_core::frame::current_or_engine_panic;
 use irrigation_core::ids::{FieldId, ViewId};
 use irrigation_core::ops::panic_engine;
 use irrigation_core::value::{Value, value_of};
@@ -545,15 +545,11 @@ pub fn require_condition(observed: bool, ports: &[UnitKey], description: &'stati
 /// `PreconditionUnmet { Contradiction }` when no port is named: a requirement
 /// that names no port can never be re-evaluated at commit.
 pub fn require_absent(ports: &[UnitKey], description: &'static str) {
-    let _frame = current_or_engine_panic("write requirement");
-    if ports.is_empty() {
-        panic_engine(ComputeError::PreconditionUnmet {
-            condition: description.to_string(),
-            ports: Vec::new(),
-            reason: irrigation_core::error::PreconditionReason::Contradiction,
-        });
-    }
-    irrigation_core::frame::require(Requirement::absent(ports.to_vec(), description));
+    let frame = current_or_engine_panic("write requirement");
+    frame
+        .runtime()
+        .require_absence(ports, description)
+        .unwrap_or_else(|error| panic_engine(error));
 }
 
 /// Records that the given ports must be present when the current write group
