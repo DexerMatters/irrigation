@@ -1153,14 +1153,14 @@ pub fn tree_contains(content: &Arc<dyn Any + Send + Sync>, key: &UnitKey) -> boo
     let Some(storage) = content.downcast_ref::<TreeStorage>() else {
         return false;
     };
+    // Every slot but `ROOT` asks the reader: presence must mean the same thing as
+    // readability, and spelling the slot set here a second time is how this function came
+    // to report `FIELD`, `CHILDREN` and `MEMBERSHIP` units absent while `tree_get` read
+    // them. `ROOT` keeps its own answer because it reports whether the tree exists at all,
+    // which the reader cannot say -- it always answers with the option.
     match key.field.0 {
         slots::ROOT => storage.root.is_some(),
-        slots::TAG | slots::PARENT => key
-            .entity
-            .as_deref()
-            .and_then(|entity| entity.as_any().downcast_ref::<TreeNodeId>())
-            .is_some_and(|node| storage.node(*node).is_some()),
-        _ => false,
+        _ => tree_get(content, key).is_some(),
     }
 }
 
@@ -2012,5 +2012,45 @@ mod build_identity_tests {
             )
             .0;
         resolve_build_identity(Some(7), &mut storage);
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+
+    /// Presence must mean readability for every slot the reader knows.
+    ///
+    /// `tree_contains` used to handle only `ROOT`, `TAG` and `PARENT`, so a `FIELD`,
+    /// `CHILDREN` or `MEMBERSHIP` unit that `tree_get` read was reported absent.
+    #[test]
+    fn a_readable_unit_is_present() {
+        let mut storage = TreeStorage::default();
+        let root = build_tree_node(
+            &TreeBuild {
+                id: Some(1),
+                type_index: 0,
+                variant: 0,
+                fields: vec![TreeValue::Int(7)],
+                children: vec![BuildSlot::One(Box::new(TreeBuild::leaf(1, 0)))],
+            },
+            None,
+            &mut storage,
+        );
+        let content: Arc<dyn Any + Send + Sync> = Arc::new(storage);
+        let field = UnitKey::entity(
+            ViewId(0),
+            FieldId(slots::FIELD),
+            UnitKind::Structure,
+            irrigation_core::key::any_key((root, 0u16)),
+        );
+        assert!(
+            tree_get(&content, &field).is_some(),
+            "the reader knows the field unit"
+        );
+        assert!(
+            tree_contains(&content, &field),
+            "so presence must report it"
+        );
     }
 }
