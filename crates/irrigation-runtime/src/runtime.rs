@@ -209,20 +209,7 @@ impl Runtime {
         let mut state = self.inner.lock();
         check_root_slot(&state)?;
         check_component_id(&state, component_id)?;
-        for descriptor in &output_views {
-            if descriptor.kind != irrigation_core::descriptor::ViewKind::Derived {
-                return Err(ComputeError::internal(format!(
-                    "general output view `{}` must be derived",
-                    descriptor.name
-                )));
-            }
-            if state.producers.contains_key(&descriptor.id) {
-                return Err(ComputeError::internal(format!(
-                    "view `{}` already has a producer",
-                    descriptor.name
-                )));
-            }
-        }
+        check_output_views(&state, &output_views)?;
         state.component_names.insert(component_id, T::NAME);
         // The root body runs in the root scope, so the root must own it: the
         // planned-provider check and a Strict write claim both attribute a
@@ -279,20 +266,7 @@ impl Runtime {
         }
         let mut state = self.inner.lock();
         check_component_id(&state, component_id)?;
-        for descriptor in &output_views {
-            if descriptor.kind != irrigation_core::descriptor::ViewKind::Derived {
-                return Err(ComputeError::internal(format!(
-                    "general output view `{}` must be derived",
-                    descriptor.name
-                )));
-            }
-            if state.producers.contains_key(&descriptor.id) {
-                return Err(ComputeError::internal(format!(
-                    "view `{}` already has a producer",
-                    descriptor.name
-                )));
-            }
-        }
+        check_output_views(&state, &output_views)?;
         state.component_names.insert(component_id, T::NAME);
         state.generals.push(Arc::new(component));
         let index = state.generals.len() - 1;
@@ -2250,6 +2224,32 @@ fn explain_locked(state: &State, node: irrigation_core::ids::NodeId) -> Option<E
 fn live_node(state: &State, id: irrigation_core::ids::NodeId) -> Option<&NodeRecord> {
     let record = state.nodes.get(id.index())?;
     (record.generation == id.generation() && !record.freed).then_some(record)
+}
+
+/// Refuses an output View a general component may not produce.
+///
+/// Every path that installs a general component must apply this: an output View has
+/// to be derived (a source View is written by its host) and unclaimed (one producer
+/// per View). The rule was written out in both install paths.
+fn check_output_views(
+    state: &State,
+    output_views: &[&irrigation_core::descriptor::ViewDescriptor],
+) -> Result<()> {
+    for descriptor in output_views {
+        if descriptor.kind != irrigation_core::descriptor::ViewKind::Derived {
+            return Err(ComputeError::internal(format!(
+                "general output view `{}` must be derived",
+                descriptor.name
+            )));
+        }
+        if state.producers.contains_key(&descriptor.id) {
+            return Err(ComputeError::internal(format!(
+                "view `{}` already has a producer",
+                descriptor.name
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Rejects a second root on the runtime's one root slot.
