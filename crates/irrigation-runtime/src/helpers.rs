@@ -129,9 +129,17 @@ where
 /// The definition becomes visible only when the computation commits its value,
 /// trace, and routing change together.
 ///
+/// A unit has **exactly one provider**. Two computations defining the same unit is a modelling error,
+/// not contention: the second is refused with `defined twice: by A and by B`, and claiming the unit
+/// first does not change that -- a claim authorises its holder against readers, not against a second
+/// provider. Splitting one unit between two writers requires one of them to own the unit and the other
+/// to publish a different one; the granularity the runtime gives is *between* units, where a reader of
+/// one field never waits for the writer of another.
+///
 /// # Panics
 ///
-/// Panics with an engine payload outside a computation.
+/// Panics with an engine payload outside a computation, and when the unit already has a different
+/// provider.
 #[track_caller]
 pub fn define_unit<T>(unit: UnitKey, value: T, label: &'static str)
 where
