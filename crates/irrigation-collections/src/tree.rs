@@ -601,6 +601,11 @@ pub struct TreeImportReport {
     /// Nodes whose variant changed and were replaced.
     pub replaced: usize,
     /// Duplicate-looking positions the positional rule could not distinguish.
+    ///
+    /// Always zero: the import path does not detect ambiguity, so the field is
+    /// carried for the report's shape rather than filled. It is documented here
+    /// because a reader of a public report should not have to find the literal
+    /// `ambiguous: 0` to learn that the number means nothing yet.
     pub ambiguous: usize,
 }
 
@@ -640,6 +645,7 @@ impl<'a> TreeEditor<'a> {
             created: self.created,
             reused: self.reused,
             replaced: self.replaced,
+            // See the field's doc: not detected yet, so not reported.
             ambiguous: 0,
         }
     }
