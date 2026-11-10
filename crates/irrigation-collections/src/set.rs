@@ -37,6 +37,75 @@ impl<T> std::fmt::Debug for SourceSet<T> {
     }
 }
 
+/// The two vtable methods every Set family shares.
+///
+/// `unit_eq` decides membership by testing the member, and `define_many` keeps mixed
+/// field-and-membership drafts in declaration order before falling back to a batch of edits.
+/// Both bodies are written in terms of the family's `Self::define`/`Self::retract` and the
+/// element type, so they were spelled twice -- once per Set family -- and a change to either
+/// rule had to be made in both. A macro rather than a free function because the element type
+/// is only reachable from the impl that knows it.
+macro_rules! set_field_vtable {
+    ($element:ty) => {
+        fn unit_eq(old: &Self::Storage, new: &Self::Storage, unit: &UnitKey) -> Option<bool> {
+            if unit.entity.is_none() && unit.kind == UnitKind::Value {
+                return Some(old == new);
+            }
+            if unit.kind == UnitKind::Structure {
+                return Some(old == new);
+            }
+            if unit.kind != UnitKind::Membership {
+                return None;
+            }
+            let entity = unit.entity.as_deref()?;
+            let member = entity.as_any().downcast_ref::<$element>()?;
+            Some(old.contains(member) == new.contains(member))
+        }
+
+        fn define_many(storage: &Self::Storage, drafts: &[(UnitKey, Value)]) -> Self::Storage {
+            // A field-level/structure draft is content itself, not a membership event;
+            // preserve the draft order for those mixed writes.
+            if drafts.iter().any(|(key, _)| key.entity.is_none()) {
+                let mut next = storage.clone();
+                for (key, value) in drafts {
+                    let entity = key.entity.as_deref().unwrap_or(&());
+                    if key.kind == UnitKind::Membership
+                        && value.downcast_ref::<bool>() == Some(&false)
+                    {
+                        next = Self::retract(&next, entity);
+                    } else {
+                        next = Self::define(&next, entity, value.clone());
+                    }
+                }
+                return next;
+            }
+            let mut edits = Vec::new();
+            for (key, value) in drafts {
+                let Some(entity) = key.entity.as_deref() else {
+                    continue;
+                };
+                let Some(member) = entity.as_any().downcast_ref::<$element>() else {
+                    continue;
+                };
+                if key.kind == UnitKind::Membership && value.downcast_ref::<bool>() == Some(&false)
+                {
+                    edits.push(SetEdit::Remove {
+                        value: member.clone(),
+                    });
+                } else {
+                    edits.push(SetEdit::Insert {
+                        value: member.clone(),
+                    });
+                }
+            }
+            if edits.is_empty() {
+                return storage.clone();
+            }
+            storage.apply_delta(&SetDelta::from_edits(edits)).0
+        }
+    };
+}
+
 impl<T> ViewField for SourceSet<T>
 where
     T: Ord + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
@@ -88,60 +157,7 @@ where
         Some(value_of(storage.clone()))
     }
 
-    fn unit_eq(old: &Self::Storage, new: &Self::Storage, unit: &UnitKey) -> Option<bool> {
-        if unit.entity.is_none() && unit.kind == UnitKind::Value {
-            return Some(old == new);
-        }
-        if unit.kind == UnitKind::Structure {
-            return Some(old == new);
-        }
-        if unit.kind != UnitKind::Membership {
-            return None;
-        }
-        let entity = unit.entity.as_deref()?;
-        let member = entity.as_any().downcast_ref::<T>()?;
-        Some(old.contains(member) == new.contains(member))
-    }
-
-    fn define_many(storage: &Self::Storage, drafts: &[(UnitKey, Value)]) -> Self::Storage {
-        // A field-level/structure draft is content itself, not a membership
-        // event; preserve the draft order for those mixed writes.
-        if drafts.iter().any(|(key, _)| key.entity.is_none()) {
-            let mut next = storage.clone();
-            for (key, value) in drafts {
-                let entity = key.entity.as_deref().unwrap_or(&());
-                if key.kind == UnitKind::Membership && value.downcast_ref::<bool>() == Some(&false)
-                {
-                    next = Self::retract(&next, entity);
-                } else {
-                    next = Self::define(&next, entity, value.clone());
-                }
-            }
-            return next;
-        }
-        let mut edits = Vec::new();
-        for (key, value) in drafts {
-            let Some(entity) = key.entity.as_deref() else {
-                continue;
-            };
-            let Some(member) = entity.as_any().downcast_ref::<T>() else {
-                continue;
-            };
-            if key.kind == UnitKind::Membership && value.downcast_ref::<bool>() == Some(&false) {
-                edits.push(SetEdit::Remove {
-                    value: member.clone(),
-                });
-            } else {
-                edits.push(SetEdit::Insert {
-                    value: member.clone(),
-                });
-            }
-        }
-        if edits.is_empty() {
-            return storage.clone();
-        }
-        storage.apply_delta(&SetDelta::from_edits(edits)).0
-    }
+    set_field_vtable!(T);
 }
 
 /// Tracked read handle for a source set.
@@ -528,60 +544,7 @@ where
         }
     }
 
-    fn unit_eq(old: &Self::Storage, new: &Self::Storage, unit: &UnitKey) -> Option<bool> {
-        if unit.entity.is_none() && unit.kind == UnitKind::Value {
-            return Some(old == new);
-        }
-        if unit.kind == UnitKind::Structure {
-            return Some(old == new);
-        }
-        if unit.kind != UnitKind::Membership {
-            return None;
-        }
-        let entity = unit.entity.as_deref()?;
-        let member = entity.as_any().downcast_ref::<T>()?;
-        Some(old.contains(member) == new.contains(member))
-    }
-
-    fn define_many(storage: &Self::Storage, drafts: &[(UnitKey, Value)]) -> Self::Storage {
-        // A field-level/structure draft is content itself, not a membership
-        // event; preserve the draft order for those mixed writes.
-        if drafts.iter().any(|(key, _)| key.entity.is_none()) {
-            let mut next = storage.clone();
-            for (key, value) in drafts {
-                let entity = key.entity.as_deref().unwrap_or(&());
-                if key.kind == UnitKind::Membership && value.downcast_ref::<bool>() == Some(&false)
-                {
-                    next = Self::retract(&next, entity);
-                } else {
-                    next = Self::define(&next, entity, value.clone());
-                }
-            }
-            return next;
-        }
-        let mut edits = Vec::new();
-        for (key, value) in drafts {
-            let Some(entity) = key.entity.as_deref() else {
-                continue;
-            };
-            let Some(member) = entity.as_any().downcast_ref::<T>() else {
-                continue;
-            };
-            if key.kind == UnitKind::Membership && value.downcast_ref::<bool>() == Some(&false) {
-                edits.push(SetEdit::Remove {
-                    value: member.clone(),
-                });
-            } else {
-                edits.push(SetEdit::Insert {
-                    value: member.clone(),
-                });
-            }
-        }
-        if edits.is_empty() {
-            return storage.clone();
-        }
-        storage.apply_delta(&SetDelta::from_edits(edits)).0
-    }
+    set_field_vtable!(T);
 
     fn structure(storage: &Self::Storage) -> Option<irrigation_core::descriptor::Structure> {
         let members = storage.members().clone();
