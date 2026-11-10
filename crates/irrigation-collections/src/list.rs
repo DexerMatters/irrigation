@@ -419,18 +419,13 @@ where
         self.ids()
             .iter()
             .filter_map(|id| {
-                let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                let id = *id;
-                let param_node = runtime.site_node(member_scope, SiteId(1));
-                let value: Option<T> = irrigation_core::ops::eval_node(param_node, || {
-                    read_member(view, field, content, id)
-                });
-                let value = value?;
-                let result_node = runtime.site_node(member_scope, SiteId(2));
-                let keep = irrigation_core::ops::eval_node(result_node, || {
-                    predicate(irrigation_runtime::Param::new(param_node, value.clone()))
-                });
-                keep.then_some(value)
+                filter_member(
+                    &runtime,
+                    call_scope,
+                    *id,
+                    || read_member(view, field, content, *id),
+                    &predicate,
+                )
             })
             .collect()
     }
@@ -1252,38 +1247,24 @@ where
         match storage {
             DerivedListStorage::Keyed { .. } => {
                 for id in self.ids().iter() {
-                    let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                    let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: Option<T> =
-                        irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                            self.get_key(*id)
-                        });
-                    let Some(value) = value else { continue };
-                    let result_node = runtime.site_node(member_scope, SiteId(2));
-                    let keep = irrigation_core::ops::eval_node_with(&runtime, result_node, || {
-                        predicate(irrigation_runtime::Param::new(param_node, value.clone()))
-                    });
-                    if keep {
-                        kept.push(value);
-                    }
+                    kept.extend(filter_member(
+                        &runtime,
+                        call_scope,
+                        *id,
+                        || self.get_key(*id),
+                        &predicate,
+                    ));
                 }
             }
             DerivedListStorage::Whole(items) => {
                 for (index, _) in items.iter().enumerate() {
-                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
-                    let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: Option<T> =
-                        irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                            self.whole_member(index as u64)
-                        });
-                    let Some(value) = value else { continue };
-                    let result_node = runtime.site_node(member_scope, SiteId(2));
-                    let keep = irrigation_core::ops::eval_node_with(&runtime, result_node, || {
-                        predicate(irrigation_runtime::Param::new(param_node, value.clone()))
-                    });
-                    if keep {
-                        kept.push(value);
-                    }
+                    kept.extend(filter_member(
+                        &runtime,
+                        call_scope,
+                        index as u64,
+                        || self.whole_member(index as u64),
+                        &predicate,
+                    ));
                 }
             }
         }
@@ -1491,6 +1472,36 @@ fn record_member_site(
         routing: 0,
         validity: runtime.validity_at(node),
     });
+}
+
+/// Evaluates one member's predicate in its own scope and returns the member when it holds.
+///
+/// The sibling of [`map_member`] for operators whose result is the *input* value rather than
+/// the operator's output: `filter` needs both the predicate's answer and the value it tested,
+/// which `map_member`'s closure never sees. The scope protocol -- a `list_member` child scope,
+/// the parameter node at `SiteId(1)`, the result node at `SiteId(2)` -- is the same, and is
+/// spelled here once for both families.
+fn filter_member<T, F, R>(
+    runtime: &std::sync::Arc<dyn irrigation_core::RuntimeOps>,
+    call_scope: irrigation_core::ScopeId,
+    id: u64,
+    read: R,
+    predicate: &F,
+) -> Option<T>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    F: Fn(irrigation_runtime::Param<T>) -> bool + ?Sized,
+    R: FnOnce() -> Option<T>,
+{
+    let member_scope = runtime.child_scope(call_scope, id, "list_member");
+    let param_node = runtime.site_node(member_scope, SiteId(1));
+    let value: Option<T> = irrigation_core::ops::eval_node_with(runtime, param_node, read);
+    let value = value?;
+    let result_node = runtime.site_node(member_scope, SiteId(2));
+    let keep = irrigation_core::ops::eval_node_with(runtime, result_node, || {
+        predicate(irrigation_runtime::Param::new(param_node, value.clone()))
+    });
+    keep.then_some(value)
 }
 
 /// Evaluates one member in its own scope and returns the operator's result for it.
