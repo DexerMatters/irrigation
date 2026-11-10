@@ -162,6 +162,10 @@ impl Pool {
     /// If the caller is already a worker, or no workers exist, the job runs
     /// inline. That rule is what prevents a nested demand from waiting on a
     /// pool that is entirely busy with its own callers.
+    /// # Panics
+    ///
+    /// Inline work propagates the job's panic to the caller, because the caller is where the
+    /// work ran. Pooled work re-raises it on this thread after joining the worker.
     pub fn run<T: Send + 'static>(&self, job: impl FnOnce() -> T + Send + 'static) -> T {
         if self.workers == 0 || on_worker() {
             // Inline work is the caller's own: it takes the value back and must

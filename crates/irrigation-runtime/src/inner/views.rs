@@ -7,6 +7,12 @@ use super::*;
 
 impl Inner {
     /// Returns a strong reference to this runtime.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the runtime's last strong handle has been dropped. An `Inner` only
+    /// exists while its `Runtime` does, so this is an internal invariant rather than a
+    /// caller error.
     #[must_use]
     pub fn arc(&self) -> Arc<Self> {
         self.self_ref
@@ -42,6 +48,12 @@ impl Inner {
     }
 
     /// Registers a View descriptor and materializes its region.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a different View name hashes to an id already registered. Identity is
+    /// the name hash, so aliasing two namespaces would make one View's units visible in
+    /// the other; a collision is refused rather than tolerated.
     pub fn register_view(&self, descriptor: &'static ViewDescriptor) {
         let mut state = self.lock();
         if let Some(existing) = state.views.get(&descriptor.id) {

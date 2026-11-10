@@ -18,7 +18,13 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        # `missing_panics_doc` is allow-by-default. It is enabled here because a public
+        # function that can abort without saying so is a contract gap the rest of -D
+        # warnings cannot see; the workspace documents all of them as of the audit's
+        # round 134.
+        run: |
+          cargo clippy --workspace --all-targets --all-features --locked \
+            -- -D warnings -W clippy::missing_panics_doc
 
       - name: Test
         run: cargo test --workspace --locked

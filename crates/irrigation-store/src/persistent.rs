@@ -711,6 +711,11 @@ impl<T: Clone> PSeq<T> {
     }
 
     /// Replaces the element at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index` is at or past the length; see [`PSeq::insert`] for the checked
+    /// path.
     #[must_use]
     pub fn set(&self, index: usize, value: T) -> Self {
         assert!(index < self.len, "set index {index} out of bounds");

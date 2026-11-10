@@ -323,6 +323,12 @@ impl<A: Clone, T: Clone> AggSeq<A, T> {
     }
 
     /// Replaces the element at `index`, recomputing the ancestor path only.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index` is at or past the length. The index is a caller mistake, not a
+    /// recoverable condition: this is the immutable editor, where a wrong index has no
+    /// committed state to fall back to.
     #[must_use]
     pub fn set(&self, index: usize, value: T) -> Self {
         assert!(index < self.len, "set index {index} out of bounds");

@@ -115,6 +115,12 @@ impl Collector {
     }
 
     /// Registers one View's text channel.
+    ///
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the text registry. That lock
+    /// guards a map of channels with no invariant to repair, so a poisoned lock means the
+    /// collector's own state is unknown.
     pub fn set_text_view(&self, view: ViewId, channel: TextChannel) {
         self.texts
             .lock()
@@ -123,6 +129,11 @@ impl Collector {
     }
 
     /// Whether this View can be edited from the page.
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the text registry. The lock
+    /// guards a channel map with no invariant to repair, so a poisoned lock means the
+    /// collector's own state is unknown.
     #[must_use]
     pub fn is_editable(&self, view: ViewId) -> bool {
         self.texts
@@ -132,6 +143,11 @@ impl Collector {
     }
 
     /// Reads a View's committed text.
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the text registry. The lock
+    /// guards a channel map with no invariant to repair, so a poisoned lock means the
+    /// collector's own state is unknown.
     #[must_use]
     pub fn text_view(&self, view: ViewId) -> Option<String> {
         let texts = self.texts.lock().expect("text registry poisoned");
@@ -139,6 +155,10 @@ impl Collector {
     }
 
     /// Applies a View's new text.
+    ///
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the text registry.
     pub fn apply_text_view(&self, view: ViewId, text: &str) -> Option<Result<String, String>> {
         let texts = self.texts.lock().expect("text registry poisoned");
         texts.get(&view).map(|channel| (channel.write)(text))
@@ -169,6 +189,10 @@ impl Collector {
     }
 
     /// Registers a session feed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the subscriber list.
     pub fn subscribe(&self) -> Subscription {
         let (sender, frames) = sync_channel(256);
         let id = self.next_subscriber.fetch_add(1, Ordering::Relaxed);
@@ -183,6 +207,10 @@ impl Collector {
     }
 
     /// Unregisters a session feed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when another thread panicked while holding the subscriber list.
     pub fn unsubscribe(&self, id: u64) {
         self.subscribers
             .lock()
@@ -386,6 +414,11 @@ impl Collector {
     }
 
     /// Spawns the drain loop on its own thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the thread cannot be spawned. The observatory is a diagnostic tool: a
+    /// collector that silently never runs would make every page look idle.
     #[must_use]
     pub fn spawn(self: &Arc<Self>) -> std::thread::JoinHandle<()> {
         let collector = Arc::clone(self);

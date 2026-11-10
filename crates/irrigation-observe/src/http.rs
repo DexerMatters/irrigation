@@ -101,6 +101,9 @@ impl Drop for Server {
 /// # Errors
 ///
 /// Returns the bind error when the address is unavailable.
+/// # Panics
+///
+/// Panics when the accept thread cannot be spawned.
 pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<Server> {
     let listener = TcpListener::bind(&config.bind)?;
     let addr = listener.local_addr()?;

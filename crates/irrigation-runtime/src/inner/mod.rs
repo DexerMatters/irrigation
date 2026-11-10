@@ -496,6 +496,12 @@ impl Inner {
     }
 
     /// Reads a unit at the current revision and records the observation.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a ready read carries no value. A read reports `Ready` only after
+    /// establishing that a value exists, so this is an internal invariant rather than a
+    /// caller error.
     pub fn read_unit(&self, node: NodeId) -> Result<Value> {
         let me = task::current_or_detached();
         loop {

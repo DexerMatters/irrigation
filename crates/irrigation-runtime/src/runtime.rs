@@ -579,6 +579,11 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`ComputeError::Cancelled`] when the token was cancelled.
+    /// # Panics
+    ///
+    /// Panics when a root output has no value after the demand reported success. Outputs are
+    /// projected from the body after it commits, so a missing value means the demand
+    /// returned without publishing -- an internal invariant, not a caller error.
     pub fn read_outputs_with_cancel<R: RootComponent>(
         &self,
         cancel: CancelToken,
