@@ -916,8 +916,9 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
                         ident,
                         method,
                         shape,
-                        leaf_slot: leaf_slot_for(&fields),
-                        child_slot: child_slot_for(&fields),
+                        // Assigned by the one pass below, which owns the rule.
+                        leaf_slot: 0,
+                        child_slot: 0,
                     });
                 }
             }
@@ -936,13 +937,18 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
                         ident,
                         method,
                         shape,
-                        leaf_slot: leaf_slot_for(&fields),
-                        child_slot: child_slot_for(&fields),
+                        // Assigned by the one pass below, which owns the rule.
+                        leaf_slot: 0,
+                        child_slot: 0,
                     });
                 }
             }
         }
-        // Recompute slots deterministically after the list is complete.
+        // The single owner of a field's slot: a leaf counts leaves, anything else
+        // counts children, and the counter it does not use stays zero. Computing
+        // them here rather than while pushing was never needed for determinism --
+        // a field's slot is a function of the declaration order before it -- and
+        // having both meant two copies of one rule.
         let mut leaf = 0u16;
         let mut child = 0u16;
         for field in &mut fields {
@@ -998,20 +1004,6 @@ fn claim_accessor(
              one method namespace. Rename one of the fields"
         ),
     ))
-}
-
-fn leaf_slot_for(fields: &[FieldSpec]) -> u16 {
-    fields
-        .iter()
-        .filter(|field| matches!(field.shape, FieldShape::Leaf(_)))
-        .count() as u16
-}
-
-fn child_slot_for(fields: &[FieldSpec]) -> u16 {
-    fields
-        .iter()
-        .filter(|field| !matches!(field.shape, FieldShape::Leaf(_)))
-        .count() as u16
 }
 
 fn classify(ty: &Type, names: &HashSet<String>) -> FieldShape {
