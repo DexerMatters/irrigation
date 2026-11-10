@@ -7,8 +7,6 @@
 use super::*;
 
 /// Adds a row for every entity the content order names that no cell backs.
-#[cfg(feature = "observe")]
-#[allow(dead_code)]
 ///
 /// The board draws one row per entity and spells each row's value through the content
 /// projection, so an entity the content defines must be listed even when nothing has
@@ -19,6 +17,7 @@ use super::*;
 /// Only fields whose order decodes reach here, which is currently `PSeq<u64>`: a **list**. A
 /// set, map or graph spells its keys as typed values and `Structure` carries only a type-erased
 /// value, so those need a vtable capability rather than a decode.
+#[cfg(feature = "observe")]
 fn fill_entities_without_cells(
     state: &State,
     view: irrigation_core::ids::ViewId,
