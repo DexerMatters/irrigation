@@ -345,7 +345,12 @@ impl Inner {
     }
 
     /// Releases claims a task still owns after its last attempt.
-    fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Waiters {
+    /// Releases the claims a task still owns, returning what must be woken.
+    ///
+    /// `pub(crate)` because a detached task identity releases the same way: it has
+    /// no slot, so its teardown lives on the thread-local claim set, but the
+    /// release itself is one rule and this is it.
+    pub(crate) fn release_claims(state: &mut State, task: TaskId, held: &[NodeId]) -> Waiters {
         let mut waiters = Waiters::new();
         for &node in held {
             if matches!(state.node(node).state, NodeState::Running { owner, .. } if owner == task) {

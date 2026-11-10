@@ -1512,20 +1512,12 @@ impl Drop for DetachedClaims<'_> {
         if held.is_empty() {
             return;
         }
-        let mut waiters = Waiters::new();
-        {
+        let mut waiters = {
             let mut state = self.inner.lock();
-            for node in held {
-                if matches!(
-                    state.node(node).state,
-                    NodeState::Running { owner, .. } if owner == self.owner
-                ) {
-                    state.node_mut(node).state = NodeState::Vacant;
-                    state.release_claims(node);
-                    waiters.merge(Inner::wake_waiters(&mut state, node));
-                }
-            }
-        }
+            // The same release the demand path performs: a detached identity has
+            // no slot, but the claims it holds are released by the one rule.
+            Inner::release_claims(&mut state, self.owner, &held)
+        };
         self.inner.wake.notify_all();
         self.inner.enqueue(std::mem::take(&mut waiters.tasks));
         waiters.wake();
