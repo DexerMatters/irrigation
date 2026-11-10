@@ -69,6 +69,19 @@ impl Default for HttpConfig {
     }
 }
 
+/// Releases one connection slot when it drops, including while a panic unwinds.
+///
+/// The counter must come back on every path out of the connection thread. A plain `fetch_sub` after
+/// `handle` would leak the slot whenever the handler panicked, and sixty-four leaks would leave the
+/// server refusing every connection it ever gets.
+struct LiveGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// A running server.
 pub struct Server {
     addr: SocketAddr,
@@ -158,6 +171,7 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                         std::thread::Builder::new()
                             .name(String::from("observatory-conn"))
                             .spawn(move || {
+                                let _slot = LiveGuard(live);
                                 let _ = stream.set_nonblocking(false);
                                 let _ = stream.set_nodelay(true);
                                 // A peer that connects and says nothing must not own a thread forever.
@@ -165,7 +179,6 @@ pub fn serve(collector: Arc<Collector>, config: HttpConfig) -> std::io::Result<S
                                 // Nor must one that stops reading: the stream writes heartbeats.
                                 let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
                                 handle(&collector, &config, stream);
-                                live.fetch_sub(1, Ordering::AcqRel);
                             })
                             .ok();
                     }
@@ -928,5 +941,31 @@ mod connection_cap_tests {
             "the peer past the cap is refused: {response:?}"
         );
         drop(held);
+    }
+}
+
+#[cfg(test)]
+mod slot_release_tests {
+    use super::*;
+
+    /// The slot comes back even when the connection thread panics.
+    ///
+    /// A plain decrement after the handler would leak one slot per panic, and `MAX_CONNECTIONS` leaks
+    /// would leave the server refusing everything with no way to recover short of a restart.
+    #[test]
+    fn a_panicking_connection_releases_its_slot() {
+        let live = Arc::new(std::sync::atomic::AtomicUsize::new(1));
+        let counter = Arc::clone(&live);
+        let joined = std::thread::spawn(move || {
+            let _slot = LiveGuard(counter);
+            panic!("a handler panicked");
+        })
+        .join();
+        assert!(joined.is_err(), "the thread panicked as intended");
+        assert_eq!(
+            live.load(Ordering::Acquire),
+            0,
+            "the slot is released by the guard, not by the code after the handler"
+        );
     }
 }
