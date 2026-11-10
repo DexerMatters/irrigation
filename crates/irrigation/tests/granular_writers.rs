@@ -104,3 +104,34 @@ fn two_components_write_different_fields_of_one_derived_view() {
     assert_eq!(pair.left(), 1, "the left writer's value");
     assert_eq!(pair.right(), 2, "the right writer's value");
 }
+
+/// A field's typed handle must be the field the descriptor declares at that position.
+///
+/// The handle carries `FieldId(index)` and the descriptor carries fields in declaration
+/// order, so the two are one fact spelled twice. If the macro ever numbered a handle
+/// differently from the descriptor, `Pair::LEFT.unit()` would name another field and every
+/// writer using the typed path would write the wrong unit -- with no compile error.
+#[test]
+fn a_typed_handle_is_the_field_its_descriptor_declares() {
+    for (handle, name) in [(Pair::LEFT, "left"), (Pair::RIGHT, "right")] {
+        let declared = <Pair as ViewSchema>::DESCRIPTOR
+            .fields
+            .get(handle.id().0 as usize)
+            .unwrap_or_else(|| panic!("the descriptor declares a field at {}", handle.id().0));
+        assert_eq!(
+            declared.name,
+            name,
+            "the handle at {} names `{name}`",
+            handle.id().0
+        );
+        assert_eq!(
+            handle.unit(),
+            irrigation::UnitKey::field(
+                <Pair as ViewSchema>::view_id(),
+                handle.id(),
+                irrigation::UnitKind::Value
+            ),
+            "the handle's unit is built from its own id"
+        );
+    }
+}
