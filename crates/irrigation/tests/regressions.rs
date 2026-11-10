@@ -1,9 +1,16 @@
-//! Regression gates for the round-16 medium findings.
+//! Regression gates for the audit loop's findings.
 //!
 //! Each test names the contract it holds rather than the implementation it
 //! checks: one answer per revision, one owner per entity, and one generation
 //! per cell change. A runtime installs one root, so a second actor is a
 //! callable driven through `Runtime::call`.
+//!
+//! This file also holds the only gates for **entity ownership** across unit
+//! kinds: `a_live_presence_owner_cannot_be_taken_over_by_a_payload_retraction`
+//! and `a_false_presence_retraction_cannot_take_a_presence_owner_over`. Disabling
+//! `Inner::retraction_may_take_over` leaves both `arbitration.rs` and the
+//! runtime's own unit tests green, so a change to ownership arbitration has to
+//! be checked here even though this file's name does not suggest it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
