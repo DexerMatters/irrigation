@@ -288,6 +288,20 @@ impl GeneralCx {
     /// `#[track_caller]` matters here as well as on `define`. Without it the
     /// location recorded for a definition is this wrapper, so a host mistake is
     /// reported against the runtime's own source line.
+    /// Records the refusal when a View is not one of the declared output Views.
+    ///
+    /// Returns `true` when it refused. `#[track_caller]` so the location it reports is
+    /// the host's line rather than this function's: the message is built in one place
+    /// now, and it must not name itself.
+    #[track_caller]
+    fn refuse_outside_outputs(&mut self, what: &str, detail: &str) -> bool {
+        self.definition_error = Some(format!(
+            "{what} outside output views: {detail} (at {})",
+            std::panic::Location::caller()
+        ));
+        true
+    }
+
     #[track_caller]
     fn define_output<T: PartialEq + Send + Sync + 'static>(
         &mut self,
@@ -309,11 +323,7 @@ impl GeneralCx {
     #[track_caller]
     fn retract_output(&mut self, unit: UnitKey) {
         if !self.allows_output_view(unit.view) {
-            self.definition_error = Some(format!(
-                "retraction outside output views: {:?} (at {})",
-                unit,
-                std::panic::Location::caller()
-            ));
+            self.refuse_outside_outputs("retraction", &format!("{unit:?}"));
             return;
         }
         self.pending_claims.push(unit.clone());
@@ -422,11 +432,7 @@ impl GeneralCx {
         label: &'static str,
     ) {
         if !self.allows_output_view(unit.view) {
-            self.definition_error = Some(format!(
-                "definition outside output views: {:?} (at {})",
-                unit,
-                std::panic::Location::caller()
-            ));
+            self.refuse_outside_outputs("definition", &format!("{unit:?}"));
             return;
         }
         self.pending_claims.push(unit.clone());
