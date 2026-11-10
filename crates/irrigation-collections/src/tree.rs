@@ -1048,21 +1048,7 @@ impl<'a> TreeEditor<'a> {
         // so this path has to as well: the same build value used to denote a different tree
         // depending on which writer consumed it. An id that is already present is refused
         // rather than overwritten -- honouring an identity must not alias another node.
-        let id = match build.id {
-            Some(id) => {
-                assert!(
-                    self.storage.node(id).is_none(),
-                    "tree build reuses identity {id}, which another node already holds"
-                );
-                self.storage.next_id = self.storage.next_id.max(id.saturating_add(1));
-                id
-            }
-            None => {
-                let id = self.storage.next_id;
-                self.storage.next_id = id + 1;
-                id
-            }
-        };
+        let id = resolve_build_identity(build.id, self.storage);
         let node = TreeNode {
             type_index: build.type_index,
             variant: build.variant,
@@ -1918,14 +1904,36 @@ impl TreeOutputTxn<'_> {
         storage
     }
 }
+/// Resolves the identity a build names, or allocates one.
+///
+/// `TreeBuild::id` is the optional stable identity and both writers honour it, so the
+/// decision lives here rather than being spelled twice: an id another node holds is
+/// refused, and the allocator is advanced past any supplied id so it cannot hand the same
+/// identity out again.
+fn resolve_build_identity(id: Option<TreeNodeId>, storage: &mut TreeStorage) -> TreeNodeId {
+    match id {
+        Some(id) => {
+            assert!(
+                storage.node(id).is_none(),
+                "tree build reuses identity {id}, which another node already holds"
+            );
+            storage.next_id = storage.next_id.max(id.saturating_add(1));
+            id
+        }
+        None => {
+            let id = storage.next_id;
+            storage.next_id = id + 1;
+            id
+        }
+    }
+}
 
 fn build_tree_node(
     build: &TreeBuild,
     parent: Option<TreeNodeId>,
     storage: &mut TreeStorage,
 ) -> TreeNodeId {
-    let id = build.id.unwrap_or(storage.next_id);
-    storage.next_id = storage.next_id.max(id.saturating_add(1));
+    let id = resolve_build_identity(build.id, storage);
     let mut children = Vec::with_capacity(build.children.len());
     for child in &build.children {
         children.push(match child {
@@ -1963,33 +1971,46 @@ fn build_tree_node(
 mod build_identity_tests {
     use super::*;
 
-    /// Both writers must honour `TreeBuild::id`, and an id another node holds must be
-    /// refused rather than aliased.
-    ///
-    /// `build_tree_node` honoured it while `TreeEditor::build` renumbered every node, so one
-    /// construction input denoted two different trees.
+    /// A supplied identity is used as-is and the allocator moves past it, so the next
+    /// anonymous node cannot take it.
     #[test]
-    fn a_build_identity_is_honoured_and_never_aliased() {
+    fn a_supplied_identity_is_honoured_and_not_handed_out_again() {
         let mut storage = TreeStorage::default();
-        let build = TreeBuild {
-            id: Some(41),
-            type_index: 0,
-            variant: 0,
-            fields: Vec::new(),
-            children: Vec::new(),
-        };
         assert_eq!(
-            build_tree_node(&build, None, &mut storage),
+            resolve_build_identity(Some(41), &mut storage),
             41,
-            "the recursive builder honours the id"
-        );
-        assert!(
-            storage.node(41).is_some(),
-            "and the node is installed under it"
+            "the supplied id is the id"
         );
         assert!(
             storage.next_id > 41,
-            "the allocator cannot hand the same identity out again"
+            "and the allocator cannot reach it again (next_id = {})",
+            storage.next_id
         );
+        assert_eq!(
+            resolve_build_identity(None, &mut storage),
+            storage.next_id - 1,
+            "an anonymous node takes the next free id"
+        );
+    }
+
+    /// Two nodes under one identity would alias each other's units, so it is refused.
+    #[test]
+    #[should_panic(expected = "reuses identity 7")]
+    fn a_duplicate_identity_is_refused() {
+        let mut storage = TreeStorage::default();
+        storage.nodes = storage
+            .nodes
+            .insert(
+                7,
+                TreeNode {
+                    type_index: 0,
+                    variant: 0,
+                    fields: Vec::new(),
+                    children: Vec::new(),
+                    parent: None,
+                },
+            )
+            .0;
+        resolve_build_identity(Some(7), &mut storage);
     }
 }
