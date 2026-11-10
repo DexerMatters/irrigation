@@ -1184,25 +1184,12 @@ where
         match storage {
             DerivedListStorage::Keyed { .. } => {
                 let ids = self.ids();
+                // The identity came from the structure, which a concurrent retraction can
+                // move under this read. An identity whose cells are gone is skipped; the
+                // structure observation makes the demand retry against the new definition.
                 ids.iter()
                     .filter_map(|id| {
-                        let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                        let param_node = runtime.site_node(member_scope, SiteId(1));
-                        let value: Option<T> =
-                            irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                                self.get_key(*id)
-                            });
-                        // The identity came from the structure, which a concurrent
-                        // retraction can move under this read. An identity whose
-                        // cells are gone is skipped; the structure observation
-                        // makes the demand retry against the new definition.
-                        let value = value?;
-                        let result_node = runtime.site_node(member_scope, SiteId(2));
-                        Some(irrigation_core::ops::eval_node_with(
-                            &runtime,
-                            result_node,
-                            || f(irrigation_runtime::Param::new(param_node, value.clone())),
-                        ))
+                        map_member(&runtime, call_scope, *id, || self.get_key(*id), &f)
                     })
                     .collect()
             }
@@ -1210,19 +1197,13 @@ where
                 .iter()
                 .enumerate()
                 .filter_map(|(index, _)| {
-                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
-                    let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: Option<T> =
-                        irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                            self.whole_member(index as u64)
-                        });
-                    let value = value?;
-                    let result_node = runtime.site_node(member_scope, SiteId(2));
-                    Some(irrigation_core::ops::eval_node_with(
+                    map_member(
                         &runtime,
-                        result_node,
-                        || f(irrigation_runtime::Param::new(param_node, value.clone())),
-                    ))
+                        call_scope,
+                        index as u64,
+                        || self.whole_member(index as u64),
+                        &f,
+                    )
                 })
                 .collect(),
         }
@@ -1291,36 +1272,24 @@ where
         match storage {
             DerivedListStorage::Keyed { .. } => {
                 for id in self.ids().iter() {
-                    let member_scope = runtime.child_scope(call_scope, *id, "list_member");
-                    let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: Option<T> =
-                        irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                            self.get_key(*id)
-                        });
-                    let Some(value) = value else { continue };
-                    let result_node = runtime.site_node(member_scope, SiteId(2));
-                    values.extend(irrigation_core::ops::eval_node_with(
-                        &runtime,
-                        result_node,
-                        || f(irrigation_runtime::Param::new(param_node, value.clone())),
-                    ));
+                    if let Some(chunk) =
+                        map_member(&runtime, call_scope, *id, || self.get_key(*id), &f)
+                    {
+                        values.extend(chunk);
+                    }
                 }
             }
             DerivedListStorage::Whole(items) => {
                 for (index, _) in items.iter().enumerate() {
-                    let member_scope = runtime.child_scope(call_scope, index as u64, "list_member");
-                    let param_node = runtime.site_node(member_scope, SiteId(1));
-                    let value: Option<T> =
-                        irrigation_core::ops::eval_node_with(&runtime, param_node, || {
-                            self.whole_member(index as u64)
-                        });
-                    let Some(value) = value else { continue };
-                    let result_node = runtime.site_node(member_scope, SiteId(2));
-                    values.extend(irrigation_core::ops::eval_node_with(
+                    if let Some(chunk) = map_member(
                         &runtime,
-                        result_node,
-                        || f(irrigation_runtime::Param::new(param_node, value.clone())),
-                    ));
+                        call_scope,
+                        index as u64,
+                        || self.whole_member(index as u64),
+                        &f,
+                    ) {
+                        values.extend(chunk);
+                    }
                 }
             }
         }
