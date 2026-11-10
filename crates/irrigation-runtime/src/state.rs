@@ -79,7 +79,11 @@ pub struct NodeRecord {
     /// The last committed value.
     pub value: Option<Value>,
     /// Revision at which the value last changed.
-    pub changed_at: Version,
+    ///
+    /// A `Revision`, not a value version: every writer stamps it with the
+    /// revision that changed the value, and the readers that ask "did this change
+    /// at the current revision" compare it with one.
+    pub changed_at: Revision,
     /// Monotonic value version. Unlike `changed_at`, this advances even when a
     /// value changes inside one revision, and it does not advance for an equal
     /// redefinition.

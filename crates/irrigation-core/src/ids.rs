@@ -11,9 +11,20 @@ use core::fmt;
 /// Revision `0` is the initial state before any transaction.
 pub type Revision = u64;
 
-/// The revision at which a value last changed.
+/// A monotonic stamp: a value version, a routing generation, or a change
+/// revision.
 ///
-/// `changed_at == 0` means "never changed since creation".
+/// `Version` is an alias, not a distinct type, and it carries three different
+/// counters: the per-runtime monotonic value version a cell takes on every
+/// install (`NodeRecord::value_version`), the routing generation a provider
+/// handover advances, and the revision a value last changed at
+/// (`NodeRecord::changed_at`).
+///
+/// The alias is why a version can be compared with a revision and still compile --
+/// the compiler cannot tell them apart -- and it has cost this codebase real
+/// defects, including the `GraphFacts` drift label that compared the two directly.
+/// Treat any `Version` as "a number from the runtime's counters" and read the
+/// field's own doc to learn which counter it is.
 pub type Version = u64;
 
 /// Index and generation of a memoized computation node in the runtime arena.

@@ -172,7 +172,7 @@ impl RuntimeOps for Inner {
         Inner::workers(self)
     }
 
-    fn changed_at(&self, node: NodeId) -> Version {
+    fn changed_at(&self, node: NodeId) -> Revision {
         Inner::changed_at(self, node)
     }
 

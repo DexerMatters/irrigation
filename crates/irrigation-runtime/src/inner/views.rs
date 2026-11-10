@@ -153,7 +153,7 @@ impl Inner {
 
     /// Returns a node's routing generation.
     #[must_use]
-    pub fn routing_at(&self, node: NodeId) -> Version {
+    pub fn routing_at(&self, node: NodeId) -> Revision {
         self.lock().node(node).routing_at
     }
 
@@ -212,7 +212,7 @@ impl Inner {
 
     /// Returns a unit's routing generation.
     #[must_use]
-    pub fn routing_generation(&self, unit: &UnitKey) -> Version {
+    pub fn routing_generation(&self, unit: &UnitKey) -> Revision {
         let state = self.lock();
         state
             .units
@@ -230,7 +230,7 @@ impl Inner {
 
     /// Returns the revision at which a node's value last changed.
     #[must_use]
-    pub fn changed_at(&self, node: NodeId) -> Version {
+    pub fn changed_at(&self, node: NodeId) -> Revision {
         self.lock().node(node).changed_at
     }
 
