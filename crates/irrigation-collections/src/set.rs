@@ -224,8 +224,8 @@ where
         })
     }
 
-    /// Reads every member.
     /// Reads every member in order.
+    #[must_use]
     pub fn to_vec(&self) -> Vec<T> {
         let structure: PSet<T> =
             read_unit_value(structure_unit(self.view, self.field), |content| {

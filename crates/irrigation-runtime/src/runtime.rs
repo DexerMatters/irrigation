@@ -1086,6 +1086,7 @@ impl Runtime {
     ///
     /// Reclamation only loses reuse; correctness is unaffected because a later
     /// demand reconstructs what it needs.
+    #[must_use]
     pub fn collect(&self) -> crate::inner::ReclaimStats {
         let stats = self.inner.collect();
         #[cfg(feature = "observe")]

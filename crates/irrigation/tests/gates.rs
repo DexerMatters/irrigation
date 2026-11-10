@@ -5117,7 +5117,7 @@ fn collect_keeps_the_trace_of_a_node_retained_for_its_definitions() {
         })
         .expect("the producer read the key's absence")
         .id;
-    runtime.collect();
+    let _ = runtime.collect(); // reclamation only; the report is not asserted here
     assert!(
         runtime.is_live(cell),
         "the pass reclaimed the observation a retained node's trace names"

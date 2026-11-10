@@ -466,6 +466,7 @@ impl AstParser {
     /// Panics when a live configuration's state stack is empty. The engine pushes the
     /// initial state before the loop and never pops the last one, so this is an invariant
     /// of the search rather than a property of the request.
+    #[must_use]
     pub fn parse(&self, request: Request<'_>) -> Option<ParseResult> {
         let Request {
             tokens,

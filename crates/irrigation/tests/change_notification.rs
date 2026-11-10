@@ -3547,7 +3547,7 @@ fn a_watched_unit_keeps_its_version_through_a_reclaim() {
         "the retracted presence cell is stamped with the published revision"
     );
 
-    runtime.collect();
+    let _ = runtime.collect(); // reclamation only; the report is not asserted here
     publish_noise(&runtime, 2);
     assert_eq!(
         fired.load(Ordering::SeqCst),
@@ -3616,7 +3616,7 @@ fn a_watched_absent_unit_does_not_move_before_or_after_its_first_read() {
         "materializing an absence the content already held is not a change"
     );
 
-    runtime.collect();
+    let _ = runtime.collect(); // reclamation only; the report is not asserted here
     publish_noise(&runtime, 3);
     assert_eq!(
         fired.load(Ordering::SeqCst),
