@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use irrigation_core::descriptor::ViewDescriptor;
 use irrigation_core::error::{ComputeError, Result};
 use irrigation_core::frame::CancelToken;
-use irrigation_core::hash::FxHashMap;
 use irrigation_core::ids::{ComponentId, Revision, Version, ViewId};
 use irrigation_core::ops::{RuntimeOps, catch_engine};
 use irrigation_core::value::Value;
@@ -1147,19 +1146,9 @@ impl Runtime {
     #[must_use]
     pub fn explain(&self) -> Explain {
         let state = self.inner.lock();
-        let mut by_kind: FxHashMap<&'static str, usize> = FxHashMap::default();
-        let mut changed_nodes = 0;
-        for node in &state.nodes {
-            *by_kind.entry(node.label).or_default() += 1;
-            if node.changed_at == state.revision {
-                changed_nodes += 1;
-            }
-        }
         Explain {
             revision: state.revision,
             nodes: state.nodes.len(),
-            changed_nodes,
-            by_kind,
             root: state.root.as_ref().map(|root| root.name),
             views: state.views.len(),
             subscriptions: state.subscriptions.len(),
@@ -2217,10 +2206,6 @@ pub struct Explain {
     pub revision: Revision,
     /// Allocated nodes.
     pub nodes: usize,
-    /// Nodes whose value changed at the current revision.
-    pub changed_nodes: usize,
-    /// Node counts by label.
-    pub by_kind: FxHashMap<&'static str, usize>,
     /// Installed root name.
     pub root: Option<&'static str>,
     /// Registered Views.
