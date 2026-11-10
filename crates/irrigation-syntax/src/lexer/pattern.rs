@@ -443,13 +443,17 @@ fn first_ascii(expr: &Expr) -> (bool, Option<u128>) {
                         }
                     }
                     ClassItem::Kind(kind, negated) => {
+                        // These predicates must answer exactly what `CharClass::matches` answers
+                        // for the same character: this mask is a *filter*, so a byte it omits is a
+                        // rule the lexer never tries. `is_ascii_whitespace` and `is_whitespace`
+                        // disagree on `0x0B` (vertical tab), which Unicode counts as whitespace, so
+                        // a space class filtered the tab out and the matcher never saw it.
                         for byte in 0u8..=127 {
+                            let character = byte as char;
                             let positive = match kind {
-                                ClassKind::Digit => (byte as char).is_ascii_digit(),
-                                ClassKind::Word => {
-                                    (byte as char).is_ascii_alphanumeric() || byte == b'_'
-                                }
-                                ClassKind::Space => (byte as char).is_ascii_whitespace(),
+                                ClassKind::Digit => character.is_numeric(),
+                                ClassKind::Word => character.is_alphanumeric() || byte == b'_',
+                                ClassKind::Space => character.is_whitespace(),
                             };
                             if positive != *negated {
                                 mask |= 1u128 << byte;
@@ -1193,6 +1197,24 @@ mod tests {
         assert!(optional.can_start_with_byte(b'z'));
         let unicode = Pattern::parse("é").unwrap();
         assert!(unicode.can_start_with_byte(0xC3));
+    }
+
+    /// The filter must never answer `false` for a byte the matcher accepts.
+    ///
+    /// `0x0B` (vertical tab) is whitespace in Unicode but not `is_ascii_whitespace`, so a space
+    /// class filtered it out while `CharClass::matches` accepted it -- a rule the lexer would never
+    /// try at that byte.
+    #[test]
+    fn the_byte_filter_agrees_with_the_matcher_on_a_vertical_tab() {
+        let class = Pattern::parse(r"[\s]+").unwrap();
+        assert!(
+            class.find_at("\u{0B}x", 0).iter().any(|hit| hit.end == 1),
+            "the matcher accepts a vertical tab"
+        );
+        assert!(
+            class.can_start_with_byte(0x0B),
+            "so the filter may not reject it"
+        );
     }
 
     #[test]
