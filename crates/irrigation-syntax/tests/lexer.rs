@@ -955,3 +955,41 @@ fn a_column_guard_sees_the_match_column() {
         "the first x is at column 0, the second follows a space"
     );
 }
+
+/// `lexeme` in a guard is the text this rule matched, so a rule can discriminate on
+/// the exact spelling it saw rather than on a capture group.
+#[test]
+fn a_lexeme_guard_sees_the_matched_text() {
+    let (lexer, output) = lex(
+        r#"
+        grammar LexemeGuard {
+            lexer {
+                initial text;
+                state text {
+                    token B = /[ab]/ when lexeme == "b";
+                    token A = /[ab]/;
+                }
+            }
+        }
+        "#,
+        "ab",
+    );
+    let a = lexer.spec().kind_by_name("A").expect("A kind");
+    let b = lexer.spec().kind_by_name("B").expect("B kind");
+    let named = |kind| {
+        if kind == a {
+            "A"
+        } else if kind == b {
+            "B"
+        } else {
+            "other"
+        }
+    };
+    let kinds: Vec<_> = output
+        .tokens()
+        .iter()
+        .map(|token| named(token.kind))
+        .filter(|name| *name != "other")
+        .collect();
+    assert_eq!(kinds, ["A", "B"], "the b takes the guarded rule");
+}
