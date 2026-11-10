@@ -29,29 +29,54 @@ thread_local! {
     /// the write side. It would simply wait for itself. This flag is how the
     /// demanding entry points recognise that case and refuse it with an error
     /// instead of hanging.
-    static EDIT_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// `(runtime, depth)`: which runtime's edit is open, and how many nest.
+    ///
+    /// Keyed by runtime because the marker answers "does *this* runtime hold its
+    /// write gate on this thread", and a second runtime used from inside an edit
+    /// closure has its own gate open. A bare depth refused that second runtime's
+    /// reads as re-entrant when nothing of its own was held.
+    static EDIT_DEPTH: std::cell::Cell<(u64, u32)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Marks the current thread as running an edit closure until the guard drops.
 #[must_use]
-pub fn enter_edit() -> EditDepth {
-    EDIT_DEPTH.with(|depth| depth.set(depth.get() + 1));
-    EditDepth
+pub fn enter_edit(runtime: u64) -> EditDepth {
+    EDIT_DEPTH.with(|marker| {
+        let (owner, depth) = marker.get();
+        // A nested edit in the same runtime would wait on its own write side; one
+        // in another runtime is a different gate and is counted separately.
+        marker.set(if depth > 0 && owner == runtime {
+            (owner, depth + 1)
+        } else {
+            (runtime, depth + 1)
+        });
+    });
+    EditDepth { runtime }
 }
 
 /// Whether this thread is inside an edit closure.
 #[must_use]
-pub fn in_edit() -> bool {
-    EDIT_DEPTH.with(|depth| depth.get() > 0)
+pub fn in_edit(runtime: u64) -> bool {
+    EDIT_DEPTH.with(|marker| {
+        let (owner, depth) = marker.get();
+        depth > 0 && owner == runtime
+    })
 }
 
 /// The guard that clears the edit marker.
 #[derive(Debug)]
-pub struct EditDepth;
+pub struct EditDepth {
+    /// The runtime whose edit this guard closes.
+    runtime: u64,
+}
 
 impl Drop for EditDepth {
     fn drop(&mut self) {
-        EDIT_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+        let _ = self.runtime;
+        EDIT_DEPTH.with(|marker| {
+            let (owner, depth) = marker.get();
+            marker.set((owner, depth.saturating_sub(1)));
+        });
     }
 }
 

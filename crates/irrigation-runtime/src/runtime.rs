@@ -727,7 +727,8 @@ impl Runtime {
         // permit that the same thread holds, and an edit nested in another edit
         // would wait for the write side it already holds. Neither can open the
         // gate, so both are refused.
-        if irrigation_core::frame::current().is_some() || crate::gate::in_edit() {
+        if irrigation_core::frame::current().is_some() || crate::gate::in_edit(self.inner.local_key)
+        {
             return Err(ComputeError::ReentrantUse {
                 operation: "edit",
                 reason: "the calling thread is inside a component body, which holds a read permit for its whole demand",
@@ -737,7 +738,7 @@ impl Runtime {
             let _gate = self.inner.gate.write();
             // Marked so a demand issued from the closure refuses instead of
             // waiting for this thread's own write side.
-            let _edit = crate::gate::enter_edit();
+            let _edit = crate::gate::enter_edit(self.inner.local_key);
             let mut edit = Edit::new(Arc::clone(&self.inner));
             let value = f(&mut edit);
             let changed = edit.commit()?;

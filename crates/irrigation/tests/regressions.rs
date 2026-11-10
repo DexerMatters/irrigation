@@ -1050,3 +1050,31 @@ fn a_host_removal_stops_serving_the_removed_payload() {
         "a removed entry's payload unit must not be served from its old certification"
     );
 }
+
+// ---------------------------------------------------------------------------
+// An edit in one runtime does not mark another runtime as editing
+// (runtime-kernel-r66-01)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_edit_closure_may_read_a_second_runtime() {
+    let first = Runtime::new();
+    seed_ledger(&first, &[(1, 10)]);
+    first.install(ledger_verbs::Keys).expect("first");
+
+    let second = Runtime::new();
+    seed_ledger(&second, &[(2, 20)]);
+    second.install(ledger_verbs::Keys).expect("second");
+
+    // The marker answers "does *this* runtime hold its write gate on this
+    // thread". The second runtime's gate is open, so its read must be served
+    // rather than refused as re-entrant.
+    let read = first
+        .edit(|_edit| {
+            second
+                .read_outputs::<ledger_verbs::Keys>()
+                .expect("a second runtime is readable from inside an edit")
+        })
+        .expect("the transaction commits");
+    assert_eq!(read, (vec![2], 1));
+}

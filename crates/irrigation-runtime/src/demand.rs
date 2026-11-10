@@ -32,7 +32,7 @@ impl Inner {
         // The edit closure holds the write side of the gate; a demand from
         // inside it would wait for a permit only this thread can release, so it
         // is refused before any branch below can wait.
-        if crate::gate::in_edit() {
+        if crate::gate::in_edit(self.local_key) {
             return Err(ComputeError::ReentrantUse {
                 operation: "read",
                 reason: "an edit transaction is open on this thread and holds the revision gate",
