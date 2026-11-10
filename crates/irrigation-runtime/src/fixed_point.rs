@@ -326,7 +326,7 @@ fn strongly_connected<K: Ord + Clone, V>(
     let mut visited: BTreeSet<K> = BTreeSet::new();
     let mut order: Vec<K> = Vec::new();
     for start in adjacency.keys() {
-        if !visited.insert(start.clone()) {
+        if visited.contains(start) {
             continue;
         }
         let mut stack: Vec<(K, bool)> = vec![(start.clone(), false)];
@@ -335,10 +335,17 @@ fn strongly_connected<K: Ord + Clone, V>(
                 order.push(node);
                 continue;
             }
+            // Marked when the node is *expanded*, not when a parent queues it.
+            // Marking at queue time lets a sibling be finished before a node it
+            // can reach: the first pass is then not a depth-first postorder, and
+            // Kosaraju groups nodes that are not mutually reachable.
+            if !visited.insert(node.clone()) {
+                continue;
+            }
             stack.push((node.clone(), true));
             if let Some(neighbors) = adjacency.get(&node) {
                 for next in neighbors {
-                    if visited.insert(next.clone()) {
+                    if !visited.contains(next) {
                         stack.push((next.clone(), false));
                     }
                 }
@@ -445,6 +452,80 @@ mod tests {
                 .iter()
                 .any(|component| component == &vec![4] || component == &vec![5])
         );
+    }
+
+    /// The reported counterexample: 0 reaches both 1 and 2, and 2 reaches 1, so
+    /// 1 and 2 are not mutually reachable and must not share a component.
+    #[test]
+    fn a_diamond_that_is_not_a_cycle_stays_apart() {
+        let problem = Reachability {
+            edges: vec![(0, 1), (0, 2), (2, 1)],
+            seeds: vec![0],
+        };
+        let fixed = solve(&problem).expect("converges");
+        assert_eq!(
+            fixed.sccs(),
+            &[vec![0], vec![1], vec![2]],
+            "a reachability diamond is three components, not two"
+        );
+        assert!(
+            fixed.recursive_components().is_empty(),
+            "nothing here is a cycle: {:?}",
+            fixed.recursive_components()
+        );
+    }
+
+    /// Every component must be strongly connected, on every graph that fits.
+    /// A traversal that is not a depth-first postorder groups nodes that are
+    /// only reachable one way, which this walk of all 512 three-node graphs
+    /// finds without needing a counterexample.
+    #[test]
+    fn every_component_is_strongly_connected() {
+        let nodes = 3u32;
+        let possible: Vec<(u32, u32)> = (0..nodes)
+            .flat_map(|from| (0..nodes).map(move |to| (from, to)))
+            .collect();
+        for mask in 0u32..(1 << possible.len()) {
+            let edges: Vec<(u32, u32)> = possible
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, edge)| *edge)
+                .collect();
+            let problem = Reachability {
+                edges: edges.clone(),
+                seeds: (0..nodes).collect(),
+            };
+            let fixed = solve(&problem).expect("converges");
+            for component in fixed.sccs() {
+                for from in component {
+                    for to in component {
+                        assert!(
+                            from == to || reachable_within(&edges, *from, *to, component),
+                            "edges {edges:?} grouped {component:?}, but {from} cannot reach {to}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Breadth-first reachability that never leaves one component.
+    fn reachable_within(edges: &[(u32, u32)], from: u32, to: u32, component: &[u32]) -> bool {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut queue = std::collections::VecDeque::from([from]);
+        seen.insert(from);
+        while let Some(node) = queue.pop_front() {
+            if node == to {
+                return true;
+            }
+            for (edge_from, edge_to) in edges {
+                if *edge_from == node && component.contains(edge_to) && seen.insert(*edge_to) {
+                    queue.push_back(*edge_to);
+                }
+            }
+        }
+        false
     }
 
     #[test]
