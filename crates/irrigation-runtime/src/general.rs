@@ -557,6 +557,15 @@ impl std::fmt::Debug for OutputTxn<'_> {
 
 impl OutputTxn<'_> {
     /// Defines one logical unit.
+    ///
+    /// The definition is **staged**, not published: it joins the attempt's pending group and lands
+    /// when the attempt commits, in the revision that whole group opens. A component's own writes
+    /// are therefore visible to its consumers only once its body returns -- the framework interleaves
+    /// *nodes*, so a slow component publishes the nodes it computes while a later one is still
+    /// running, but a single attempt cannot publish half of what it decides.
+    ///
+    /// Reading back a unit this attempt defined sees the staged value; reading it from another
+    /// thread before the commit sees the previous revision.
     pub fn define<T: PartialEq + Send + Sync + 'static>(&mut self, unit: UnitKey, value: T) {
         self.cx.define_output(unit, value, "output");
     }
