@@ -37,7 +37,7 @@ impl Inner {
             record
                 .value
                 .as_ref()
-                .is_none_or(|old| !(structure.eq)(old, &structure.value))
+                .is_none_or(|old| !under_user_code(|| (structure.eq)(old, &structure.value)))
         };
         let value_version = changed.then(|| state.alloc_value_version());
         let record = state.node_mut(node);
@@ -93,7 +93,7 @@ impl Inner {
             .node(region.content_node)
             .value
             .as_ref()
-            .is_none_or(|old| !eq(old, &content));
+            .is_none_or(|old| !under_user_code(|| eq(old, &content)));
         if changed {
             state.stats.content_commits.fetch_add(1, Ordering::Relaxed);
             let value_version = state.alloc_value_version();
@@ -330,7 +330,7 @@ impl Inner {
             return false;
         };
         let next = (region.descriptor.content.define)(&region.content, unit, payload);
-        (region.descriptor.content.eq)(&region.content, &next)
+        under_user_code(|| (region.descriptor.content.eq)(&region.content, &next))
     }
 
     /// Opens the generation of every cell a transaction installed whose payload
