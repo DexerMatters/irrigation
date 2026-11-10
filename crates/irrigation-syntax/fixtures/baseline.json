@@ -1,5 +1,5 @@
 {
-  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone the edit walks (the plan's E_v). It used to be the whole-document cone - 7,125 to 10,731 nodes for every script - because the invalidation pass marked every unit a definition commit published, readers or not. It now tracks the edit: 9 to 185. Raising any of these is a regression.",
+  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down. `invalidations` is the reverse-dependency cone (E_v). `content_commits` counts whole-content publishes: a group that retracts or installs many units of one field must publish it once, and these bounds record that it currently publishes once per unit (7,084-8,487 for a one-byte edit). Lowering them is the batch-publication work; raising any bound is a regression.",
   "scripts": {
     "backspace": {
       "tokens_relexed": 8,
@@ -7,7 +7,8 @@
       "nodes_added": 10,
       "meta_units_written": 62,
       "token_units_read": 4,
-      "invalidations": 10
+      "invalidations": 10,
+      "content_commits": 7094
     },
     "delete-member": {
       "tokens_relexed": 62,
@@ -15,7 +16,8 @@
       "nodes_added": 41,
       "meta_units_written": 282,
       "token_units_read": 25,
-      "invalidations": 52
+      "invalidations": 52,
+      "content_commits": 8034
     },
     "delete": {
       "tokens_relexed": 513,
@@ -23,7 +25,8 @@
       "nodes_added": 306,
       "meta_units_written": 2178,
       "token_units_read": 185,
-      "invalidations": 185
+      "invalidations": 185,
+      "content_commits": 8487
     },
     "paste": {
       "tokens_relexed": 513,
@@ -31,7 +34,8 @@
       "nodes_added": 272,
       "meta_units_written": 1934,
       "token_units_read": 179,
-      "invalidations": 9
+      "invalidations": 9,
+      "content_commits": 7404
     },
     "rename-key": {
       "tokens_relexed": 4,
@@ -39,7 +43,8 @@
       "nodes_added": 8,
       "meta_units_written": 50,
       "token_units_read": 4,
-      "invalidations": 10
+      "invalidations": 10,
+      "content_commits": 7084
     },
     "typing-end": {
       "tokens_relexed": 12,
@@ -47,7 +52,8 @@
       "nodes_added": 10,
       "meta_units_written": 62,
       "token_units_read": 4,
-      "invalidations": 10
+      "invalidations": 10,
+      "content_commits": 7094
     },
     "typing-mid": {
       "tokens_relexed": 11,
@@ -55,7 +61,8 @@
       "nodes_added": 10,
       "meta_units_written": 62,
       "token_units_read": 4,
-      "invalidations": 10
+      "invalidations": 10,
+      "content_commits": 7094
     }
   }
 }

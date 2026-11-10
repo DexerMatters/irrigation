@@ -54,6 +54,8 @@ pub struct Row {
     pub invalidations: u64,
     /// Time spent in that invalidation walk.
     pub invalidation_ns: u64,
+    /// Whole-content values the revision published.
+    pub content_commits: u64,
     /// Wall time for the whole edit plus demand.
     pub micros: f64,
     /// Significant tokens whose payload was rebuilt.
@@ -215,6 +217,7 @@ impl Session {
             micros,
             invalidations: after.invalidations.saturating_sub(before.invalidations),
             invalidation_ns: after.invalidation_ns.saturating_sub(before.invalidation_ns),
+            content_commits: after.content_commits.saturating_sub(before.content_commits),
             tokens_relexed: stats.tokens_relexed,
             bytes_relexed: stats.bytes_relexed,
             tokens_reparsed: stats.tokens_reparsed,

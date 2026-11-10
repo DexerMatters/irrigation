@@ -860,6 +860,13 @@ pub struct Stats {
     pub content_projections: std::sync::atomic::AtomicU64,
     /// Batched content applications performed by definition commits.
     pub content_batches: std::sync::atomic::AtomicU64,
+    /// Whole-content values published, one call per field commit.
+    ///
+    /// A write group that retracts or installs many units of one field must
+    /// publish that field's content once; one commit per unit makes the group
+    /// quadratic in the field's size. This is the counter that shows which one
+    /// it is.
+    pub content_commits: std::sync::atomic::AtomicU64,
     /// Source content installed from one changed content-moving unit.
     pub source_content_applies: std::sync::atomic::AtomicU64,
     /// Source content replacements that needed whole-content equality.

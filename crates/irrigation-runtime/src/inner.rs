@@ -3115,6 +3115,7 @@ impl Inner {
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
     ) -> bool {
+        state.stats.content_commits.fetch_add(1, Ordering::Relaxed);
         let changed = state
             .node(region.content_node)
             .value
@@ -3143,6 +3144,7 @@ impl Inner {
         revision: Revision,
         changed_nodes: &mut Vec<NodeId>,
     ) {
+        state.stats.content_commits.fetch_add(1, Ordering::Relaxed);
         let value_version = state.alloc_value_version();
         let record = state.node_mut(region.content_node);
         record.install_value(Some(content.clone()), value_version, revision);
