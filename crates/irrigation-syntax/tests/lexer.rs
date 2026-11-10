@@ -993,3 +993,42 @@ fn a_lexeme_guard_sees_the_matched_text() {
         .collect();
     assert_eq!(kinds, ["A", "B"], "the b takes the guarded rule");
 }
+
+/// `set_value` replaces the top of the value stack instead of pushing, so a spec can
+/// rewrite state without changing its depth. The action was parsed, compiled and
+/// executed by the runtime, and no test ever spelled it.
+#[test]
+fn set_value_replaces_the_top_without_growing_the_stack() {
+    let (lexer, output) = lex(
+        r#"
+        grammar SetValue {
+            lexer {
+                initial text;
+                state text {
+                    skip ws = /[ ]+/;
+                    token Open  = /\(/ -> push_value(0), switch(inner);
+                }
+                state inner {
+                    skip ws = /[ ]+/;
+                    token Level = /[0-9]/ -> set_value(column);
+                    token Close = /\)/ when depth == 1 -> pop_value, switch(text);
+                }
+            }
+        }
+        "#,
+        "(1)",
+    );
+    // `Close` fires only at depth 1, so it matches only if `set_value` replaced the
+    // value `push_value(0)` pushed. A `set_value` that pushed instead would leave the
+    // stack at depth 2 and this token would never appear.
+    let close = lexer.spec().kind_by_name("Close").expect("Close kind");
+    assert!(
+        output.tokens().iter().any(|token| token.kind == close),
+        "the closing paren matched at depth 1, so the stack did not grow"
+    );
+    assert!(
+        output.diagnostics().is_empty(),
+        "and the lex was clean: {:?}",
+        output.diagnostics()
+    );
+}
