@@ -1082,8 +1082,22 @@ impl Inner {
             let unit = format!("{:?}", conflict.unit);
             let first =
                 describe_provider(conflict.first_owner.label, conflict.first_owner.location);
-            let second =
-                describe_provider(state.node(conflict.second).label, conflict.second_location);
+            // A macro component defines through its site node, whose record label is the node
+            // kind (`"site"`), not the component. Naming the component makes the two sides of
+            // this message comparable; the site's own location is the macro expansion, which
+            // both sides would share anyway.
+            let second_node = state.node(conflict.second);
+            let second_name = if second_node.kind == NodeKind::Site {
+                component_of(&state, second_node.scope)
+                    .and_then(|id| state.component_names.get(&id).copied())
+                    .map_or_else(
+                        || format!("a component at scope {}", second_node.scope.0),
+                        |name| format!("component `{name}`"),
+                    )
+            } else {
+                second_node.label.to_string()
+            };
+            let second = describe_provider(&second_name, conflict.second_location);
             // The revision is rejected without losing the committed
             // definition: the late provider's install is undone, so the View
             // keeps the earlier provider's value and every node that serves it.
