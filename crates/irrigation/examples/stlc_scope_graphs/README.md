@@ -197,25 +197,26 @@ What it does not guarantee, and why:
 
 ## Tests
 
-The example's end-to-end tests cover the seed (`1 : Int`), lexical scoping and
-shadowing, term/binding/type nodes, one canonical type scope per type, a rename
-that keeps the program resolved, a literal edit that evaluates the new literal,
-an annotation edit that re-checks, stale type retraction, ill-typed and
-unresolved programs, parse errors, a warm read that executes nothing, the four
-stage components, and every analysis View on the board. The lowering is gated
-twice: by the rows it writes (a rename changes none, a literal edit changes one,
-an annotation edit changes none) and by running the listing in a small simulator
-and comparing what it prints with what `evaluate` says.
+The example carries no tests of its own. Everything it leans on — the declared
+tree, the grammar mapping, emission identity, per-row publication — is a
+framework contract, and it is gated where the framework lives:
 
 ```sh
-cargo test --example stlc_scope_graphs -p irrigation --features observatory
-cargo test -p irrigation --test emission
+cargo test --workspace
+cargo test -p irrigation --test emission              # one expression owns one entity
 cargo test -p irrigation-syntax --test declared_tree   # grammar -> tree, and the gates
+cargo test -p irrigation --test tree_layout            # the declaration as data
 ```
 
-The framework gates are in `crates/irrigation/tests/emission.rs`: one expression
-owns one entity, a re-execution reuses it, different invocations do not collide,
-and a shared node retracts with its last caller.
+`crates/irrigation/tests/emission.rs` is the load-bearing one: a re-execution
+reuses its entities, different invocations do not collide, and a shared node
+retracts with its last caller.
+
+The lowering is the one stage with no framework gate behind it. Its claim is
+visible, not asserted: run the example and compare the Machine plate — one row
+per instruction, in program order — with the value on the Evaluation plate
+beside it. A rename should leave every row as it was; a literal edit should move
+exactly one.
 
 ## Collected pointers
 

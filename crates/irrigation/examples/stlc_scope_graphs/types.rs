@@ -31,21 +31,3 @@ impl Type {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Type;
-
-    #[test]
-    fn renders_without_losing_grouping() {
-        let function = Type::Fun(
-            Box::new(Type::Fun(Box::new(Type::Int), Box::new(Type::Bool))),
-            Box::new(Type::Int),
-        );
-        assert_eq!(function.render(), "(Int -> Bool) -> Int");
-        assert_eq!(
-            Type::Fun(Box::new(Type::Int), Box::new(Type::Bool)).render(),
-            "Int -> Bool"
-        );
-    }
-}

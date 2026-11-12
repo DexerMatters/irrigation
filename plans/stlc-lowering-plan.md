@@ -2,8 +2,9 @@
 
 **Status:** implemented.
 **Scope:** the STLC example's fourth stage — `machine.rs` (the `Machine` View and
-one component), the root wiring, `sim.rs` (a test fixture), and the example's
-docs.
+one component), the root wiring, and the example's docs. The stage was developed
+against a simulator of the emitted subset; that fixture and the example's tests
+were removed when the examples became test-free (see §5).
 **Out of scope:** the framework. The tree's accessors already answer everything a
 code generator asks; nothing in the kernel, the macros, or the syntax crate
 changed.
@@ -138,16 +139,22 @@ Three things the implementation settled:
 
 ## 5. Tests
 
-In the example's suite (32 total, 10 of them for this stage): the shell and the
-single `main:`, one row per instruction with no holes, a literal's one `li`, a
-call's closure label and argument ordering, a `let`'s frame push and pop, an
-`if`'s branch, the row-equality gates for rename / literal / annotation, and the
-strong one: `the_program_prints_what_the_interpreter_says`, which runs the listing
-in `sim.rs` and compares the printed word with `evaluate` for seven programs
-including the seed.
+Nothing here is asserted any more. The stage was developed against a suite of ten
+checks in the example — the shell and the single `main:`, one row per instruction
+with no holes, a literal's one `li`, a call's closure label and argument ordering,
+a `let`'s frame push and pop, an `if`'s branch, the row-equality gates for rename /
+literal / annotation, and `the_program_prints_what_the_interpreter_says`, which
+ran the listing in a simulated MIPS subset and compared the printed word with
+`evaluate` for seven programs including the seed.
+
+That simulator and those tests went when the examples became test-free: an example
+is a demonstration, not a fixture, and Cargo cannot import one. What remains is
+the claim a reader can check by running the example and comparing two plates:
+one row per instruction in program order on `Machine`, and the value on
+`Evaluation` beside it.
 
 `scripts/verify.py` passes: format, clippy with warnings denied in both feature
-sets, 54 suites, markdown links, doc comments.
+sets, 56 suites, markdown links, doc comments.
 
 ---
 
@@ -155,9 +162,7 @@ sets, 54 suites, markdown links, doc comments.
 
 - [`../crates/irrigation/examples/stlc_scope_graphs/machine.rs`](../crates/irrigation/examples/stlc_scope_graphs/machine.rs)
   — the View, the shell constant, and `lower`.
-- [`../crates/irrigation/examples/stlc_scope_graphs/sim.rs`](../crates/irrigation/examples/stlc_scope_graphs/sim.rs)
-  — the simulator for the emitted subset.
 - [`../crates/irrigation/examples/stlc_scope_graphs/main.rs`](../crates/irrigation/examples/stlc_scope_graphs/main.rs)
-  — the root's shell, entry, and exit, and the stage tests.
+  — the root's shell, entry, and exit.
 - [`../crates/irrigation/examples/stlc_scope_graphs/report.rs`](../crates/irrigation/examples/stlc_scope_graphs/report.rs)
   — `From<&str>` and `From<String>` for `Line`.
