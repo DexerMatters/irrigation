@@ -5,6 +5,12 @@
 //! This guards the granularity in the other direction -- per-entry commits for a whole-map
 //! replacement would be wasted invalidation work.
 
+// These tests observe the runtime through `irrigation-observe`, which is an optional dependency of
+// the facade behind the `observatory` feature. Without that gate this file fails to compile under the
+// default feature set, which is how `cargo test --workspace --locked` builds -- so the whole suite
+// stopped compiling while a grep for "test result: FAILED" kept reporting zero failures.
+#![cfg(feature = "observatory")]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
