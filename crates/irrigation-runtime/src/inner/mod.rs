@@ -868,7 +868,7 @@ fn route_winner(
         .map(|decision| decision.winner)
 }
 
-/// Returns the component that owns a scope, walking member scopes to the body.
+/// Whether a route plan declares this port.
 fn port_declared(state: &State, port: &UnitKey) -> bool {
     state.route_plans.keys().any(|planned| {
         planned.view == port.view
@@ -1594,7 +1594,7 @@ fn ensure_view_current_inner(
     seen: &mut irrigation_core::hash::FxHashSet<ViewId>,
     depth: usize,
 ) -> Result<()> {
-    let (node, deps, stale, self_computing) = {
+    let (node, deps, self_computing) = {
         let state = inner.lock();
         let Some(node) = state.producers.get(&view).copied() else {
             return Ok(());
@@ -1611,11 +1611,11 @@ fn ensure_view_current_inner(
             .iter()
             .filter_map(|dep| state.node(dep.node).unit.as_ref().map(|unit| unit.view))
             .collect();
-        (node, deps, stale, record.general.is_some())
+        // `stale` is established here and the early return above is the only way out, so a
+        // second `if !stale` after the lock released was dead: every path reaching it had
+        // already proved the node stale.
+        (node, deps, record.general.is_some())
     };
-    if !stale {
-        return Ok(());
-    }
     // Only a node that carries its own algorithm can be demanded without a
     // caller-supplied body. A lowered node's body belongs to its call site, so
     // that path certifies it; its consumers stay conservative.

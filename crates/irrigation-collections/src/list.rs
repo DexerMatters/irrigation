@@ -20,10 +20,8 @@ use std::any::Any;
 use std::marker::PhantomData;
 
 use irrigation_core::descriptor::{FieldKind, UnitKey, UnitKind, WriteScope};
-use irrigation_core::error::{ComputeError, PreconditionReason};
 use irrigation_core::ids::{FieldId, SiteId, ViewId};
 use irrigation_core::key::any_key;
-use irrigation_core::ops::panic_engine;
 use irrigation_core::value::{Value, value_of};
 use irrigation_runtime::edit::Edit;
 use irrigation_runtime::field::{ViewFieldHandle, structure_unit};
@@ -1104,13 +1102,11 @@ where
             &[],
             |content| (self.content)(content).to_vec(),
             |mut list| {
-                if index > list.len() {
-                    panic_engine(ComputeError::PreconditionUnmet {
-                        condition: format!("list index {index} in range"),
-                        ports: vec![format!("{:?}", structure_unit(self.view, self.field))],
-                        reason: PreconditionReason::ValueMismatch,
-                    });
-                }
+                irrigation_runtime::helpers::require_value(
+                    index <= list.len(),
+                    &[structure_unit(self.view, self.field)],
+                    format!("list index {index} in range"),
+                );
                 list.insert(index, value);
                 let list: PSeq<T> = list.into_iter().collect();
                 self.define_whole(list, label);
@@ -1127,13 +1123,11 @@ where
             &[],
             |content| (self.content)(content).to_vec(),
             |mut list| {
-                if index >= list.len() {
-                    panic_engine(ComputeError::PreconditionUnmet {
-                        condition: format!("list index {index} present"),
-                        ports: vec![format!("{:?}", structure_unit(self.view, self.field))],
-                        reason: PreconditionReason::ValueMismatch,
-                    });
-                }
+                irrigation_runtime::helpers::require_value(
+                    index < list.len(),
+                    &[structure_unit(self.view, self.field)],
+                    format!("list index {index} present"),
+                );
                 list[index] = value;
                 let list: PSeq<T> = list.into_iter().collect();
                 self.define_whole(list, label);
@@ -1150,13 +1144,11 @@ where
             &[],
             |content| (self.content)(content).to_vec(),
             |mut list| {
-                if index >= list.len() {
-                    panic_engine(ComputeError::PreconditionUnmet {
-                        condition: format!("list index {index} present"),
-                        ports: vec![format!("{:?}", structure_unit(self.view, self.field))],
-                        reason: PreconditionReason::ValueMismatch,
-                    });
-                }
+                irrigation_runtime::helpers::require_value(
+                    index < list.len(),
+                    &[structure_unit(self.view, self.field)],
+                    format!("list index {index} present"),
+                );
                 list.remove(index);
                 let list: PSeq<T> = list.into_iter().collect();
                 self.define_whole(list, label);

@@ -444,6 +444,12 @@ impl Inner {
             .map(|region| Arc::clone(&region.content))
     }
     /// A unit's type-erased value, for a display hook with no typed snapshot.
+    ///
+    /// The cell decides when there is one, in either table -- `current_unit_node` covers the edited
+    /// units and the region's, so a host edit is not missed. With no cell the answer is the committed
+    /// content's projection, the same fallback [`crate::state::unit_version_of`] takes for versions: a
+    /// unit the content spells and nothing materialized is a value the board can draw, and reporting it
+    /// absent made a row that `field_entities` had just listed render empty.
     #[cfg(feature = "observe")]
     #[must_use]
     pub fn unit_value(
@@ -451,9 +457,13 @@ impl Inner {
         unit: &irrigation_core::descriptor::UnitKey,
     ) -> Option<irrigation_core::value::Value> {
         let state = self.lock();
-        let region = state.regions.get(&unit.view)?;
-        let node = region.units.get(unit)?.node;
-        state.node(node).value.clone()
+        match crate::state::current_unit_node(&state, unit) {
+            Some(node) => state.node(node).value.clone(),
+            None => {
+                let region = state.regions.get(&unit.view)?;
+                crate::state::content_projection(region, unit)
+            }
+        }
     }
     /// Projects every registered View's metadata at one revision.
     ///

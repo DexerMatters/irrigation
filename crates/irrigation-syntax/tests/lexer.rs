@@ -1032,3 +1032,45 @@ fn set_value_replaces_the_top_without_growing_the_stack() {
         output.diagnostics()
     );
 }
+
+/// An action's message belongs in the diagnostics, not only on the token.
+///
+/// `-> error("...")` marks the token's payload and its flags, so a reader that draws tokens sees the
+/// message. A reader of the diagnostics -- an editor's problem list -- saw nothing, because only a rule
+/// *declared* as an error token produced a diagnostic. The two paths now agree.
+#[test]
+fn an_action_error_produces_a_diagnostic() {
+    let spec = LexerSpec::parse(
+        r#"
+        grammar T {
+            lexer {
+                initial root;
+                state root {
+                    skip ws = /[ \t\r\n]+/;
+                    token number = /[0-9]+/;
+                    token ident = /[A-Za-z_]+/ -> error("identifiers are not allowed here");
+                }
+            }
+        }
+        "#,
+    )
+    .expect("valid lexer spec");
+    let lexer = Lexer::new(spec);
+    let document = TextDocument::new("a 1");
+
+    let output = lexer.lex(&document);
+    let message = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .find(|message| *message == "identifiers are not allowed here");
+    assert!(
+        message.is_some(),
+        "the action's message is a diagnostic the problem list can show: {:?}",
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}

@@ -276,7 +276,6 @@ impl Inner {
         self.lock().alloc_entity()
     }
 
-    /// Demands the installed root at the current revision.
     /// Demands one root output projection without evaluating its siblings.
     pub fn demand_root_projection(&self, cancel: &CancelToken, index: usize) -> Result<Value> {
         let revision = self.current_revision();
@@ -612,7 +611,6 @@ impl Inner {
         self.lock().notification_error = None;
     }
 
-    /// Returns `true` when a root component (ordinary or general) is installed.
     /// Marks the most recently started demand as cancelled, if there is one.
     pub fn cancel_active(&self) {
         let task = *self.active_task.lock();

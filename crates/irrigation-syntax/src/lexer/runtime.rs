@@ -381,6 +381,11 @@ impl Lexer {
                     )
                     .with_token_kind(choice_token_kind(rule)),
                 );
+            } else if let Some(message) = &error_message {
+                diagnostics.push(
+                    diagnostic(current, start_pos..end_pos, "lex.error", message.as_ref())
+                        .with_token_kind(choice_token_kind(rule)),
+                );
             }
             if end_pos == start_pos && end_state == state {
                 // A zero-width rule that does not change the machine state
@@ -738,6 +743,11 @@ impl Lexer {
                             .unwrap_or("lexical error token"),
                     )
                     .with_token_kind(choice_token_kind(rule)),
+                );
+            } else if let Some(message) = &error_message {
+                diagnostics.push(
+                    diagnostic(&snapshot, start_pos..end_pos, "lex.error", message.as_ref())
+                        .with_token_kind(choice_token_kind(rule)),
                 );
             }
             if end_pos == start_pos && end_state == state {

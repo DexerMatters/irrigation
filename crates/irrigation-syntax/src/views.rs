@@ -100,9 +100,12 @@ pub struct Tokens {
     /// Latest token delta.
     pub delta: TokenDelta,
     /// Lexical diagnostics keyed by stable identity.
+    ///
+    /// The keys **are** the current diagnostic identities. A `Set<DiagnosticId>` field used to declare
+    /// them alongside this map and nothing ever published it, so a reader of that set always saw it
+    /// empty; it was removed rather than published, because publishing it would cost a write group per
+    /// revision to repeat what these keys already say.
     pub diagnostics: Map<DiagnosticId, Diagnostic>,
-    /// Stable identities of current diagnostics.
-    pub diagnostic_ids: Set<DiagnosticId>,
     /// Per-token metadata.
     pub payloads: Map<TokenId, Arc<TokenPayload>>,
     /// Tokens changed in the latest revision.

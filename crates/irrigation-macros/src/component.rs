@@ -133,9 +133,14 @@ fn expand_fn(item: ItemFn, config: &ComponentConfig) -> syn::Result<TokenStream>
         }
         let (param_name, param_type) = &params[0];
         if param_type.to_token_stream().to_string() != key_type.to_token_stream().to_string() {
+            // The two are compared as token streams, because a macro cannot resolve types: this is a
+            // courtesy check, and the compiler is what actually holds the types together. Spelling
+            // them identically is therefore required -- `Vec<u8>` and `std::vec::Vec<u8>` are the same
+            // type to the compiler and different to this comparison, so the message says so instead of
+            // leaving the user to guess why it refused.
             return Err(syn::Error::new_spanned(
                 param_type,
-                "the key parameter type must match `keyed = Type`",
+                "the key parameter type must be spelled exactly as in `keyed = Type`: a macro compares                  them as written, not as resolved",
             ));
         }
         Some((key_type, param_name))

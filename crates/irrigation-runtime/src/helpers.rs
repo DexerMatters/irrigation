@@ -467,12 +467,16 @@ pub fn wait_for_port(ports: &[UnitKey]) -> bool {
 /// # Panics
 ///
 /// Panics with `PreconditionUnmet { ValueMismatch }` when `condition` is false.
-pub fn require_value(condition: bool, ports: &[UnitKey], description: &'static str) {
+pub fn require_value(condition: bool, ports: &[UnitKey], description: impl Into<String>) {
     if condition {
         return;
     }
+    // `impl Into<String>` rather than `&'static str`: a positional verb states its condition with the
+    // index in it ("list index 3 present"), and three of them hand-rolled this whole panic because a
+    // literal could not carry that. Widening the parameter costs a caller nothing and gives the shape
+    // one owner.
     panic_engine(ComputeError::PreconditionUnmet {
-        condition: description.to_string(),
+        condition: description.into(),
         ports: ports.iter().map(|unit| format!("{unit:?}")).collect(),
         reason: irrigation_core::error::PreconditionReason::ValueMismatch,
     });
