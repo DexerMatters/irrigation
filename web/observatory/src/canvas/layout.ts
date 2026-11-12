@@ -17,8 +17,16 @@ import type { ComponentWire, Placement, ViewRender, ViewWire } from "../state/ty
 
 export type Box = { width: number; height: number };
 
-const HEAD = 30;
-const FOOT = 22;
+// The plate's own boxes, as the stylesheet draws them. The height is built from
+// these rather than guessed: a card whose planned height is short by the field
+// strip squeezes its body to nothing, and a body with no height is a scrollbar
+// where the value should be.
+const HEAD = 32;
+/** The one-line field strip under the header. */
+const FIELD = 24;
+const FOOT = 24;
+/** The card's top and bottom borders. */
+const BORDER = 3;
 const ROW = 22;
 const BODY_PAD = 8;
 
@@ -51,7 +59,13 @@ function drawnRows(render: ViewRender | undefined): number | null {
 }
 
 /** The height of a plate folded down to its header. */
-export const COLLAPSED_HEIGHT = 32;
+export const COLLAPSED_HEIGHT = HEAD + BORDER;
+
+/** Room for the text field a source plate always shows. */
+const EDITOR_BODY = 132;
+
+/** One line of the smallest drawing: an empty message still needs a row. */
+const MIN_BODY = 44;
 
 /** Card size from what the View actually holds. */
 export function cardSize(view: ViewWire, render?: ViewRender, collapsed = false): Box {
@@ -63,26 +77,28 @@ export function cardSize(view: ViewWire, render?: ViewRender, collapsed = false)
   // a fallback, and it is wrong for whole-value fields.
   const rows = drawnRows(render) ?? field?.elements ?? null;
   const rowHeight = kind === "reduced" ? 28 : ROW;
-  const body =
+  const content =
     rows === null
-      ? 96
+      ? 90
       : kind === "set"
-        ? clamp(Math.ceil(rows / 3) * ROW, 30, 5 * ROW)
-        : clamp((rows + 1) * rowHeight, 30, 14 * rowHeight);
+        ? clamp(Math.ceil(rows / 3) * ROW, 24, 5 * ROW)
+        : clamp(rows * rowHeight, MIN_BODY - BODY_PAD, 14 * rowHeight);
+  // A source View is edited in place, so its plate is a field first and a
+  // drawing second: it gets room for a few lines even when the render behind it
+  // is one scalar row.
+  const body = view.editable
+    ? Math.max(content + BODY_PAD, EDITOR_BODY)
+    : content + BODY_PAD;
+  const fields = view.fields.length > 0 ? FIELD : 0;
+  const height = HEAD + fields + body + FOOT + BORDER;
   switch (kind) {
     case "tree":
-      return {
-        width: 372,
-        height: collapsed ? COLLAPSED_HEIGHT : HEAD + body + BODY_PAD + FOOT,
-      };
+      return { width: 372, height: collapsed ? COLLAPSED_HEIGHT : height };
     case "graph":
       // A graph needs room to be read as a picture, not a row.
       return { width: 456, height: collapsed ? COLLAPSED_HEIGHT : 396 };
     default:
-      return {
-        width: 316,
-        height: collapsed ? COLLAPSED_HEIGHT : HEAD + body + BODY_PAD + FOOT,
-      };
+      return { width: 316, height: collapsed ? COLLAPSED_HEIGHT : height };
   }
 }
 
@@ -91,7 +107,7 @@ export function cardSize(view: ViewWire, render?: ViewRender, collapsed = false)
  * is deliberately the size of a label so the board reads as Views joined by
  * wired components rather than a grid of equal boxes.
  */
-export const COMPONENT_BOX: Box = { width: 180, height: 40 };
+export const COMPONENT_BOX: Box = { width: 180, height: 44 };
 
 export type NodeId = string;
 export const viewNode = (key: string): NodeId => `view:${key}`;
@@ -107,7 +123,14 @@ export type BoardEdge = {
 };
 
 export type Board = {
-  /** Where every node goes, before any drag is applied. */
+  /**
+   * Where every node goes, before any drag is applied.
+   *
+   * A `Board` from `layoutBoard` is a fresh tidy — where the graph would go if it
+   * were drawn now. What the page draws is the plan `settle` keeps from the tidy
+   * it adopted, which is also a `Board`: same edges, same ranks, positions and
+   * boxes that no longer move.
+   */
   placement: Map<NodeId, Placement>;
   sizes: Map<NodeId, Box>;
   edges: BoardEdge[];
@@ -412,10 +435,11 @@ export function boardBounds(
 }
 
 /**
- * Keep a dragged plate out of its neighbours. The automatic layout already
- * spaces ranks, but a reader can drop one plate on another; this walks the
- * dropped plate to the nearest clear side, preferring a short horizontal push
- * so the DAG's rows stay rows.
+ * Keep one plate out of its neighbours. A tidy spaces the nodes it places, but a
+ * reader can drop one plate on another — and a plate that arrives later has a
+ * tidy slot that a plate already held still may be standing in. This walks the
+ * one plate to the nearest clear side, preferring a short horizontal push so the
+ * DAG's rows stay rows, and never moves the plates it steps around.
  */
 export function avoidOverlap(
   node: NodeId,

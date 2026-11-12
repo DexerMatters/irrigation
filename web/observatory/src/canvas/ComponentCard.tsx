@@ -1,8 +1,9 @@
-import type { CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
 import { select, useStore } from "../state/store";
 import type { ComponentWire, Placement } from "../state/types";
 import { COMPONENT_BOX, componentNode, displayName } from "./layout";
 import { useNodeDrag } from "./drag";
+import { usePlateFlash } from "./marks";
 
 /**
  * One component on the board, drawn as a chip riding the wire between the Views
@@ -31,6 +32,7 @@ export function ComponentCard({
   onDrag: (node: string, at: Placement | null) => void;
 }) {
   const state = useStore((snapshot) => snapshot);
+  const chip = useRef<HTMLDivElement | null>(null);
   const node = componentNode(component.component);
   const drag = useNodeDrag(at, (next) => onDrag(node, next));
   const selected =
@@ -41,9 +43,11 @@ export function ComponentCard({
   const openFacts = () => {
     void select({ kind: "component", key: component.component, label: component.name });
   };
+  usePlateFlash(chip, ran, ran ? String(component.executed_at) : null);
 
   return (
     <div
+      ref={chip}
       className={[
         "component",
         ran ? "component-changed" : "",
@@ -90,7 +94,11 @@ export function ComponentCard({
         <span className="chip-line chip-meta">
           <span className="chip-kind">{component.kind}</span>
           <span className={["chip-state", ran ? "ran" : "", stale ? "stale" : ""].filter(Boolean).join(" ")}>
-            {ran ? `ran r${component.executed_at}` : `last r${component.executed_at}`}
+            {ran
+              ? `ran r${component.executed_at}`
+              : component.executed_at > 0
+                ? `last r${component.executed_at}`
+                : "never ran"}
           </span>
         </span>
       </button>

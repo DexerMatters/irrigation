@@ -39,15 +39,17 @@ export function rowsNoun(modelKind: string | undefined, field: FieldWire): strin
 export type RowCounts = {
   drawn: number;
   changed: number;
+  removed: number;
   identified: number;
   noun: string;
 };
 
 export function rowCounts(model: Model | undefined, field?: FieldWire): RowCounts {
-  if (!model) return { drawn: 0, changed: 0, identified: 0, noun: "rows" };
+  if (!model) return { drawn: 0, changed: 0, removed: 0, identified: 0, noun: "rows" };
   const states = (rows: { state: string; unit: unknown }[], noun = "rows") => ({
     drawn: rows.length,
     changed: rows.filter((row) => row.state === "changed").length,
+    removed: rows.filter((row) => row.state === "removed").length,
     identified: rows.filter((row) => row.unit !== null).length,
     noun,
   });
@@ -63,7 +65,7 @@ export function rowCounts(model: Model | undefined, field?: FieldWire): RowCount
     case "graph":
       return states(model.nodes, "nodes");
     default:
-      return { drawn: 0, changed: 0, identified: 0, noun: "rows" };
+      return { drawn: 0, changed: 0, removed: 0, identified: 0, noun: "rows" };
   }
 }
 
@@ -77,6 +79,9 @@ export function fieldNote(
 ): string {
   if (counts.changed > 0) {
     return `${counts.changed} of ${counts.drawn} ${counts.noun}`;
+  }
+  if (counts.removed > 0) {
+    return `${counts.removed} removed`;
   }
   const wholeValue =
     field?.granularity === "whole_value" ||

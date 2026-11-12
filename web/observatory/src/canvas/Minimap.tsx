@@ -244,11 +244,11 @@ export function Minimap({ board, placed, camera, stage, inks, changed, onNavigat
         {visibleRows.size > 0 ? (
           <rect
             className="mini-camera"
-            x={W - 2.5}
+            x={W - 3}
             y={PAD + rowHeight * Math.min(...visibleRows)}
-            width={1.5}
+            width={3}
             height={rowHeight * (Math.max(...visibleRows) - Math.min(...visibleRows) + 1)}
-            rx={0.75}
+            rx={1.5}
           />
         ) : null}
         <g className="mini-links">

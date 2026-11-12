@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Editor } from "../canvas/Editor";
 import { displayName } from "../canvas/layout";
+import { useRowFlash } from "../canvas/marks";
 import { countWord, fieldNote, movedField, rowCounts } from "../canvas/viewInfo";
 import { ModelView } from "./Render";
 import {
   activeRevision,
-  beginEdit,
-  endEdit,
+  annotationRevision,
+  atNewest,
   ensureRender,
   select,
   useStore,
 } from "../state/store";
-import type { FieldWire, ViewWire } from "../state/types";
+import type { FieldWire, Selection, ViewWire } from "../state/types";
 
 const stateWord = (state: string): string =>
   state === "not_demanded" ? "not demanded" : state.replace("_", " ");
@@ -38,7 +39,24 @@ export function Inspector() {
 
   return (
     <aside className="inspector" aria-label="Facts">
-      {selection?.kind === "node" ? (
+      <button
+        type="button"
+        className="inspector-close"
+        aria-label="Close facts"
+        title="Close (Esc)"
+        onClick={() => void select(null)}
+      >
+        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+          <path
+            d="M2 2 L8 8 M8 2 L2 8"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
+      {selection.kind === "node" ? (
         <>
           <div className="eyebrow">Node</div>
           <h1>{selection.label}</h1>
@@ -49,14 +67,14 @@ export function Inspector() {
                 <span className="glyph hollow" aria-hidden="true" />
                 {stateWord(node.state)} at r{node.changed_at}
               </div>
-              <div className="kv" style={{ marginTop: 12 }}>
+              <div className="kv">
                 <Fact label="created" value={String(node.changed_at)} />
                 <Fact label="verified" value={String(node.verified_at)} />
                 <Fact label="executed" value={String(node.executed_at)} />
                 <Fact label="validated" value={String(node.validated_at)} />
                 <Fact label="waiters" value={String(node.waiters)} />
               </div>
-              <div className="section-head" style={{ marginTop: 16 }}>
+              <div className="section-head">
                 <h2>Dependencies</h2>
                 <span>{state.detail?.dependencies.length ?? 0}</span>
               </div>
@@ -82,20 +100,71 @@ export function Inspector() {
         </>
       ) : selection.kind === "component" ? (
         <ComponentFacts componentKey={selection.key} label={selection.label} />
+      ) : selection.kind === "row" ? (
+        <RowFacts selection={selection} />
       ) : "view" in selection ? (
         <ViewDetail view={selection.view} />
       ) : (
         <p className="inspector-empty">Revision {selection.revision}.</p>
       )}
-      <button
-        type="button"
-        className="btn quiet"
-        style={{ marginTop: 14 }}
-        onClick={() => void select(null)}
-      >
-        Clear
-      </button>
     </aside>
+  );
+}
+
+/**
+ * One row's unit, opened from a plate.
+ *
+ * The board already says *that* a row moved; this says which unit it is, which
+ * field carries it, and when it last moved — the three things a reader needs to
+ * connect a row back to the host's own model.
+ */
+function RowFacts({ selection }: { selection: Extract<Selection, { kind: "row" }> }) {
+  const state = useStore((snapshot) => snapshot);
+  const wire = state.views.find((candidate) => candidate.view === selection.view);
+  const unit = selection.unit;
+  const revision = annotationRevision(state);
+  const fresh = atNewest(state);
+  const moved = unit !== null && unit.changed_at === revision;
+
+  return (
+    <>
+      <div className="eyebrow">Row</div>
+      <h1>{selection.label}</h1>
+      <div className="key mono">
+        {wire ? displayName(wire.name) : selection.view} · row {selection.rowKey}
+      </div>
+      {unit ? (
+        <>
+          <div className={`state-line state-${moved && fresh ? "changed" : "clean"}`}>
+            <span className={`glyph ${moved && fresh ? "" : "hollow"}`} aria-hidden="true" />
+            {moved && fresh ? `changed at r${revision}` : "unchanged at this revision"}
+          </div>
+          <div className="kv">
+            <Fact label="unit kind" value={unit.kind} />
+            <Fact label="field" value={`field ${unit.field}`} />
+            <Fact label="entity" value={unit.entity ?? "—"} />
+            <Fact
+              label="changed at"
+              value={unit.changed_at === null ? "never" : `r${unit.changed_at}`}
+            />
+          </div>
+        </>
+      ) : (
+        <p className="inspector-empty">
+          This row is drawn without a unit: the whole value moved, and nothing
+          identifies this line on its own.
+        </p>
+      )}
+      {wire ? (
+        <button
+          type="button"
+          className="btn inspector-action"
+          onClick={() => void select({ kind: "module", view: wire.view })}
+        >
+          Open {displayName(wire.name)}
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -112,8 +181,11 @@ function ComponentFacts({ componentKey, label }: { componentKey: string; label: 
       <div className="eyebrow">{component.kind} component</div>
       <h1>{displayName(label)}</h1>
       <div className="key mono">{component.name}</div>
-      <div className="kv" style={{ marginTop: 12 }}>
-        <Fact label="executed at" value={`r${component.executed_at}`} />
+      <div className="kv">
+        <Fact
+          label="executed at"
+          value={component.executed_at === 0 ? "never" : `r${component.executed_at}`}
+        />
         <Fact
           label="invalidated at"
           value={component.suspect_at === 0 ? "never" : `r${component.suspect_at}`}
@@ -121,7 +193,7 @@ function ComponentFacts({ componentKey, label }: { componentKey: string; label: 
         <Fact label="reads" value={String(component.reads.length)} />
         <Fact label="defines" value={String(component.writes.length)} />
       </div>
-      <div className="section-head" style={{ marginTop: 16 }}>
+      <div className="section-head">
         <h2>Views</h2>
         <span>{component.reads.length + component.writes.length}</span>
       </div>
@@ -140,20 +212,19 @@ function ComponentFacts({ componentKey, label }: { componentKey: string; label: 
 /**
  * One View, opened from the board. The plate and this panel share the same
  * projection and revision, so the panel is not a stale summary: rows keep their
- * change marks, the body updates with the stream, and an editable View gets the
- * same editor the plate has.
+ * change marks, the body updates with the stream, and a source View is the same
+ * live text field here as it is on its plate.
  */
 function ViewDetail({ view }: { view: string }) {
   const state = useStore((snapshot) => snapshot);
   const wire = state.views.find((candidate) => candidate.view === view);
   const render = state.renders[view];
   const error = state.renderErrors[view];
-  const editing = state.editing === view;
   const [chosen, setChosen] = useState<number | null>(null);
   const body = useRef<HTMLDivElement | null>(null);
   const record = activeRevision(state);
-  const revision = record?.revision ?? state.revision;
-  const followingNewest = state.following || state.selectedRevision === state.revision;
+  const revision = annotationRevision(state);
+  const aligned = atNewest(state);
 
   const fields = render?.fields ?? [];
   const drawnFields =
@@ -168,64 +239,55 @@ function ViewDetail({ view }: { view: string }) {
     ? fields.filter((entry) => entry.field !== field?.field && movedField(wire, entry.field)).length
     : 0;
   const note = fieldNote(counts, fieldWire, field?.model.kind, fieldMoved, otherChange);
-  const changed = wire?.state === "changed";
-  const fieldChange = followingNewest && fieldMoved;
+  const newest = atNewest(state);
+  const journaled = record?.changed_views.includes(view) ?? false;
+  const changed = newest ? wire?.state === "changed" && aligned : journaled;
+  const fieldChange = aligned && fieldMoved;
+  const marksAt = aligned && render?.revision === revision ? revision : null;
+  const selectedRow =
+    state.selection?.kind === "row" && state.selection.view === view
+      ? state.selection.rowKey
+      : null;
 
   useEffect(() => {
     setChosen(null);
   }, [view]);
 
   useEffect(() => {
-    if (!editing) ensureRender(view);
-  }, [view, editing, wire?.content_version]);
+    ensureRender(view);
+  }, [view, wire?.content_version]);
 
-  useEffect(() => {
-    const root = body.current;
-    if (!root) return;
-    for (const row of root.querySelectorAll<HTMLElement>(".row-changed")) {
-      row.animate(
-        [
-          { backgroundColor: "color-mix(in srgb, var(--signal) 18%, transparent)" },
-          { backgroundColor: "color-mix(in srgb, var(--signal) 0%, transparent)" },
-        ],
-        { duration: 900, easing: "ease-out" },
-      );
-    }
-  }, [revision, field?.model]);
+  useRowFlash(body, marksAt === null || wire?.editable ? null : `${view}:${marksAt}:${render?.content_version}`);
 
   if (!wire) return <p className="inspector-empty">This View is gone.</p>;
 
   return (
-    <div className="view-detail" ref={body}>
+    <div className="view-detail" role="group" aria-label={`${displayName(wire.name)} facts`}>
       <div className="eyebrow">{wire.kind} View</div>
       <h1>{displayName(wire.name)}</h1>
       <div className="key mono">{wire.view}</div>
-      <div className={`state-line state-${wire.state}`}>
+      <div className={`state-line state-${newest ? wire.state : changed ? "changed" : "clean"}`}>
         <span className="glyph hollow" aria-hidden="true" />
-        {stateWord(wire.state)}
-        <span className="view-detail-rev mono">v{wire.content_version}</span>
+        {stateWord(newest ? wire.state : changed ? "changed" : "clean")}
+        <span
+          className="view-detail-rev mono"
+          title={newest ? "content version" : "current content version; the panel shows now"}
+        >
+          v{wire.content_version}
+        </span>
       </div>
 
       <div className="view-detail-actions">
-        {wire.editable ? (
-          <button
-            type="button"
-            className="btn"
-            aria-pressed={editing}
-            onClick={() => (editing ? endEdit(wire.view) : beginEdit(wire.view))}
-          >
-            {editing ? "Done" : "Edit"}
-          </button>
-        ) : (
-          <span className="view-detail-note">read-only</span>
-        )}
+        <span className="view-detail-note">
+          {wire.editable ? "live text · edits commit as you type" : "read-only · drawn from the host"}
+        </span>
       </div>
 
       <div className="view-detail-content">
         {fields.length > 1 ? (
           <div className="view-detail-fields" role="group" aria-label={`${displayName(wire.name)} fields`}>
             {fields.map((entry) => {
-              const moved = followingNewest && movedField(wire, entry.field);
+              const moved = aligned && movedField(wire, entry.field);
               const name =
                 wire.fields.find((candidate) => candidate.field === entry.field)?.name ??
                 `field ${entry.field}`;
@@ -258,9 +320,11 @@ function ViewDetail({ view }: { view: string }) {
         ) : null}
 
         <div
+          ref={body}
           className={[
             "view-detail-body",
             field?.model.kind === "graph" ? "view-detail-body-graph" : "",
+            wire.editable ? "view-detail-body-editor" : "",
           ]
             .filter(Boolean)
             .join(" ")}
@@ -268,15 +332,16 @@ function ViewDetail({ view }: { view: string }) {
           role="group"
           aria-label={`${displayName(wire.name)} content`}
         >
-          {editing ? (
+          {wire.editable ? (
             <Editor view={wire} />
           ) : field ? (
             <ModelView
               model={field.model}
-              selectedRow={null}
-              interactiveRevision={followingNewest}
-              revision={revision}
-              onSelectRow={() => undefined}
+              selectedRow={selectedRow}
+              marksAt={marksAt}
+              onSelectRow={(key, label, unit) => {
+                void select({ kind: "row", view: wire.view, rowKey: key, label, unit });
+              }}
             />
           ) : (
             <p className="inspector-empty">Drawing this View…</p>
@@ -288,7 +353,7 @@ function ViewDetail({ view }: { view: string }) {
           <span>{countWord(fieldWire, field?.model.kind, counts.drawn)}</span>
           {changed ? (
             <span className="changed-note">
-              {note} at r{revision}
+              {marksAt !== null ? `${note} at r${revision}` : `content changed at r${revision}`}
             </span>
           ) : (
             <span>following r{revision}</span>
@@ -297,6 +362,11 @@ function ViewDetail({ view }: { view: string }) {
       </div>
 
       <ViewFacts wire={wire} fields={drawnFields} />
+      {record ? (
+        <div className="view-detail-reaction" title={record.label || "no label"}>
+          r{record.revision} · {record.changed} changed · {record.executed} executed
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -304,7 +374,7 @@ function ViewDetail({ view }: { view: string }) {
 function ViewFacts({ wire, fields }: { wire: ViewWire; fields: FieldWire[] }) {
   return (
     <>
-      <div className="section-head" style={{ marginTop: 18 }}>
+      <div className="section-head">
         <h2>Fields</h2>
         <span>{fields.length}</span>
       </div>
@@ -321,10 +391,11 @@ function ViewFacts({ wire, fields }: { wire: ViewWire; fields: FieldWire[] }) {
           />
         ))}
       </div>
-      <div className="kv" style={{ marginTop: 12 }}>
+      <div className="kv">
         <Fact label="content version" value={`v${wire.content_version}`} />
         <Fact label="routing" value={String(wire.routing)} />
         <Fact label="changed units" value={String(wire.changed_units)} />
+        <Fact label="retracted units" value={String(wire.retracted_units)} />
         <Fact label="editable" value={wire.editable ? "text · host syntax" : "read-only"} />
       </div>
     </>

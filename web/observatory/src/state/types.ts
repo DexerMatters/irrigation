@@ -68,6 +68,7 @@ export type FieldWire = {
   elements: number | null;
   content_version: number;
   changed_units: number;
+  retracted_units: number;
 };
 
 export type ViewWire = {
@@ -81,6 +82,7 @@ export type ViewWire = {
   content_version: number;
   demanded: boolean;
   changed_units: number;
+  retracted_units: number;
   editable: boolean;
   state: string;
 };

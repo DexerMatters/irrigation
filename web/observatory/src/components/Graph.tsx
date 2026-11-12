@@ -326,9 +326,26 @@ function stateWords(node: GraphNode): string {
  * One graph View. Nodes are rectangles sized to their labels, edges are curves
  * with arrowheads, and every visible mark has a title so the picture is never
  * the only carrier.
+ *
+ * `marks` is false when the drawing cannot speak for the revision on screen (a
+ * render drawn at an earlier one): node states are then shown as clean, so the
+ * picture never claims a change of its own.
  */
-export function GraphView({ model }: { model: GraphModel }) {
-  const { placed, paths, width, height } = useMemo(() => layout(model), [model]);
+export function GraphView({ model, marks }: { model: GraphModel; marks: boolean }) {
+  const shown = useMemo<GraphModel>(
+    () =>
+      marks
+        ? model
+        : {
+            ...model,
+            nodes: model.nodes.map((node) => ({
+              ...node,
+              state: (node.unit ? "clean" : "display") as GraphNode["state"],
+            })),
+          },
+    [model, marks],
+  );
+  const { placed, paths, width, height } = useMemo(() => layout(shown), [shown]);
   const marker = `graph-arrow-${useId().replace(/[:]/g, "")}`;
 
   if (placed.length === 0) {

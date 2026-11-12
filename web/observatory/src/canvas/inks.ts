@@ -4,18 +4,20 @@ import type { ComponentWire } from "../state/types";
 /**
  * One ink per component. The palette is narrow and earthy on purpose: on a
  * technical paper a handful of hues read as signals without turning the board
- * into a rainbow. Past eight components the oldest ink is reused, because a
- * board with twenty hues encodes nothing.
+ * into a rainbow. The tones are lifted for a dark ground — the wire, the legend
+ * dot and the chip tint all have to be readable at 1px — and past eight
+ * components the oldest ink is reused, because a board with twenty hues encodes
+ * nothing.
  */
 const INKS = [
-  "#0E5D5A",
-  "#8A6206",
-  "#5B3F73",
-  "#8C4A32",
-  "#3F5A73",
-  "#4F6B2E",
-  "#7A4A63",
-  "#2F6076",
+  "#3E9C8F",
+  "#B98A3A",
+  "#8D74B5",
+  "#C0704F",
+  "#5B87AE",
+  "#7E9C4C",
+  "#B06F8C",
+  "#4E9BB0",
 ];
 
 export type ComponentInk = {

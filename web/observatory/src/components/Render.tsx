@@ -1,4 +1,4 @@
-import type { Model, RowState } from "../state/types";
+import type { Model, RowState, UnitWire } from "../state/types";
 import { GraphView } from "./Graph";
 
 /** The words a mark stands for, so the mark is never the only carrier. */
@@ -80,21 +80,32 @@ function RowMeta({ state, revision }: { state: RowState; revision: number }) {
   );
 }
 
+export type RowPick = (key: string, label: string, unit: UnitWire | null) => void;
+
+/**
+ * One field's projection.
+ *
+ * `marksAt` is the revision the marks belong to, or null when this render cannot
+ * speak for the revision on screen. A render is a snapshot: it was drawn at some
+ * revision, and its rows say which of its units moved *then*. Drawn under the
+ * label of a later revision, those marks would accuse rows that are clean now.
+ */
 export function ModelView({
   model,
   selectedRow,
   onSelectRow,
-  interactiveRevision,
-  revision,
+  marksAt,
 }: {
   model: Model;
   selectedRow: string | null;
-  onSelectRow: (key: string, label: string) => void;
-  interactiveRevision: boolean;
-  /** Rows are keyed by revision, so a changed row replays its mark. */
-  revision: number;
+  onSelectRow: RowPick;
+  marksAt: number | null;
 }) {
-  const stateOf = (state: RowState): RowState => (interactiveRevision ? state : "display");
+  // Without a trustworthy mark, a row with a unit is simply clean; a row
+  // without one is a display row and never gets a mark either way.
+  const shown = (state: RowState, unit: UnitWire | null): RowState =>
+    marksAt !== null ? state : unit !== null ? "clean" : "display";
+  const revision = marksAt ?? 0;
   switch (model.kind) {
     case "tree":
       return (
@@ -103,20 +114,20 @@ export function ModelView({
           {model.rows.map((row) => (
             <Row
               key={`${row.key}:${revision}`}
-              state={stateOf(row.state)}
+              state={shown(row.state, row.unit)}
               unit={row.unit !== null}
               selected={selectedRow === row.key}
               revision={revision}
-              onSelect={() => onSelectRow(row.key, `${row.kind} ${row.label}`)}
+              onSelect={() => onSelectRow(row.key, `${row.kind} ${row.label}`, row.unit)}
               title={[`${row.kind} at depth ${row.depth}`, row.label, row.value]
                 .filter(Boolean)
                 .join(" · ")}
             >
-              <span className="tree-depth" style={{ width: row.depth * 14 }} aria-hidden="true" />
+              <span className="tree-depth" style={{ width: row.depth * 16 }} aria-hidden="true" />
               <span className="row-kind">{row.kind}</span>
               <span className="row-label">{row.label}</span>
               {row.value ? <span className="row-value">{row.value}</span> : null}
-              <RowMeta state={stateOf(row.state)} revision={revision} />
+              <RowMeta state={shown(row.state, row.unit)} revision={revision} />
             </Row>
           ))}
         </div>
@@ -128,16 +139,16 @@ export function ModelView({
           {model.rows.map((row) => (
             <Row
               key={`${row.key}:${revision}`}
-              state={stateOf(row.state)}
+              state={shown(row.state, row.unit)}
               unit={row.unit !== null}
               selected={selectedRow === row.key}
               revision={revision}
-              onSelect={() => onSelectRow(row.key, `item ${row.index}`)}
+              onSelect={() => onSelectRow(row.key, `item ${row.index} · ${row.value}`, row.unit)}
               title={row.value}
             >
               <span className="row-index mono">{row.index}</span>
               <span className="row-value">{row.value}</span>
-              <RowMeta state={stateOf(row.state)} revision={revision} />
+              <RowMeta state={shown(row.state, row.unit)} revision={revision} />
             </Row>
           ))}
         </div>
@@ -149,16 +160,16 @@ export function ModelView({
           {model.rows.map((row) => (
             <Row
               key={`${row.key}:${revision}`}
-              state={stateOf(row.state)}
+              state={shown(row.state, row.unit)}
               unit={row.unit !== null}
               selected={selectedRow === row.key}
               revision={revision}
-              onSelect={() => onSelectRow(row.key, row.label)}
+              onSelect={() => onSelectRow(row.key, row.label, row.unit)}
               title={`${row.label} = ${row.value ?? "absent"}`}
             >
               <span className="map-key">{row.label}</span>
               <span className="row-value">{row.value ?? "absent"}</span>
-              <RowMeta state={stateOf(row.state)} revision={revision} />
+              <RowMeta state={shown(row.state, row.unit)} revision={revision} />
             </Row>
           ))}
         </div>
@@ -171,13 +182,13 @@ export function ModelView({
             {model.members.map((member) => (
               <span
                 key={`${member.key}:${revision}`}
-                className={`chip ${member.present ? "present" : ""} state-${stateOf(member.state)}`}
-                title={[member.member, markWords(stateOf(member.state), revision)]
+                className={`chip ${member.present ? "present" : ""} state-${shown(member.state, member.unit)}`}
+                title={[member.member, markWords(shown(member.state, member.unit), revision)]
                   .filter(Boolean)
                   .join(" · ")}
               >
                 {member.member}
-                <Mark state={stateOf(member.state)} revision={revision} />
+                <Mark state={shown(member.state, member.unit)} revision={revision} />
               </span>
             ))}
           </div>
@@ -189,22 +200,22 @@ export function ModelView({
           {model.rows.map((row) => (
             <Row
               key={`${row.key}:${revision}`}
-              state={stateOf(row.state)}
+              state={shown(row.state, row.unit)}
               unit={row.unit !== null}
               selected={selectedRow === row.key}
               revision={revision}
-              onSelect={() => onSelectRow(row.key, row.label)}
+              onSelect={() => onSelectRow(row.key, row.label, row.unit)}
               title={`${row.label} = ${row.value ?? "absent"}`}
             >
               <span className="map-key">{row.label}</span>
               <span className="row-value">{row.value}</span>
-              <RowMeta state={stateOf(row.state)} revision={revision} />
+              <RowMeta state={shown(row.state, row.unit)} revision={revision} />
             </Row>
           ))}
         </div>
       );
     case "graph":
-      return <GraphView model={model} />;
+      return <GraphView model={model} marks={marksAt !== null} />;
     case "reduced":
       return (
         <div className="scalar">

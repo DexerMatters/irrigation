@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ModelView } from "../components/Render";
 import {
-  beginEdit,
-  endEdit,
+  atNewest,
   ensureRender,
   select,
+  setViewVisible,
   toggleCollapsed,
   useStore,
 } from "../state/store";
@@ -13,6 +13,7 @@ import { type Box, displayName, viewNode } from "./layout";
 import { countWord, fieldNote, kindWord, movedField, rowCounts } from "./viewInfo";
 import { useNodeDrag } from "./drag";
 import { Editor } from "./Editor";
+import { usePlateFlash, useRowFlash } from "./marks";
 
 const stateWord = (state: string): string =>
   state === "not_demanded" ? "not demanded" : state.replace("_", " ");
@@ -23,7 +24,6 @@ type Props = {
   /** The plate's planned box: one band per rank, so a level ends level. */
   box: Box;
   revision: number;
-  followingNewest: boolean;
   /** What the displayed revision did: rewrote the content, or ran and matched. */
   reaction: "changed" | "cutoff" | null;
   /** The ink of the component that produces (or consumes) this View. */
@@ -34,30 +34,26 @@ type Props = {
 };
 
 /**
- * One View on the canvas: a draggable card that draws its native render, or the
- * host's text editor when the reader opens it. A card that changed says so in
- * its own footer, and the rows inside say which part moved.
+ * One View on the canvas: a draggable card that draws a host-written text
+ * channel as a live editor, and every other View as its native render. A card
+ * that changed says so in its own footer, and the rows inside say which part
+ * moved — when the data on screen is really the revision it is labelled with.
  */
 export function ViewCard({
   wire,
   at,
   box,
   revision,
-  followingNewest,
   reaction,
   ink,
   producers,
   onDrag,
 }: Props) {
   const state = useStore((snapshot) => snapshot);
+  const plate = useRef<HTMLElement | null>(null);
+  const body = useRef<HTMLDivElement | null>(null);
   const render = state.renders[wire.view];
   const error = state.renderErrors[wire.view];
-  const editing = state.editing === wire.view;
-  const detailOpen =
-    state.selection?.kind === "module" && state.selection.view === wire.view;
-  // When the sidebar is showing this View, the editor belongs there; the plate
-  // keeps its projection instead of becoming a second textarea.
-  const shownEditing = editing && !detailOpen;
   const collapsed = state.overview || Boolean(state.collapsed[wire.view]);
   const node = viewNode(wire.view);
   const drag = useNodeDrag(at, (next) => onDrag(node, next));
@@ -70,20 +66,33 @@ export function ViewCard({
   const producer = producers[0] ?? null;
   const extraProducers = Math.max(0, producers.length - 1);
   const producerTitle = producers.length > 0 ? producers.map(displayName).join(", ") : wire.kind;
-  // The header state is the runtime's verdict. A plate is changed because the
-  // View changed, not because the field the reader happens to be looking at
-  // drew a moved row: another field may be the one that moved.
+  // The plate is annotated for the revision its data describes; the header state
+  // is the runtime's verdict for that same read.
+  const newest = atNewest(state);
+  const aligned = newest;
   const changed = reaction === "changed";
   const ranAlike = reaction === "cutoff";
+  // An older revision is annotated from the journal, not from the live headers:
+  // the header's own state describes "now", and "changed" there would keep
+  // claiming a change for every plate that moved since.
+  const headerState = newest
+    ? wire.state
+    : changed
+      ? "changed"
+      : ranAlike
+        ? "cutoff"
+        : "clean";
+  // A render is a snapshot with the marks of its own revision. Only the render
+  // drawn at the revision on screen may accuse its rows.
+  const marksAt = aligned && render?.revision === revision ? revision : null;
   const fieldMoved = movedField(wire, field?.field ?? 0);
   // Only fields the projection actually drew can be switched to, so only they
   // can be "other fields" a reader might look at.
   const otherFields = fields.filter(
     (entry) => entry.field !== field?.field && movedField(wire, entry.field),
   );
-  // Only a following reader can trust per-field counts: they describe "now".
-  const fieldChange = followingNewest ? fieldMoved : false;
-  const otherChange = followingNewest ? otherFields.length : 0;
+  const fieldChange = aligned && fieldMoved;
+  const otherChange = aligned ? otherFields.length : 0;
   const fieldMark = fieldNote(
     counts,
     fieldWire,
@@ -97,16 +106,57 @@ export function ViewCard({
       : state.selection && "view" in state.selection
         ? state.selection.view === wire.view
         : false;
+  const selectedRow =
+    state.selection?.kind === "row" && state.selection.view === wire.view
+      ? state.selection.rowKey
+      : null;
 
-  if (!editing && !collapsed) ensureRender(wire.view);
+  useEffect(() => {
+    // Read the projection from an effect, never during render: asking for it
+    // updates the store, and a store update belongs after the paint. This is
+    // the first read (and a re-read when the plate is opened again); later
+    // revisions are read by the store's visibility batch, so a plate scrolled
+    // out of the surface is not re-projected on every keystroke.
+    if (!collapsed) ensureRender(wire.view);
+  }, [wire.view, collapsed]);
+
+  useEffect(() => {
+    // Only a plate on screen is worth re-reading; the store uses this to skip
+    // renders for plates scrolled out of the surface, which is what kept the
+    // runtime busy rebuilding views nobody was looking at.
+    const element = plate.current;
+    if (!element) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setViewVisible(wire.view, true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => setViewVisible(wire.view, entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: "160px" },
+    );
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      setViewVisible(wire.view, false);
+    };
+  }, [wire.view]);
+
+  usePlateFlash(plate, changed, changed ? String(revision) : null);
+  useRowFlash(
+    body,
+    marksAt === null || wire.editable
+      ? null
+      : `${wire.view}:${marksAt}:${render?.content_version}`,
+  );
 
   return (
     <article
+      ref={plate}
       className={[
         "card",
         changed ? "card-changed" : "",
         selected ? "card-selected" : "",
-        shownEditing ? "card-editing" : "",
+        wire.editable ? "card-source" : "",
         collapsed ? "card-collapsed" : "",
       ]
         .filter(Boolean)
@@ -115,11 +165,10 @@ export function ViewCard({
         left: at.x,
         top: at.y,
         width: box.width,
-        // The plate keeps the height the layout planned for it, even while the
-        // editor is open: an edge that ends at the planned bottom but a card that
-        // grew past it is worse than a scrolling editor.
+        // The plate keeps the height the layout planned for it, even while a
+        // source is edited: an edge that ends at the planned bottom but a card
+        // that grew past it is worse than a scrolling field.
         height: box.height,
-        
       }}
       data-blink={changed ? "1" : undefined}
       data-view={wire.view}
@@ -128,7 +177,7 @@ export function ViewCard({
       onDoubleClick={(event) => {
         if (
           (event.target as HTMLElement).closest(
-            ".card-action, .card-grip, .field-chip, textarea, input, select, a",
+            ".card-action, .card-grip, .field-chip, textarea, input, select, a, .card-name",
           )
         ) {
           return;
@@ -149,50 +198,45 @@ export function ViewCard({
           <GripIcon />
         </button>
         <span className="card-ink" style={{ background: ink }} aria-hidden="true" />
-        <span className="card-name" title={wire.name}>
-          {displayName(wire.name)}
-        </span>
-        <span className="card-kind">{kindWord(fields.length, fieldWire)}</span>
-        <span className={`card-state state-${wire.state}`} title={producerTitle}>
-          <span
-            className={`glyph ${wire.state === "changed" ? "" : "hollow"}`.trim()}
-            aria-hidden="true"
-          />
-          {ranAlike ? "same" : stateWord(wire.state)}
-        </span>
-        <span className="card-version mono">v{wire.content_version}</span>
-        {wire.editable && !collapsed ? (
-          <button
-            type="button"
-            className="card-action"
-            aria-pressed={editing}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (editing) {
-                endEdit(wire.view);
-              } else {
-                beginEdit(wire.view);
-                void select({ kind: "module", view: wire.view });
-              }
-            }}
-          >
-            {editing ? "Done" : "Edit"}
-          </button>
-        ) : null}
-        {state.overview ? null : (
         <button
           type="button"
-          className="card-action card-fold"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? `Expand ${displayName(wire.name)}` : `Collapse ${displayName(wire.name)}`}
-          title={collapsed ? "Expand this view" : "Fold this view to its header"}
+          className="card-name"
+          title={`${wire.name} · open its facts`}
           onClick={(event) => {
             event.stopPropagation();
-            toggleCollapsed(wire.view);
+            void select({ kind: "module", view: wire.view });
           }}
         >
-          <FoldIcon collapsed={collapsed} />
+          {displayName(wire.name)}
         </button>
+        <span className="card-kind">{kindWord(fields.length, fieldWire)}</span>
+        <span className={`card-state state-${headerState}`} title={producerTitle}>
+          <span
+            className={`glyph ${headerState === "changed" ? "" : "hollow"}`.trim()}
+            aria-hidden="true"
+          />
+          {ranAlike ? "same" : stateWord(headerState)}
+        </span>
+        <span
+          className="card-version mono"
+          title={newest ? "content version" : "current content version; the plate shows now"}
+        >
+          v{wire.content_version}
+        </span>
+        {state.overview ? null : (
+          <button
+            type="button"
+            className="card-action card-fold"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? `Expand ${displayName(wire.name)}` : `Collapse ${displayName(wire.name)}`}
+            title={collapsed ? "Expand this view" : "Fold this view to its header"}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleCollapsed(wire.view);
+            }}
+          >
+            <FoldIcon collapsed={collapsed} />
+          </button>
         )}
       </header>
 
@@ -201,10 +245,7 @@ export function ViewCard({
           {fields.length > 1 ? (
             <div className="card-fields" role="group" aria-label={`${displayName(wire.name)} fields`}>
               {fields.map((entry) => {
-                const moved =
-                  followingNewest &&
-                  (wire.fields.find((candidate) => candidate.field === entry.field)?.changed_units ??
-                    0) > 0;
+                const moved = aligned && movedField(wire, entry.field);
                 const name =
                   wire.fields.find((candidate) => candidate.field === entry.field)?.name ??
                   `field ${entry.field}`;
@@ -241,33 +282,42 @@ export function ViewCard({
           ) : null}
 
           <div
+            ref={body}
             className="card-body"
             tabIndex={0}
             role="group"
             aria-label={`${displayName(wire.name)} content`}
             onPointerDown={(event) => event.stopPropagation()}
           >
-            {shownEditing ? (
-              <Editor view={wire} />
+            {wire.editable ? (
+              <Editor view={wire} compact />
             ) : field ? (
               <ModelView
                 model={field.model}
-                selectedRow={null}
-                interactiveRevision={followingNewest}
-                revision={revision}
-                onSelectRow={() => undefined}
+                selectedRow={selectedRow}
+                marksAt={marksAt}
+                onSelectRow={(key, label, unit) => {
+                  void select({ kind: "row", view: wire.view, rowKey: key, label, unit });
+                }}
               />
             ) : (
-              <p className="card-empty">drawing…</p>
+              <p className="card-empty">{error ? "not drawn" : "drawing…"}</p>
             )}
-            {error ? <p className="card-error">{error}</p> : null}
+            {error && field ? <p className="card-error">{error}</p> : null}
           </div>
 
           <footer className="card-foot">
             <span>{countWord(fieldWire, field?.model.kind, counts.drawn)}</span>
             {changed ? (
-              <span className="changed-note" title={`the runtime reports this View changed at revision ${revision}`}>
-                {fieldMark} at r{revision}
+              <span
+                className="changed-note"
+                title={`the runtime reports this View changed at revision ${revision}`}
+              >
+                {/* Row counts describe the render on screen. Until the render
+                    for this revision lands, or against an older record, only
+                    the header can speak: no counts borrowed from another
+                    revision's drawing. */}
+                {marksAt !== null ? `${fieldMark} at r${revision}` : `content changed at r${revision}`}
               </span>
             ) : ranAlike ? (
               <span className="same-note" title={`ran at r${revision} and published the same content`}>
@@ -278,7 +328,7 @@ export function ViewCard({
                 {producer
                   ? `${displayName(producer)}${extraProducers > 0 ? ` +${extraProducers}` : ""}`
                   : wire.editable
-                    ? "editable"
+                    ? "host source"
                     : "read only"}
               </span>
             )}

@@ -4,8 +4,8 @@
 //
 // Runs axe-core in the same Chromium the smoke test uses and fails on serious or
 // critical violations. It also walks the keyboard path: Tab into the bar, focus
-// the first plate's Edit button, open the editor with Enter, and close it with
-// Escape.
+// a source plate's text field (it is there without any "Edit" click), open a
+// plate's facts from its name with Enter, and close the panel with Escape.
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -27,16 +27,33 @@ await page.waitForTimeout(800);
 const keyboard = [];
 await page.keyboard.press("Tab");
 keyboard.push(await page.evaluate(() => document.activeElement?.className ?? "none"));
-// Open the first editable card's editor from the keyboard. The fold control is
-// also a `.card-action`, so select the one that carries the pressed state.
-const edit = page.locator(".card-action[aria-pressed]").first();
-await edit.focus();
+
+// A source plate is a text field with no "Edit" step. Focus it from the
+// keyboard and check the focus lands on the field itself.
+const editorOpen = await page.locator(".card .editor-area").count();
+const editor = page.locator(".card .editor-area").first();
+await editor.focus();
+keyboard.push(
+  await page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLTextAreaElement
+      ? `textarea:${active.getAttribute("aria-label") ?? ""}`
+      : "not a text field";
+  }),
+);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(150);
+
+// The plate's name is the keyboard route into its facts.
+const name = page.locator(".card .card-name").first();
+await name.focus();
 keyboard.push(await page.evaluate(() => document.activeElement?.textContent ?? "none"));
 await page.keyboard.press("Enter");
 await page.waitForTimeout(300);
-const editorOpen = await page.locator(".editor-area").count();
+const panelOpen = await page.locator(".inspector").count();
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
+const panelClosed = await page.locator(".inspector").count();
 
 const results = {};
 await page.addScriptTag({ content: axeSource });
@@ -61,10 +78,12 @@ const serious = Object.entries(results).flatMap(([mode, violations]) =>
 
 console.log(
   JSON.stringify(
-    { keyboard, editorOpen, violations: results, serious },
+    { keyboard, editorOpen, panelOpen, panelClosed, violations: results, serious },
     null,
     2,
   ),
 );
 await browser.close();
-process.exit(serious.length === 0 ? 0 : 1);
+process.exit(
+  serious.length === 0 && editorOpen > 0 && panelOpen === 1 && panelClosed === 0 ? 0 : 1,
+);

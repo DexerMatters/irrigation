@@ -3,16 +3,18 @@ import { Canvas } from "./canvas/Canvas";
 import { Inspector } from "./components/Inspector";
 import { Tape } from "./components/Tape";
 import { displayName } from "./canvas/layout";
-import { connect, useStore } from "./state/store";
+import { connect, select, useStore } from "./state/store";
 
 const statusWord = (connection: string): string =>
   connection === "live"
     ? "live"
-    : connection === "paused"
-      ? "paused"
-      : connection === "connecting"
-        ? "connecting"
-        : "reconnecting";
+    : connection === "mismatched"
+      ? "page out of date"
+      : connection === "paused"
+        ? "paused"
+        : connection === "connecting"
+          ? "connecting"
+          : "reconnecting";
 
 /** The whole page: a spatial board, a thin tape, and facts on demand. */
 export function App() {
@@ -23,11 +25,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // Escape closes the facts panel; inside a text field it is the field's own
+    // key (it blurs there and stops the event), so this never eats an edit.
     const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
       const target = event.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (event.key === "f") document.querySelector<HTMLButtonElement>(".hud-button")?.click();
-      if (event.key === "Escape") (document.activeElement as HTMLElement | null)?.blur();
+      (document.activeElement as HTMLElement | null)?.blur();
+      void select(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

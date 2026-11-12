@@ -1,40 +1,48 @@
-import { displayName } from "./layout";
 import { useEffect, useRef } from "react";
-import { commitText, scheduleCommit, setDraft, useStore } from "../state/store";
+import { commitText, ensureDraft, scheduleCommit, setDraft, useStore } from "../state/store";
+import { displayName } from "./layout";
 import type { ViewWire } from "../state/types";
 
 /**
  * The in-place editor for a source View.
  *
- * The page does not parse the host's language. It sends the text, shows the
- * host's reply or its error, and lets the stream carry the delta. The editor's
- * value is the draft while the reader is typing, so a server echo can never
- * steal a keystroke.
+ * A source plate is a text channel, so it is a text field all the time: there
+ * is no "open the editor" step and no Done button to press. The text is read
+ * once when the plate first draws, and every keystroke commits. The page does
+ * not parse the host's language; it sends the text, shows the host's reply or
+ * its error verbatim, and lets the stream carry the delta.
  */
-export function Editor({ view }: { view: ViewWire }) {
+export function Editor({ view, compact = false }: { view: ViewWire; compact?: boolean }) {
   const state = useStore((snapshot) => snapshot);
   const area = useRef<HTMLTextAreaElement | null>(null);
-  const draft = state.drafts[view.view] ?? "";
+  const draft = state.drafts[view.view];
   const reply = state.replies[view.view];
-  const lines = draft.split("\n").length;
+  const loading = draft === undefined;
+  const lines = (draft ?? "").split("\n").length;
 
   useEffect(() => {
-    if (area.current) area.current.focus();
-  }, [view.view]);
+    ensureDraft(view.view);
+  }, [view.view, view.content_version]);
 
   return (
-    <div className="editor" onPointerDown={(event) => event.stopPropagation()}>
+    <div className="editor">
       <textarea
         ref={area}
         className="editor-area mono"
         spellCheck={false}
-        rows={Math.min(14, Math.max(4, lines))}
-        value={draft}
-        aria-label={`${short(view.name)} text`}
+        // The plate's height is the layout's, not the text's: the field fills
+        // the body and scrolls instead of pushing the card past its band.
+        rows={compact ? 4 : 6}
+        value={draft ?? ""}
+        placeholder={loading ? "reading the text…" : ""}
+        readOnly={loading}
+        aria-busy={loading}
+        aria-label={`${displayName(view.name)} text`}
         onChange={(event) => {
           setDraft(view.view, event.target.value);
           scheduleCommit(view.view);
         }}
+        onPointerDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();
@@ -44,13 +52,20 @@ export function Editor({ view }: { view: ViewWire }) {
             event.preventDefault();
             event.currentTarget.blur();
           }
-          // Editing must not pan the canvas or move the card.
+          // Typing must never pan the canvas or move the card.
           event.stopPropagation();
         }}
       />
       <div className="editor-foot">
-        <span className={`editor-reply ${reply?.error ? "error" : ""}`}>
-          {reply ? reply.text : "edits commit as you type"}
+        <span
+          className={[
+            "editor-reply",
+            reply?.error ? "error" : reply ? "active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {reply ? reply.text : loading ? "editable source" : "edits commit as you type"}
         </span>
         <span className="editor-hint">
           {lines} {lines === 1 ? "line" : "lines"} · live
@@ -58,8 +73,4 @@ export function Editor({ view }: { view: ViewWire }) {
       </div>
     </div>
   );
-}
-
-export function short(name: string): string {
-  return displayName(name);
 }

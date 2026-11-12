@@ -67,13 +67,13 @@ export function Tape() {
               type="button"
               className={[
                 "tick",
-                revision.demands > 0 ? "demand" : "",
                 record?.revision === revision.revision ? "selected" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
-              style={{ left: `${4 + ratio * 92}%`, height: Math.min(16, 5 + Math.log2(1 + revision.changed) * 2.5) }}
+              style={{ left: `${4 + ratio * 92}%`, height: Math.round(Math.min(16, 6 + Math.log2(1 + revision.changed) * 2.5)) }}
               onClick={() => selectRevision(revision.revision)}
+              title={`r${revision.revision}${revision.label ? ` · ${revision.label}` : ""} · ${revision.changed} changed · ${revision.executed} executed`}
               aria-label={`Revision ${revision.revision}: ${revision.changed} changed, ${revision.executed} executed`}
               aria-pressed={record?.revision === revision.revision}
             />
@@ -83,9 +83,12 @@ export function Tape() {
       <div className="reaction">
         {record ? (
           <>
-            <span className="mono" style={{ color: "var(--ink)" }}>
-              r{record.revision}
-            </span>
+            <span className="mono revision-number">r{record.revision}</span>
+            {record.label ? (
+              <span className="revision-label" title="the transaction's own label">
+                {record.label}
+              </span>
+            ) : null}
             <span className={`fact ${record.changed > 0 ? "changed" : ""}`}>
               <strong>{record.changed}</strong>changed
             </span>
@@ -100,11 +103,12 @@ export function Tape() {
             </span>
             <span className="fact">
               <strong>{record.demands}</strong>
+              {record.demands === 1 ? "demand" : "demands"}
               {record.demand_causes.length > 0
-                ? ` (${record.demand_causes.join(", ").replace(/_/g, " ")})`
-                : " demanded"}
+                ? ` · ${record.demand_causes.join(", ").replace(/_/g, " ")}`
+                : ""}
             </span>
-            <span className="spacer" style={{ flex: 1 }} />
+            <span className="spacer" />
             {state.following ? (
               <span className="cause">following the newest revision</span>
             ) : (

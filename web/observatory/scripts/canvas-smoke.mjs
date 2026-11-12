@@ -7,9 +7,10 @@
 //
 //   SMOKE_VIEW=SourceFile SMOKE_TEXT='{"a":1}' OBSERVATORY_URL=… node scripts/canvas-smoke.mjs
 //
-// Asserts that (1) the editor opens on double-click, (2) a keystroke commits a
-// new revision without pressing anything, (3) the board marks what moved, and
-// (4) the console stays clean.
+// Asserts that (1) a source plate is a text field with no click needed, (2) a
+// keystroke commits a new revision without pressing anything, (3) the board
+// marks what moved **at the revision on screen** — not the previous change —
+// and (4) the console stays clean.
 
 import { chromium } from "playwright-core";
 
@@ -49,18 +50,16 @@ const before = await page.evaluate(async () => {
 });
 
 const card = page.locator(".card", { has: page.locator(".card-name", { hasText: view }) }).first();
-// Double-click opens the View detail in the side panel; its Edit control is the
-// one text channel. The plate's own Edit control opens the same editor.
-await card.dblclick();
-await page.waitForTimeout(350);
-const detailEdit = page.locator(".view-detail-actions .btn").first();
-if ((await detailEdit.count()) > 0) {
-  await detailEdit.click();
-} else {
-  await card.locator(".card-action").first().click();
-}
-await page.waitForSelector(".editor-area", { timeout: 10000 });
-await page.fill(".editor-area", text);
+// A source plate is a text field all the time: no Edit button, no double-click.
+const editor = card.locator(".editor-area");
+await editor.waitFor({ timeout: 10000 });
+await page.waitForFunction(
+  (element) => element instanceof HTMLTextAreaElement && !element.readOnly,
+  await editor.elementHandle(),
+  { timeout: 10000 },
+);
+const editButtons = await page.locator(".card-action[aria-pressed]").count();
+await editor.fill(text);
 // No submit: the edit commits by itself.
 await page.waitForTimeout(2600);
 
@@ -78,9 +77,12 @@ const board = await page.evaluate(() => ({
   changed: [...document.querySelectorAll(".card-changed .card-name")].map((node) => node.textContent),
   notes: [...document.querySelectorAll(".changed-note, .same-note")].map((node) => node.textContent),
   markedRows: document.querySelectorAll(".row-changed").length,
-  ran: [...document.querySelectorAll(".component-changed .component-name")].map(
+  ran: [...document.querySelectorAll(".component-changed .chip-name")].map(
     (node) => node.textContent,
   ),
+  // Every change annotation on the board must name the newest revision: a note
+  // that still says r<n-1> is the previous change wearing the new revision.
+  stale: [...document.querySelectorAll(".changed-note")].map((node) => node.textContent),
 }));
 const reply = await page
   .locator(".view-detail .editor-reply, .card .editor-reply")
@@ -90,13 +92,26 @@ const reply = await page
 
 const advanced = after.revision > before.revision;
 const marked = board.changed.length > 0;
+const stale = board.stale.filter((note) => !note.includes(`r${after.revision}`));
+const atNewest = advanced && stale.length === 0;
 console.log(
   JSON.stringify(
-    { before, after, advanced, marked, board, reply, errors },
+    {
+      before,
+      after,
+      advanced,
+      marked,
+      atNewest,
+      editButtons,
+      stale,
+      board,
+      reply,
+      errors,
+    },
     null,
     2,
   ),
 );
 await page.screenshot({ path: process.env.SMOKE_SHOT ?? "canvas-smoke.png" });
 await browser.close();
-process.exit(errors.length === 0 && advanced && marked ? 0 : 1);
+process.exit(errors.length === 0 && advanced && marked && atNewest && editButtons === 0 ? 0 : 1);

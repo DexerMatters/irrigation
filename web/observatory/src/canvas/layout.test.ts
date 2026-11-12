@@ -3,6 +3,7 @@ import {
   COLLAPSED_HEIGHT,
   assignPorts,
   avoidOverlap,
+  cardSize,
   displayName,
   edgeKey,
   edgePath,
@@ -26,6 +27,7 @@ function view(key: string, name: string, rows: number): ViewWire {
         elements: rows,
         content_version: 1,
         changed_units: 0,
+        retracted_units: 0,
       },
     ],
     producer: null,
@@ -34,6 +36,7 @@ function view(key: string, name: string, rows: number): ViewWire {
     content_version: 1,
     demanded: true,
     changed_units: 0,
+    retracted_units: 0,
     editable: false,
     state: "clean",
   };
@@ -222,6 +225,18 @@ describe("layoutBoard", () => {
     const c = board.placement.get(viewNode("v:c"));
     expect(middle && a ? middle.y > a.y : false).toBe(true);
     expect(middle && c ? c.y > middle.y : false).toBe(true);
+  });
+
+  it("gives a source plate room for its text field", () => {
+    const source = { ...view("v:source", "demo::Source", 1), editable: true };
+    const drawn = cardSize(view("v:source", "demo::Source", 1), render("v:source", 1));
+    const edited = cardSize(source, render("v:source", 1));
+    // A one-row render would leave a few pixels; a source is a text field and
+    // must show a few lines of it.
+    expect(edited.height).toBeGreaterThan(drawn.height);
+    expect(edited.height).toBeGreaterThanOrEqual(190);
+    // Folding drops back to the header, editor or not.
+    expect(cardSize(source, render("v:source", 1), true).height).toBe(COLLAPSED_HEIGHT);
   });
 
   it("folds a plate to its header without changing its width", () => {
