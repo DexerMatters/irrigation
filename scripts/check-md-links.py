@@ -12,7 +12,7 @@ SKIP_DIRS = {"node_modules", "dist", "target", ".scratch", ".git"}
 
 
 def documents():
-    for base in (ROOT / "docs", ROOT / "plans", ROOT / "web"):
+    for base in (ROOT / "docs", ROOT / "plans", ROOT / "web", ROOT / "blog"):
         for path in base.rglob("*.md"):
             if SKIP_DIRS.isdisjoint(path.parts):
                 yield path

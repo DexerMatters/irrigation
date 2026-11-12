@@ -7,6 +7,13 @@
 //! * every use of such a local observes that node, so a primitive that consumes
 //!   a local still depends on the computation that produced it.
 //!
+//! A value that goes through an iterator adapter carries no node (`cloned`,
+//! `rev`, `chain`, ... are transparent so a chain is not memoized at every
+//! step). A local bound from one is therefore untracked, and a later `if let` or
+//! `match` on that local would keep the answer it saw first. Match where the
+//! read is — `match node.children().get(1) { ... }` — so the branch observes the
+//! tree unit instead of a hoisted, node-less copy.
+//!
 //! Constructs the lowering cannot preserve are rejected with a source-level
 //! diagnostic rather than silently made coarse.
 //!
@@ -216,6 +223,22 @@ impl Lowerer {
     fn shadow_pattern(&mut self, pat: &Pat) {
         for name in pattern_names(pat) {
             self.shadow(name);
+        }
+    }
+
+    /// Binds every name a pattern introduces to the node whose value it projects.
+    ///
+    /// A pattern binding is a projection of the scrutinee, so a read of the name
+    /// is a read of that value: the site that uses it must observe the scrutinee
+    /// and re-execute when the scrutinee changes. Without this, a site built from
+    /// a match-bound value has no dependency at all and freezes at its first
+    /// answer.
+    fn bind_pattern_to(&mut self, pat: &Pat, node: &Option<TokenStream>) {
+        for name in pattern_names(pat) {
+            match node {
+                Some(node) => self.bind(name, node.clone()),
+                None => self.shadow(name),
+            }
         }
     }
 
@@ -491,13 +514,16 @@ impl Lowerer {
                     let scrutinee_tokens = &scrutinee.tokens;
                     let pattern = &let_expr.pat;
                     self.scopes.push(Scope::new());
-                    self.shadow_pattern(pattern);
+                    self.bind_pattern_to(pattern, &scrutinee.node);
                     let then_block = self.block(&if_expr.then_branch);
                     self.scopes.pop();
+                    // A missing `else` is an empty block, not a unit literal:
+                    // the two have the same type, and only one of them teaches
+                    // clippy's `unused_unit` to fire inside generated code.
                     let else_branch = if_expr
                         .else_branch
                         .as_ref()
-                        .map_or_else(|| quote!(()), |(_, branch)| self.expr(branch));
+                        .map_or_else(|| quote!(), |(_, branch)| self.expr(branch));
                     let observe = observe.unwrap_or_default();
                     return Lowered::plain(quote! {
                         match #scrutinee_tokens {
@@ -531,8 +557,8 @@ impl Lowerer {
                     .map(|arm| {
                         self.scopes.push(Scope::new());
                         match &arm.pat {
-                            Pat::Guard(guard) => self.shadow_pattern(&guard.pat),
-                            other => self.shadow_pattern(other),
+                            Pat::Guard(guard) => self.bind_pattern_to(&guard.pat, &scrutinee.node),
+                            other => self.bind_pattern_to(other, &scrutinee.node),
                         }
                         let (pattern, guard) = match &arm.pat {
                             Pat::Guard(guard) => {

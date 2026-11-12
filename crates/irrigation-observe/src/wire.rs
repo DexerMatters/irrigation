@@ -297,6 +297,8 @@ pub struct FieldWire {
     pub content_version: Version,
     /// Units changed at the selected revision.
     pub changed_units: u32,
+    /// Units retracted at the selected revision.
+    pub retracted_units: u32,
 }
 
 /// One View's metadata.
@@ -322,6 +324,8 @@ pub struct ViewWire {
     pub demanded: bool,
     /// Units changed at the selected revision.
     pub changed_units: u32,
+    /// Units retracted at the selected revision.
+    pub retracted_units: u32,
     /// Whether the host exposes a text editor for this View.
     pub editable: bool,
     /// Header state.
@@ -814,6 +818,7 @@ pub fn view_wire(
         content_version: facts.content_version,
         demanded: facts.demanded,
         changed_units: facts.changed_units,
+        retracted_units: facts.retracted_units,
         editable,
         state: view_state(facts, record, revision),
     }
@@ -852,6 +857,7 @@ fn field_wire(
         elements: field.elements,
         content_version,
         changed_units,
+        retracted_units: field.retracted_units,
     }
 }
 

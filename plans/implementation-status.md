@@ -14,7 +14,7 @@
 | §8.5–§8.7 concurrency, progress, failure, cancellation | implemented: pool, suspension, single-flight, wait graph on task identities, cancellation, panic isolation, progress counters, contention | suspension and concurrency gates |
 | §9 recursion and transient parameters | implemented | recursion gates |
 | §9.5 fixed points | implemented | fixed-point gates |
-| §10 public API | implemented (`#[view]`, `#[component(root|callable)]`, optional `#[irrigation]`, `#[tree_view]`, `#[general_component]`, typed field handles, `GeneralComponent` sync/async, observers with change summaries, `Installed`, explanations) | end-to-end and authoring tests |
+| §10 public API | implemented (`#[view]`, `#[component(root|callable)]`, optional `#[irrigation]`, `#[tree_view]` with a generated `TreeLayout`, `#[general_component]`, typed field handles, `GeneralComponent` sync/async, observers with change summaries, `Installed`, explanations); the syntax layer declares its tree as a `tree_view` and maps the grammar onto it (`@tree`/`@wrap`, `Grammar::map_tree`, `ParserComponent::with_tree`) | end-to-end and authoring tests, `irrigation-syntax/tests/declared_tree.rs`, `irrigation/tests/tree_layout.rs` |
 | §11 architecture, effects, explainability | implemented (explain_node, docs/architecture.md) | explanation gate |
 | §12 correctness and cost model | exercised by gates; measured by examples | workload matrix |
 | §13 verification | randomized oracle and counterexample gates | gates file |

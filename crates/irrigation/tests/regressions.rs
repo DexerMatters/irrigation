@@ -1196,3 +1196,28 @@ fn a_list_lists_the_items_its_content_spells() {
         "the three items the content defines are listed"
     );
 }
+
+/// A host edit's cell is visible to the value question, not only to the version one.
+///
+/// `unit_changed_at` finds a host edit because it asks `current_unit_node`, which covers the edited table
+/// and the region's. `unit_value` read the region table alone, so the same unit answered a version and no
+/// value. A display hook that drew the board from the pair showed a versioned row with nothing in it.
+#[cfg(feature = "observatory")]
+#[test]
+fn a_host_edited_unit_answers_its_value() {
+    let runtime = Runtime::new();
+    seed_ledger(&runtime, &[(1, 10)]);
+
+    let unit = ledger_value(1);
+    let version = runtime
+        .unit_changed_at(&unit)
+        .expect("a revision for the edit");
+    let value = runtime
+        .unit_value(&unit)
+        .expect("the edited cell holds a value");
+    assert_eq!(
+        value.downcast_ref::<u64>().copied(),
+        Some(10),
+        "the value the edit installed (revision {version})"
+    );
+}

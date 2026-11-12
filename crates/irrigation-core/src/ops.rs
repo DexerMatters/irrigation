@@ -427,6 +427,53 @@ pub fn revision() -> Revision {
     frame::current().map_or(0, |frame| frame.runtime().revision())
 }
 
+/// The identity of the entity one emission owns.
+///
+/// A component body's expressions are lowered to computation sites, and a site is
+/// interned per `(invocation scope, expression site)`. That makes this value
+/// stable across re-executions of the same invocation, unique among invocations,
+/// and retired with the site: when the body stops reaching the expression, the
+/// site leaves the trace and the units it wrote are retracted.
+///
+/// The value is opaque. Use it as an entity id in the field being emitted into,
+/// never as a durable or cross-runtime key: like every identity the runtime
+/// allocates, it is only meaningful inside the runtime that produced it.
+///
+/// # Panics
+///
+/// Panics with an engine payload outside a computation.
+#[must_use]
+pub fn emission_id() -> u64 {
+    u64::from(frame::current_or_engine_panic("emission_id").node().0)
+}
+
+/// The shared site for `key`: one site node at the runtime root, interned by key
+/// equality.
+///
+/// Every invocation that names the same key evaluates the same node, so a value
+/// written there has one owner and one lifecycle. The node is a dependency of
+/// every caller, which is what keeps it alive while they exist and retracts its
+/// definitions once the last caller stops demanding it.
+///
+/// A caller's payload must be a function of the key: the first evaluation stores
+/// the value, and later callers validate it instead of re-writing it.
+///
+/// # Panics
+///
+/// Panics with an engine payload outside a computation.
+#[must_use]
+pub fn shared_node<K>(key: K) -> NodeId
+where
+    K: std::any::Any + std::hash::Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+{
+    let frame = frame::current_or_engine_panic("shared_node");
+    let scope =
+        frame
+            .runtime()
+            .child_scope_keyed(ScopeId::ROOT, crate::key::any_key(key), "shared entity");
+    frame.runtime().site_node(scope, SiteId(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

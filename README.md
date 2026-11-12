@@ -119,14 +119,19 @@ single cubic; a long dependency is a long smooth wire, not a detour through
 turns. The top-left minimap is a rank diagram of the whole structure, with the
 camera and the current changes marked. A plate's grip at its top-left drags it;
 a dropped plate is walked clear of its neighbours instead of overlapping them.
-Its body scrolls, selects and edits. `Overview` folds every plate to its header
+Its body scrolls, selects and edits. The board is arranged once, when its plates
+have all been measured, and then keeps that plan: a plate holds its slot and its
+box while the runtime publishes into it, and a plate arriving later takes a slot
+of its own without moving anything. `Overview` folds every plate to its header
 so the whole DAG fits the viewport, and opening a detail brings its content
-back. `Tidy` puts the board back. Reading the page never demands computation.
+back. `Fit` fills the width, `All` fits the whole pipeline, and `Tidy` lays the
+board out again. Reading the page never demands computation.
 
-Open a View's detail with a double-click; the side panel shows the same live
-content, marks and editor as the plate. A plate folds to its header with the
-chevron when the board needs room. Edit a source View from its plate or from the
-panel: type, and the change commits as you type. The host commits the text edit,
+A source View is a text field all the time: there is no Edit button and no
+"open the editor" step. Click a plate's name to open its detail; the side panel
+shows the same live content, marks and field as the plate. Click a row with a
+unit to read that unit's facts. Type in the field, on the plate or in the
+panel, and the change commits as you type. The host commits the text edit,
 the framework's lexer and parser components re-run over the delta, the runtime
 stages only the units that differ,
 and the board says what moved: the plate takes a signal bar, each changed row
@@ -141,8 +146,12 @@ Four hosts ship with the workspace: the JSON pipeline, the smaller syntax
 pipeline, the demo, and a simply typed lambda calculus whose name resolver is
 the scope-graph resolution calculus. All four install the same framework
 components; only the source text is editable, lexing and parsing are components
-on the board, and the raw AST is visible. The STLC host's scope graph is a
-`Graph` View, so the board paints it as one. Its notes, the scope-graph
+on the board, and the raw AST is visible. Three of them also declare their typed
+tree as a `#[tree_view]` and map the grammar onto it (`@tree`/`@wrap`), so the
+board draws that tree with real variant names next to the raw parse. The STLC host's scope graph is a
+`Graph` View, so the board paints it as one, and it carries a fourth stage
+that lowers the typed tree to a MIPS listing — one View row per instruction,
+checked against the evaluator by running the listing in a test simulator. Its notes, the scope-graph
 literature it follows, and the incremental experiments it encodes live in
 [`crates/irrigation/examples/stlc_scope_graphs/README.md`](crates/irrigation/examples/stlc_scope_graphs/README.md).
 The hosts' commands, the page's editing workflow, and the frontend's own notes
@@ -182,6 +191,9 @@ and [`plans/runtime-visualization-status.md`](plans/runtime-visualization-status
 | Deep recursion (10,000 levels) | implemented with large worker stacks |
 | Graph View family (topology, payloads, adjacency, node deletion) | implemented |
 | Tree View family and `#[tree_view]` enum-group macro | implemented |
+| `TreeLayout`: a declared tree described as data (`tree_view` reflection) | implemented |
+| Declared ASTs: `@tree`/`@wrap` in the grammar, `ParserComponent::with_tree` publishing a `tree_view` from the parse | implemented (`Grammar::map_tree` reports every mismatch) |
+| Generic-tree readers: `rule_id`, `token`, `text`, `value`, `integer`, `boolean`, `semantic`, `range_in` | implemented (`AstMeta.fields` removed: nothing read it) |
 | `GeneralComponent` (retained state, change batches, atomic state/output commit) | implemented |
 | Incremental equi-join over map Views | implemented (`EquiJoin`, per-key deltas) |
 | Balanced lawful reductions (`AggSeq` with cached aggregates) | implemented |
@@ -235,6 +247,8 @@ cargo run --release --example reduction -p irrigation
 cargo run --release --example workloads -p irrigation
 cargo run --release --example parallel -p irrigation
 cargo run --example name_resolver -p irrigation   # AST tree view -> symbols + diagnostics
+cargo test -p irrigation-syntax --test declared_tree   # grammar -> declared tree
+cargo test -p irrigation --test tree_layout            # the declaration as data
 cargo test --example stlc_scope_graphs -p irrigation --features observatory
 cargo run --example stlc_scope_graphs -p irrigation --features observatory  # STLC + scope graphs on the page
 ```

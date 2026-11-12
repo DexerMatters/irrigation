@@ -1,8 +1,9 @@
 //! The surface language, as one grammar the syntax pipeline compiles.
 //!
-//! The start production carries an `@ast` action so the parser publishes a
-//! `Program` root; every other rule is a named node the lowering stage can
-//! recognise by position.
+//! Every production that builds a typed node says so (`@tree`), and every child
+//! is named (`name: ident`, `body: Term`): those names are the only link between
+//! this grammar and the tree declared in [`super::syntax`]. A rule whose node
+//! adds no meaning (`Parens`, `ParenType`) is declared a wrapper instead.
 
 use irrigation_syntax::Grammar;
 
@@ -39,20 +40,23 @@ pub fn grammar() -> Grammar {
                 }
             }
             parser {
-                Program = Term @ast(Program { term: 0 });
+                Program = term: Term @tree(Document::Program);
                 Term = Lam | Let | If | App;
-                Lam = "\\" ident ":" Type "." Term;
-                Let = "let" ident "=" Term "in" Term;
-                If = "if" Term "then" Term "else" Term;
-                App = App Atom | Atom;
+                Lam = "\\" name: ident ":" ty: Type "." body: Term @tree(Term::Lam);
+                Let = "let" name: ident "=" value: Term "in" body: Term @tree(Term::Let);
+                If = "if" cond: Term "then" yes: Term "else" no: Term @tree(Term::If);
+                App = func: App arg: Atom @tree(Term::App) | Atom;
                 Atom = Variable | Integer | Boolean | Parens;
-                Variable = ident;
-                Integer = number;
-                Boolean = "true" | "false";
-                Parens = "(" Term ")";
+                Variable = name: ident @tree(Term::Var);
+                Integer = int: number @tree(Term::Int);
+                Boolean = flag: "true" @tree(Term::Bool) | flag: "false" @tree(Term::Bool);
+                Parens = "(" inner: Term ")" @wrap(inner);
                 Type = TypeArrow | TypeAtom;
-                TypeArrow = TypeAtom "->" Type;
-                TypeAtom = "Int" | "Bool" | "(" Type ")";
+                TypeArrow = domain: TypeAtom "->" codomain: Type @tree(Ty::Arrow);
+                TypeAtom = IntType | BoolType | ParenType;
+                IntType = "Int" @tree(Ty::Int);
+                BoolType = "Bool" @tree(Ty::Bool);
+                ParenType = "(" inner: Type ")" @wrap(inner);
             }
         }
         "#,

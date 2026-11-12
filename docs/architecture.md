@@ -322,6 +322,38 @@ fields and children updated in place; a changed variant is rebuilt. Replacing a
 node with an identical document therefore preserves every descendant id, and a
 field edit on a leaf keeps that leaf's id.
 
+## Declared trees and grammar mapping
+
+A `#[tree_view]` declaration is a typed tree: refs, discriminants, per-field
+accessors, an editor, and — from the same expansion — a `TreeLayout` describing
+the types, variants, leaf slots with their payload kinds, and child slots with
+their cardinality and target type. The layout is pure data: a consumer that has
+no accessors for the tree can still publish or walk it, which is what makes it
+useful outside the crate that declared it.
+
+The syntax pipeline uses that description from both ends. A grammar names the
+variant each production builds (`@tree(Term::Lam)`), the field each RHS position
+fills (`body: Term`), and the rules that add no meaning (`@wrap(inner)`).
+`Grammar::map_tree(&TreeLayout)` resolves the names into slots once and reports
+every mismatch — unknown type, unknown variant, a field the variant does not
+declare, a declared field nothing feeds, a position with the wrong cardinality or
+kind, a child rule that builds no node, the start rule not building the root
+type. `ParserComponent::with_tree::<S>` publishes `S` from the same parse records
+as the raw `AstTree`, with the same node identities, so the typed tree is stable
+exactly while the parse is, and a structural edit rebuilds only the changed
+nodes.
+
+Two consequences are worth stating. A wrapper rule publishes no typed node: its
+payload stands in for it, which is why parentheses never reach a semantic stage
+and never re-key the term they wrap. And a rule the grammar does not map produces
+no typed node, so a recovery or unmapped production is absent from the typed tree
+while the raw parse keeps it for the board and the diagnostics.
+
+The published AST metadata is only what has a reader: the raw tree's nodes,
+spans, token identities, literal values, wrappers, rules, and diagnostics. Named
+fields are not published per node — they are compiled into the tree the grammar
+maps onto.
+
 ## Component lowering
 
 - Every value-producing expression becomes `irrigation::eval(site, || ...)`, keyed

@@ -29,8 +29,8 @@ use crate::lexer::{TokenFlags, TokenId, TokenKindId};
 use crate::text::{TextAnchor, TextRange, TextSnapshot};
 
 use super::ast::{
-    AstNodeRecord, ErrorCategoryId, ast_rule_id, ast_token_id, error_id, literal_value, mix,
-    rule_id,
+    AstNodeRecord, ErrorCategoryId, RuleId, ast_node_id, ast_root_id, ast_short_id, ast_token_id,
+    error_id, literal_value, mix, rule_id,
 };
 use super::grammar::{Grammar, NonterminalId, Production, TerminalId};
 use super::lr::Action;
@@ -297,12 +297,73 @@ pub struct Build {
     by_id: FxHashMap<u64, usize>,
     spans: FxHashMap<u64, SpanInfo>,
     spliced: FxHashSet<u64>,
+    /// Identities the parse may not mint: adopted nodes and the root's reserved
+    /// constant. A short identity colliding with one of these falls back to the
+    /// extent, which is unique by construction.
+    reserved: FxHashSet<u64>,
 }
 
 impl Default for Build {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// One node's extent, recomputed from its children.
+///
+/// Leaves keep their recorded span; a rule node is the union of its children.
+/// A cycle or a missing child yields `None`, and the caller keeps the previous
+/// spans rather than publishing a guess.
+fn node_extent(
+    id: u64,
+    added: &[AstNodeRecord],
+    by_id: &FxHashMap<u64, usize>,
+    extents: &mut FxHashMap<u64, SpanInfo>,
+    visiting: &mut FxHashSet<u64>,
+) -> Option<SpanInfo> {
+    if let Some(span) = extents.get(&id) {
+        if span.end_index > span.first_index || span.first_token.is_some() {
+            // A leaf's span is final. A rule node may still need the child
+            // walk, so only trust spans whose record is a leaf.
+            let is_leaf = by_id.get(&id).is_none_or(|index| {
+                let record = &added[*index];
+                record.token.is_some() || record.category.is_some() || record.children.is_empty()
+            });
+            if is_leaf {
+                return Some(*span);
+            }
+        }
+    }
+    let index = *by_id.get(&id)?;
+    if !visiting.insert(id) {
+        return None;
+    }
+    let record = &added[index];
+    let mut first = usize::MAX;
+    let mut end = 0usize;
+    let mut first_token = None;
+    let mut last_token = None;
+    for child in &record.children {
+        let child = node_extent(*child, added, by_id, extents, visiting)?;
+        first = first.min(child.first_index);
+        end = end.max(child.end_index);
+        if first_token.is_none() {
+            first_token = child.first_token;
+        }
+        if child.last_token.is_some() {
+            last_token = child.last_token;
+        }
+    }
+    visiting.remove(&id);
+    let mut span = extents.get(&id).copied().unwrap_or_default();
+    if first != usize::MAX {
+        span.first_index = first;
+        span.end_index = end;
+        span.first_token = first_token;
+        span.last_token = last_token;
+    }
+    extents.insert(id, span);
+    Some(span)
 }
 
 impl Build {
@@ -312,6 +373,7 @@ impl Build {
             by_id: FxHashMap::default(),
             spans: FxHashMap::default(),
             spliced: FxHashSet::default(),
+            reserved: FxHashSet::default(),
         }
     }
 
@@ -371,6 +433,71 @@ impl Build {
         id
     }
 
+    /// Gives the accepted root its stable identity.
+    ///
+    /// The root is one node per tree, so its extent must not be its name. A
+    /// root that was adopted from a previous parse already carries the stable
+    /// identity; one this parse built is retagged here. Retagging rewrites only
+    /// the record's own identity: no child names its parent, so no other record
+    /// changes.
+    fn stable_root(&mut self, root: u64) -> u64 {
+        let Some(index) = self.by_id.get(&root).copied() else {
+            return root;
+        };
+        let stable = ast_root_id();
+        if stable == root {
+            return root;
+        }
+        if self.by_id.contains_key(&stable) {
+            // A child happens to hash to the root's reserved identity. Keep the
+            // extent identity rather than publishing a self-referential tree;
+            // this is a hash collision, not a structural fact.
+            return root;
+        }
+        self.added[index].id = stable;
+        self.by_id.remove(&root);
+        self.by_id.insert(stable, index);
+        if let Some(span) = self.spans.remove(&root) {
+            self.spans.insert(stable, span);
+        }
+        if self.spliced.remove(&root) {
+            self.spliced.insert(stable);
+        }
+        stable
+    }
+
+    /// Recomputes every rebuilt node's extent from its children.
+    ///
+    /// Recovery can attach a node to an ancestor after that ancestor's extent
+    /// was computed, and a reduction can be retried with a larger child run.
+    /// The identity is allowed to keep its occurrence, but the extent must
+    /// describe the published tree: a root whose children reach past its own
+    /// span is a tree no reader can trust (and the incremental acceptance check
+    /// correctly rejects it). This pass walks the final child lists once and
+    /// rewrites the spans from the leaves up.
+    fn normalize(&mut self, root: u64, tokens: &[ParseToken]) {
+        let by_id: FxHashMap<u64, usize> =
+            self.by_id.iter().map(|(id, index)| (*id, *index)).collect();
+        let mut extents: FxHashMap<u64, SpanInfo> = self.spans.clone();
+        let mut visiting: FxHashSet<u64> = FxHashSet::default();
+        if node_extent(root, &self.added, &by_id, &mut extents, &mut visiting).is_none() {
+            return;
+        }
+        for (id, span) in &extents {
+            if let Some(index) = by_id.get(id).copied() {
+                let record = &mut self.added[index];
+                if let (Some(first), Some(end)) = (
+                    tokens.get(span.first_index),
+                    tokens.get(span.end_index.saturating_sub(1)),
+                ) {
+                    record.span_start = first.range.start;
+                    record.span_end = end.range.end;
+                }
+            }
+        }
+        self.spans = extents;
+    }
+
     /// Takes the produced records and their token spans.
     #[must_use]
     pub fn into_parts(self) -> (Vec<AstNodeRecord>, FxHashMap<u64, SpanInfo>) {
@@ -405,6 +532,32 @@ impl Build {
     /// Marks one identity as adopted.
     fn mark_spliced(&mut self, id: u64) {
         self.spliced.insert(id);
+        self.reserved.insert(id);
+    }
+
+    /// Chooses a rule node's identity.
+    ///
+    /// The short identity names the rule occurrence by its first token. It is
+    /// used when no other live node already has it; the extent is the fallback
+    /// for nested same-start nodes (`App` chains) and zero-width reductions.
+    fn node_id(
+        &self,
+        rule: RuleId,
+        first: Option<TokenId>,
+        last: Option<TokenId>,
+        prev: Option<TokenId>,
+        next: Option<TokenId>,
+    ) -> u64 {
+        if let Some(first) = first {
+            let short = ast_short_id(rule, first);
+            if short != ast_root_id()
+                && !self.by_id.contains_key(&short)
+                && !self.reserved.contains(&short)
+            {
+                return short;
+            }
+        }
+        ast_node_id(rule, first, last, prev, next)
     }
 
     /// Number of records produced.
@@ -590,10 +743,21 @@ impl AstParser {
                         }
                     }
                 }
-                let terminal = tokens
-                    .get(config.index)
-                    .and_then(|token| self.terminal_by_kind.get(&token.kind).copied())
-                    .unwrap_or_else(|| self.grammar.eof_terminal());
+                let terminal = match tokens.get(config.index) {
+                    Some(token) => match self.terminal_by_kind.get(&token.kind).copied() {
+                        Some(terminal) => terminal,
+                        // A token the grammar has no terminal for (a lexer error
+                        // token) is not EOF. Treating it as EOF let the parser
+                        // accept a prefix of the document and publish a tree
+                        // whose root did not cover its own tokens. Skip it as a
+                        // recovery leaf and keep parsing the rest.
+                        None => {
+                            self.skip_unmapped(&config, &mut configs, &mut ctx);
+                            break;
+                        }
+                    },
+                    None => self.grammar.eof_terminal(),
+                };
                 let actions = self.grammar.table().actions(state, terminal);
                 if actions.is_empty() {
                     // No action for this lookahead. A reduction that is legal for
@@ -626,6 +790,31 @@ impl AstParser {
                     .any(|action| matches!(action, Action::Accept))
                 {
                     let root = accept(&mut config, &mut ctx);
+                    if std::env::var_os("IRRIGATION_PARSER_DEBUG").is_some() {
+                        let record = config
+                            .build
+                            .records()
+                            .iter()
+                            .find(|record| record.id == root);
+                        eprintln!(
+                            "[parser] accept at index {} of {} frames={} pending={} token={:?} root={} span={:?} record={:?}",
+                            config.index,
+                            tokens.len(),
+                            config.frames.len(),
+                            config.pending.len(),
+                            tokens.get(config.index).map(|token| token.text.to_string()),
+                            root,
+                            config
+                                .build
+                                .span(root)
+                                .map(|span| (span.first(), span.end())),
+                            record.map(|record| (
+                                record.kind.as_str(),
+                                record.children.len(),
+                                record.production.is_some()
+                            ))
+                        );
+                    }
                     accepted.push(config.into_accepted(root));
                     break;
                 }
@@ -672,12 +861,14 @@ impl AstParser {
                     .then_with(|| right.index.cmp(&left.index))
             });
             let accepted = chosen?;
+            let mut build = accepted.build;
+            build.normalize(accepted.root, tokens);
             (
                 accepted.root,
                 accepted.error_cost,
                 accepted.splice_start,
                 accepted.spliced,
-                accepted.build,
+                build,
                 accepted.diagnostics,
             )
         };
@@ -811,20 +1002,28 @@ impl AstParser {
         // Invisible wrappers (`$groupN`, `$repeatN`) contribute their children to
         // the parent instead of a node of their own: a repetition is a list, not
         // a chain that every later edit has to rebuild.
+        //
+        // The run each RHS position contributed is recorded only when something
+        // downstream can ask for it: a declared field, a `@wrap`, or a `@tree`
+        // mapping. A one-element range is a single child; a repetition's range is
+        // the whole run, which a flat child list cannot recover on its own.
+        let wants_ranges =
+            !production.fields.is_empty() || production.tree.is_some() || production.wrap.is_some();
         let mut child_ids: Vec<u64> = Vec::with_capacity(children.len());
-        let mut positions: Vec<Option<u64>> = Vec::with_capacity(children.len());
+        let mut ranges: Vec<std::ops::Range<usize>> = if wants_ranges {
+            Vec::with_capacity(children.len())
+        } else {
+            Vec::new()
+        };
         for child in &children {
+            let start = child_ids.len();
             if child.ast == 0 {
                 child_ids.extend(child.items.iter().copied());
-                positions.push(
-                    child
-                        .items
-                        .get(child.items.len().saturating_sub(1))
-                        .copied(),
-                );
             } else {
                 child_ids.push(child.ast);
-                positions.push(Some(child.ast));
+            }
+            if wants_ranges {
+                ranges.push(start..child_ids.len());
             }
         }
         let kind = production
@@ -838,20 +1037,15 @@ impl AstParser {
         let first_token = children.iter().find_map(|child| child.first_token);
         let last_token = children.iter().rev().find_map(|child| child.last_token);
         let dynamic = production.dynamic + children.iter().map(|child| child.dynamic).sum::<i32>();
-        let fields = production
-            .ast_action
-            .as_ref()
-            .map(|action| {
-                action
-                    .fields
-                    .iter()
-                    .filter_map(|(name, position)| {
-                        let child = positions.get(*position).copied().flatten()?;
-                        Some((name.clone(), child))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let fields: Vec<_> = if wants_ranges {
+            production
+                .fields
+                .iter()
+                .filter_map(|(field, position)| Some((*field, ranges.get(*position)?.clone())))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let goto = self
             .grammar
             .table()
@@ -871,7 +1065,7 @@ impl AstParser {
             config.states.push(goto);
             return;
         }
-        let id = ast_rule_id(
+        let id = config.build.node_id(
             rule,
             first_token,
             last_token,
@@ -900,6 +1094,7 @@ impl AstParser {
                 id,
                 kind,
                 rule,
+                production: Some(production.id),
                 span_start: range.start,
                 span_end: range.end,
                 children: child_ids,
@@ -935,6 +1130,67 @@ impl AstParser {
         config.states.push(goto);
     }
 
+    /// Skips one token the grammar has no terminal for.
+    ///
+    /// A lexer error token is a leaf in the AST, not the end of the document.
+    /// The parser used to fall back to EOF for an unmapped kind, which let the
+    /// LR table accept a prefix while the rest of the stream was still there;
+    /// the full-parse path published that prefix as the root. This is the skip
+    /// alternative of [`Self::recover`] alone, because the other alternatives
+    /// (close, insert) are keyed on a real lookahead.
+    fn skip_unmapped(&self, config: &Config, configs: &mut VecDeque<Config>, ctx: &mut Ctx<'_>) {
+        if config.error_cost >= self.options.max_error_cost {
+            return;
+        }
+        let Some(token) = ctx.tokens.get(config.index) else {
+            return;
+        };
+        let index = config.index;
+        let range = token.range;
+        let mut next = config.clone();
+        let id = next.build.push(
+            AstNodeRecord {
+                id: error_id(ErrorCategoryId::RECOVERY, [token.id.0]),
+                kind: String::from("$error"),
+                rule: RuleId::default(),
+                production: None,
+                span_start: token.range.start,
+                span_end: token.range.end,
+                children: Vec::new(),
+                token: Some(token.id),
+                text: Some(std::sync::Arc::clone(&token.text)),
+                category: Some(ErrorCategoryId::RECOVERY),
+                ignored: token.flags.contains(TokenFlags::ERROR),
+                value: None,
+                fields: Vec::new(),
+            },
+            index,
+            index + 1,
+            Some(token.id),
+            Some(token.id),
+            true,
+            NodeAttrs::default(),
+        );
+        next.pending.push(StackFrame {
+            ast: id,
+            first_index: index,
+            end_index: index + 1,
+            first_token: Some(token.id),
+            last_token: Some(token.id),
+            range,
+            dynamic: 0,
+            items: PSeq::new(),
+        });
+        next.index += 1;
+        next.error_cost += 1;
+        next.diagnostics.push(Diagnostic::error(
+            "parse.recover",
+            format!("skipped unexpected token `{}`", token.text),
+            range,
+        ));
+        configs.push_back(next);
+    }
+
     /// Explores recovery for a configuration with no table action.
     ///
     /// Each alternative forks the configuration before it builds its recovery
@@ -961,7 +1217,8 @@ impl AstParser {
                 AstNodeRecord {
                     id: error_id(ErrorCategoryId::RECOVERY, [token.id.0]),
                     kind: String::from("$error"),
-                    rule: 0,
+                    rule: RuleId::default(),
+                    production: None,
                     span_start: token.range.start,
                     span_end: token.range.end,
                     children: Vec::new(),
@@ -1026,7 +1283,8 @@ impl AstParser {
                 AstNodeRecord {
                     id: error_id(ErrorCategoryId::RECOVERY, child_ids.iter().copied()),
                     kind: String::from("$error"),
-                    rule: 0,
+                    rule: RuleId::default(),
+                    production: None,
                     span_start: range.start,
                     span_end: range.end,
                     children: child_ids,
@@ -1116,7 +1374,8 @@ impl AstParser {
                 AstNodeRecord {
                     id,
                     kind: String::from("$missing"),
-                    rule: 0,
+                    rule: RuleId::default(),
+                    production: None,
                     span_start: range.start,
                     span_end: range.end,
                     children: Vec::new(),
@@ -1179,7 +1438,7 @@ fn accept(config: &mut Config, ctx: &mut Ctx<'_>) -> u64 {
         // them to. Fall through and synthesize the `$root` node instead of
         // publishing the sentinel as the tree's root.
         if frame.ast != 0 {
-            return frame.ast;
+            return config.build.stable_root(frame.ast);
         }
     }
     let (first_index, end_index, range) = span_of_config(&frames, config.index, ctx);
@@ -1192,18 +1451,19 @@ fn accept(config: &mut Config, ctx: &mut Ctx<'_>) -> u64 {
         }
     }
     let rule = rule_id("$root");
-    let id = ast_rule_id(
+    let id = ast_node_id(
         rule,
         frames.first().and_then(|frame| frame.first_token),
         frames.last().and_then(|frame| frame.last_token),
         None,
         None,
     );
-    config.build.push(
+    let id = config.build.push(
         AstNodeRecord {
             id,
             kind: String::from("$root"),
             rule,
+            production: None,
             span_start: range.start,
             span_end: range.end,
             children: child_ids,
@@ -1220,7 +1480,8 @@ fn accept(config: &mut Config, ctx: &mut Ctx<'_>) -> u64 {
         frames.last().and_then(|frame| frame.last_token),
         false,
         NodeAttrs::default(),
-    )
+    );
+    config.build.stable_root(id)
 }
 
 /// Builds a recovery tree covering the whole token stream.
@@ -1238,12 +1499,13 @@ fn salvage(tokens: &[ParseToken], text: &TextSnapshot, build: &mut Build) -> u64
         .last()
         .map_or_else(|| end_anchor(text), |token| token.range.end);
     let rule = rule_id("$error");
-    let id = ast_rule_id(rule, first_token, last_token, None, None);
+    let id = ast_node_id(rule, first_token, last_token, None, None);
     build.push(
         AstNodeRecord {
             id,
             kind: String::from("$error"),
             rule,
+            production: None,
             span_start: start,
             span_end: end,
             children,
@@ -1283,6 +1545,7 @@ pub(crate) fn salvage_result(
 ) -> (u64, Build, Vec<Diagnostic>) {
     let mut build = Build::new();
     let root = salvage(tokens, text, &mut build);
+    let root = build.stable_root(root);
     // The diagnostic marks the region that could not be structured -- the same span
     // the recovery node covers. It used to be an empty range at the end of the
     // document, which pointed at the one place the failure is *not*: an unparsable
@@ -1319,7 +1582,8 @@ fn token_record(token: &ParseToken, index: usize, state: usize, build: &mut Buil
         AstNodeRecord {
             id,
             kind: String::from(kind),
-            rule: 0,
+            rule: RuleId::default(),
+            production: None,
             span_start: token.range.start,
             span_end: token.range.end,
             children: Vec::new(),

@@ -583,11 +583,14 @@ at the new position. `delete-member` relexes 63 bytes, `paste` 513, `rename-key`
   document. It now keeps everything outside the window, replaces the ones inside
   it, and moves a checkpoint that sits after a same-width change by the token
   delta.
-* **Divergence is by identity.** It compared kind and text, so tokens the lexer
-  re-identified (new id, same lexeme) did not move the first difference; the tree
-  kept leaves the stream no longer had and the coverage guard had to rebuild
-  everything. Comparing token ids fixes it: `delete-member` now re-parses 22
-  tokens instead of 18 because those three re-identified leaves must be rebuilt.
+* **Divergence is by identity *and* content.** Comparing only kind and text let
+  a token the lexer re-identified (new id, same lexeme) keep a leaf the stream no
+  longer had, so the coverage guard rebuilt everything. Comparing ids fixed that
+  (`delete-member` re-parses 22 tokens instead of 18 because those re-identified
+  leaves must be rebuilt). Since tokens now keep their id across an in-place
+  re-spelling (`identity-plan.md`), the content half is required again: same id,
+  new text must still rebuild the leaf, or its published value would be stale.
+  The two checks are complementary, and `identity.rs` gates both directions.
 * **Checkpoints are snapshots, not copies.** A transparent frame's `items` is a
   persistent `PSeq`, so recording a checkpoint costs O(log n) instead of copying
   the children accumulated so far. That is what makes `checkpoint_stride: 1`

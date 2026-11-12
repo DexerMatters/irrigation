@@ -258,6 +258,24 @@ impl Inner {
             .map(|unit| crate::state::unit_version_of(&state, unit))
             .collect()
     }
+
+    /// Whether each unit's cell was retracted.
+    ///
+    /// A retracted cell keeps its node and version so a subscriber can observe
+    /// the removal; the board must render that row as removed rather than as a
+    /// content change. `unit_versions` cannot say this because it also serves
+    /// the subscription path.
+    #[must_use]
+    pub fn unit_retired(&self, units: &[UnitKey]) -> Vec<bool> {
+        let state = self.lock();
+        units
+            .iter()
+            .map(|unit| {
+                crate::state::current_unit_node(&state, unit)
+                    .is_some_and(|node| state.node(node).retired_at != 0)
+            })
+            .collect()
+    }
     /// One field's entities in the View's own order, for a generic drawing.
     ///
     /// A list follows its sequence, a set and a map follow their key table
@@ -494,6 +512,7 @@ impl Inner {
                 let descriptor = region.descriptor;
                 let content_version = state.node(region.content_node).changed_at;
                 let mut changed_units = 0;
+                let mut retracted_units = 0;
                 let fields = descriptor
                     .fields
                     .iter()
@@ -504,6 +523,7 @@ impl Inner {
                         // in the region; both count toward the field.
                         let mut units = 0;
                         let mut changed = 0;
+                        let mut retracted = 0;
                         let mut seen: std::collections::HashSet<irrigation_core::ids::NodeId> =
                             std::collections::HashSet::new();
                         let edited_nodes = edited
@@ -524,6 +544,32 @@ impl Inner {
                                 continue;
                             }
                             let record = &state.nodes[node.index()];
+                            // A retracted cell keeps its node so subscribers
+                            // can compare versions, but it is not a live unit:
+                            // counting it here would make a field's row count
+                            // grow with its history and would report the same
+                            // removal as a content change on every revision.
+                            if record.retired_at != 0 {
+                                if record.retired_at == revision {
+                                    retracted += 1;
+                                }
+                                continue;
+                            }
+                            // A false membership is a removal, not a live row
+                            // and not a content change. Counting it as changed
+                            // made a deletion look like an update; counting it
+                            // as an entity kept the field's row count growing
+                            // with its history.
+                            if let Some(unit) = record.unit.as_ref()
+                                && unit.kind == irrigation_core::descriptor::UnitKind::Membership
+                                && unit.entity.is_some()
+                                && membership_of(&state, node) == Some(false)
+                            {
+                                if record.changed_at == revision {
+                                    retracted += 1;
+                                }
+                                continue;
+                            }
                             match record.unit.as_ref() {
                                 Some(unit) if unit.entity.is_some() => {
                                     let key = unit
@@ -549,6 +595,7 @@ impl Inner {
                             units = entities.len();
                         }
                         changed_units += changed;
+                        retracted_units += retracted;
                         crate::observe::FieldFacts {
                             field: id,
                             name: field.name,
@@ -558,6 +605,7 @@ impl Inner {
                             elements: (descriptor.content.len)(&region.content, id),
                             content_version,
                             changed_units: changed,
+                            retracted_units: retracted,
                         }
                     })
                     .collect();
@@ -640,6 +688,7 @@ impl Inner {
                         record.suspect_at > record.verified_at
                     },
                     changed_units,
+                    retracted_units,
                 }
             })
             .collect()

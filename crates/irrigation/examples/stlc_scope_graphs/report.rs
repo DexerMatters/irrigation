@@ -10,6 +10,18 @@ use std::fmt;
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Line(pub String);
 
+impl From<&str> for Line {
+    fn from(text: &str) -> Self {
+        Self(text.to_string())
+    }
+}
+
+impl From<String> for Line {
+    fn from(text: String) -> Self {
+        Self(text)
+    }
+}
+
 impl fmt::Debug for Line {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)

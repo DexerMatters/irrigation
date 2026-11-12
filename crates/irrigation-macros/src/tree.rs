@@ -17,6 +17,7 @@ use syn::spanned::Spanned;
 use syn::{Fields, GenericArgument, Ident, Item, ItemMod, PathArguments, Result, Type};
 
 /// A field of one enum variant.
+#[derive(Clone)]
 enum FieldShape {
     Leaf(Box<Type>),
     Child(String),
@@ -24,6 +25,7 @@ enum FieldShape {
     VecChild(String),
 }
 
+#[derive(Clone)]
 struct FieldSpec {
     ident: Ident,
     method: Ident,
@@ -247,6 +249,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
         });
 
         let mut accessors = Vec::new();
+        let mut projections: Vec<(Ident, Vec<Projection>)> = Vec::new();
         let mut predicates = Vec::new();
         let mut build_arms = Vec::new();
         for (variant_index, variant) in spec.variants.iter().enumerate() {
@@ -312,33 +315,48 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             });
 
             for field in &variant.fields {
-                let method = field.method.clone();
-                let leaf_slot = field.leaf_slot;
-                let child_slot = field.child_slot;
-                let accessor = match &field.shape {
-                    FieldShape::Leaf(ty) => {
-                        let extract = leaf_extract(ty)?;
+                push_projection(&mut projections, field, variant_ident);
+            }
+        }
+
+        // One accessor per field name per enum. Two variants may name the same
+        // field when they mean the same thing -- `body` in every binder, `text`
+        // in every literal -- and the accessor dispatches on the discriminant.
+        // A name is reused only when the type and the read are identical, so a
+        // `body: Expr` and a `body: String` stay two questions and two errors.
+        for (method, specs) in &projections {
+            let shape = specs[0].shape.clone();
+            let accessor = match shape {
+                FieldShape::Leaf(ty) => {
+                    let extract = leaf_extract(&ty)?;
+                    let arms = specs.iter().map(|spec| {
+                        let variant = &spec.kind_variant;
+                        let slot = spec.leaf_slot;
                         quote! {
-                            /// Reads this projection, observing only its unit.
-                            #[must_use]
-                            pub fn #method(&self) -> Option<#ty> {
-                                if self.kind() != Some(#kind_ident::#variant_ident) {
-                                    return None;
-                                }
-                                self.inner.field(#leaf_slot).and_then(|value| #extract)
+                            #kind_ident::#variant => {
+                                self.inner.field(#slot).and_then(|value| #extract)
+                            }
+                        }
+                    });
+                    quote! {
+                        /// Reads this projection, observing only its unit.
+                        #[must_use]
+                        pub fn #method(&self) -> Option<#ty> {
+                            match self.kind()? {
+                                #( #arms, )*
+                                _ => None,
                             }
                         }
                     }
-                    FieldShape::Child(enum_name) => {
-                        let child_ref = format_ident!("{}Ref", enum_name);
+                }
+                FieldShape::Child(enum_name) => {
+                    let child_ref = format_ident!("{}Ref", enum_name);
+                    let arms = specs.iter().map(|spec| {
+                        let variant = &spec.kind_variant;
+                        let slot = spec.child_slot;
                         quote! {
-                            /// Reads this child projection.
-                            #[must_use]
-                            pub fn #method(&self) -> Option<#child_ref> {
-                                if self.kind() != Some(#kind_ident::#variant_ident) {
-                                    return None;
-                                }
-                                match self.inner.child_slot(#child_slot) {
+                            #kind_ident::#variant => {
+                                match self.inner.child_slot(#slot) {
                                     irrigation::ChildSlot::One(id) => {
                                         Some(#child_ref::from_tree(self.inner.child(id)))
                                     }
@@ -346,17 +364,26 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                                 }
                             }
                         }
+                    });
+                    quote! {
+                        /// Reads this child projection.
+                        #[must_use]
+                        pub fn #method(&self) -> Option<#child_ref> {
+                            match self.kind()? {
+                                #( #arms, )*
+                                _ => None,
+                            }
+                        }
                     }
-                    FieldShape::OptionalChild(enum_name) => {
-                        let child_ref = format_ident!("{}Ref", enum_name);
+                }
+                FieldShape::OptionalChild(enum_name) => {
+                    let child_ref = format_ident!("{}Ref", enum_name);
+                    let arms = specs.iter().map(|spec| {
+                        let variant = &spec.kind_variant;
+                        let slot = spec.child_slot;
                         quote! {
-                            /// Reads this optional child projection.
-                            #[must_use]
-                            pub fn #method(&self) -> Option<#child_ref> {
-                                if self.kind() != Some(#kind_ident::#variant_ident) {
-                                    return None;
-                                }
-                                match self.inner.child_slot(#child_slot) {
+                            #kind_ident::#variant => {
+                                match self.inner.child_slot(#slot) {
                                     irrigation::ChildSlot::Optional(Some(id)) => {
                                         Some(#child_ref::from_tree(self.inner.child(id)))
                                     }
@@ -364,28 +391,49 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                                 }
                             }
                         }
-                    }
-                    FieldShape::VecChild(enum_name) => {
-                        let child_ref = format_ident!("{}Ref", enum_name);
-                        quote! {
-                            /// Reads this child list projection.
-                            #[must_use]
-                            pub fn #method(&self) -> Vec<#child_ref> {
-                                if self.kind() != Some(#kind_ident::#variant_ident) {
-                                    return Vec::new();
-                                }
-                                self.inner
-                                    .child_slot(#child_slot)
-                                    .ids()
-                                    .into_iter()
-                                    .map(|id| #child_ref::from_tree(self.inner.child(id)))
-                                    .collect()
+                    });
+                    quote! {
+                        /// Reads this optional child projection.
+                        #[must_use]
+                        pub fn #method(&self) -> Option<#child_ref> {
+                            match self.kind()? {
+                                #( #arms, )*
+                                _ => None,
                             }
                         }
                     }
-                };
-                accessors.push(accessor);
-            }
+                }
+                FieldShape::VecChild(enum_name) => {
+                    let child_ref = format_ident!("{}Ref", enum_name);
+                    let arms = specs.iter().map(|spec| {
+                        let variant = &spec.kind_variant;
+                        let slot = spec.child_slot;
+                        quote! {
+                            #kind_ident::#variant => self
+                                .inner
+                                .child_slot(#slot)
+                                .ids()
+                                .into_iter()
+                                .map(|id| #child_ref::from_tree(self.inner.child(id)))
+                                .collect(),
+                        }
+                    });
+                    quote! {
+                        /// Reads this child list projection.
+                        #[must_use]
+                        pub fn #method(&self) -> Vec<#child_ref> {
+                            let Some(kind) = self.kind() else {
+                                return Vec::new();
+                            };
+                            match kind {
+                                #( #arms )*
+                                _ => Vec::new(),
+                            }
+                        }
+                    }
+                }
+            };
+            accessors.push(accessor);
         }
 
         ref_impls.push(quote! {
@@ -439,6 +487,90 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let root_ident = root_spec.ident.clone();
     let root_ref = format_ident!("{}Ref", root_spec.ident);
     let root_build = format_ident!("build_{}", snake_case(&root_spec.ident.to_string()));
+
+    // ---------------------------------------------------------------- layout
+    //
+    // The declaration as data, for code that builds or walks the tree without
+    // naming its accessors. It is generated from the same specs the accessors
+    // are, so the two cannot disagree; a test pins that.
+    let index_by_name: HashMap<String, u16> = specs
+        .iter()
+        .map(|spec| (spec.ident.to_string(), spec.type_index))
+        .collect();
+    let mut type_layouts = Vec::new();
+    for spec in &specs {
+        let type_name = spec.ident.to_string();
+        let mut variant_layouts = Vec::new();
+        for variant in &spec.variants {
+            let variant_name = variant.ident.to_string();
+            let mut leaves = Vec::new();
+            let mut children = Vec::new();
+            for field in &variant.fields {
+                let name = field.method.to_string();
+                let leaf_slot = field.leaf_slot;
+                let child_slot = field.child_slot;
+                match &field.shape {
+                    FieldShape::Leaf(ty) => {
+                        let kind = leaf_kind(ty)?;
+                        leaves.push(quote! {
+                            irrigation::LeafLayout { name: #name, slot: #leaf_slot, kind: #kind }
+                        });
+                    }
+                    FieldShape::Child(target) => {
+                        let target = layout_target(&index_by_name, target, &variant.ident)?;
+                        children.push(quote! {
+                            irrigation::ChildLayout {
+                                name: #name,
+                                slot: #child_slot,
+                                cardinality: irrigation::Cardinality::One,
+                                target: #target,
+                            }
+                        });
+                    }
+                    FieldShape::OptionalChild(target) => {
+                        let target = layout_target(&index_by_name, target, &variant.ident)?;
+                        children.push(quote! {
+                            irrigation::ChildLayout {
+                                name: #name,
+                                slot: #child_slot,
+                                cardinality: irrigation::Cardinality::Optional,
+                                target: #target,
+                            }
+                        });
+                    }
+                    FieldShape::VecChild(target) => {
+                        let target = layout_target(&index_by_name, target, &variant.ident)?;
+                        children.push(quote! {
+                            irrigation::ChildLayout {
+                                name: #name,
+                                slot: #child_slot,
+                                cardinality: irrigation::Cardinality::Many,
+                                target: #target,
+                            }
+                        });
+                    }
+                }
+            }
+            variant_layouts.push(quote! {
+                irrigation::VariantLayout {
+                    name: #variant_name,
+                    leaves: &[#(#leaves),*],
+                    children: &[#(#children),*],
+                }
+            });
+        }
+        type_layouts.push(quote! {
+            irrigation::TypeLayout { name: #type_name, variants: &[#(#variant_layouts),*] }
+        });
+    }
+    let layout_impl = quote! {
+        impl irrigation::TreeSchema for #view_ident {
+            const LAYOUT: &'static irrigation::TreeLayout = &irrigation::TreeLayout {
+                types: &[#(#type_layouts),*],
+                root: 0,
+            };
+        }
+    };
 
     // ---------------------------------------------------- cross-type traversal
     let node_ident = format_ident!("{}Node", view_ident);
@@ -845,6 +977,7 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
             #( #build_fns )*
             #label_def
             #view_def
+            #layout_impl
             #editor_def
         }
     })
@@ -917,8 +1050,8 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
                     } else {
                         ident.clone()
                     };
-                    claim_accessor(&mut accessors, &method, &variant.ident, field)?;
                     let shape = classify(&field.ty, names);
+                    claim_accessor(&mut accessors, &method, &variant.ident, field, &shape)?;
                     fields.push(FieldSpec {
                         ident,
                         method,
@@ -938,8 +1071,8 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
                     } else {
                         format_ident!("field{}", index)
                     };
-                    claim_accessor(&mut accessors, &method, &variant.ident, field)?;
                     let shape = classify(&field.ty, names);
+                    claim_accessor(&mut accessors, &method, &variant.ident, field, &shape)?;
                     fields.push(FieldSpec {
                         ident,
                         method,
@@ -984,21 +1117,27 @@ fn enum_spec(item: &ItemEnum, names: &HashSet<String>, type_index: u16) -> Resul
     })
 }
 
-/// Records one generated accessor name for one enum.
+/// Records one projection for one enum, merging a compatible repeat.
 ///
-/// The generated accessors of every variant live in the same inherent impl, so
-/// a second field with the same accessor name would fail as a duplicate
-/// definition inside generated code. Report it at the source field instead.
+/// Every variant's accessors share one inherent impl, so two fields may carry
+/// one accessor name only when they ask the same question: `body` in two binders
+/// is one accessor that dispatches on the discriminant. A different type under
+/// the same name is a real ambiguity and is reported at the source field.
 fn claim_accessor(
-    accessors: &mut HashMap<String, String>,
+    accessors: &mut HashMap<String, (String, FieldShape)>,
     method: &Ident,
     variant: &Ident,
     field: &syn::Field,
+    shape: &FieldShape,
 ) -> Result<()> {
     let name = method.to_string();
-    let Some(previous) = accessors.insert(name.clone(), variant.to_string()) else {
+    let Some((previous, previous_shape)) = accessors.get(&name) else {
+        accessors.insert(name, (variant.to_string(), shape.clone()));
         return Ok(());
     };
+    if same_shape(previous_shape, shape) {
+        return Ok(());
+    }
     let span = match &field.ident {
         Some(ident) => ident.span(),
         None => field.ty.span(),
@@ -1007,10 +1146,54 @@ fn claim_accessor(
         span,
         format!(
             "field of variant `{variant}` would generate accessor `{name}`, which \
-             variant `{previous}` already declares: every variant's accessors share \
-             one method namespace. Rename one of the fields"
+             variant `{previous}` already declares with a different type: one \
+             accessor name may serve several variants only when it reads the same \
+             thing in each. Rename one of the fields"
         ),
     ))
+}
+
+/// Whether two fields answer the same question.
+fn same_shape(left: &FieldShape, right: &FieldShape) -> bool {
+    match (left, right) {
+        (FieldShape::Leaf(left), FieldShape::Leaf(right)) => {
+            leaf_name(left).ok() == leaf_name(right).ok()
+        }
+        (FieldShape::Child(left), FieldShape::Child(right)) => left == right,
+        (FieldShape::OptionalChild(left), FieldShape::OptionalChild(right)) => left == right,
+        (FieldShape::VecChild(left), FieldShape::VecChild(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// One field's contribution to a merged accessor.
+struct Projection {
+    kind_variant: Ident,
+    leaf_slot: u16,
+    child_slot: u16,
+    shape: FieldShape,
+}
+
+/// Adds one field to the accessor table.
+fn push_projection(
+    projections: &mut Vec<(Ident, Vec<Projection>)>,
+    field: &FieldSpec,
+    variant: &Ident,
+) {
+    let spec = Projection {
+        kind_variant: variant.clone(),
+        leaf_slot: field.leaf_slot,
+        child_slot: field.child_slot,
+        shape: field.shape.clone(),
+    };
+    if let Some((_, specs)) = projections
+        .iter_mut()
+        .find(|(name, _)| *name == field.method)
+    {
+        specs.push(spec);
+        return;
+    }
+    projections.push((field.method.clone(), vec![spec]));
 }
 
 fn classify(ty: &Type, names: &HashSet<String>) -> FieldShape {
@@ -1102,6 +1285,34 @@ fn snake_case(name: &str) -> String {
     out
 }
 
+/// The layout entry for one enum-typed field: the index of the declared type.
+fn layout_target(index_by_name: &HashMap<String, u16>, name: &str, variant: &Ident) -> Result<u16> {
+    index_by_name.get(name).copied().ok_or_else(|| {
+        syn::Error::new(
+            variant.span(),
+            format!("field of variant `{variant}` names `{name}`, which is not declared in this tree module"),
+        )
+    })
+}
+
+/// The storage kind a leaf type is written as.
+fn leaf_kind(ty: &Type) -> Result<TokenStream> {
+    let name = leaf_name(ty)?;
+    Ok(match name.as_str() {
+        "String" => quote!(irrigation::LeafKind::Text),
+        "i64" => quote!(irrigation::LeafKind::Int),
+        "u32" | "u64" | "usize" => quote!(irrigation::LeafKind::UInt),
+        "f64" => quote!(irrigation::LeafKind::Float),
+        "bool" => quote!(irrigation::LeafKind::Bool),
+        other => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                format!("unsupported leaf type `{other}` in a tree View"),
+            ));
+        }
+    })
+}
+
 fn leaf_build(ty: &Type, value: &TokenStream) -> Result<TokenStream> {
     let name = leaf_name(ty)?;
     Ok(match name.as_str() {
@@ -1159,7 +1370,7 @@ mod tests {
     use quote::quote;
 
     #[test]
-    fn two_variants_cannot_share_an_accessor_name() {
+    fn two_variants_share_an_accessor_when_they_agree() {
         let tokens = expand(
             quote!(root = Item, view = Tree),
             quote! {
@@ -1173,12 +1384,40 @@ mod tests {
             },
         )
         .to_string();
-        assert!(
-            tokens.contains("compile_error"),
-            "a shared accessor name must be rejected at the source: {tokens}"
+        assert!(!tokens.contains("compile_error"), "{tokens}");
+        assert_eq!(
+            tokens.matches("pub fn value").count(),
+            1,
+            "one accessor serves both variants: {tokens}"
         );
         assert!(
-            tokens.contains("`Leaf`") && tokens.contains("`Pair`"),
+            tokens.contains("Some (ItemKind :: Leaf)")
+                && tokens.contains("Some (ItemKind :: Pair)"),
+            "the accessor dispatches on the discriminant: {tokens}"
+        );
+    }
+
+    #[test]
+    fn two_variants_cannot_share_a_name_with_different_types() {
+        let tokens = expand(
+            quote!(root = Item, view = Tree),
+            quote! {
+                mod tree {
+                    #[derive(Clone, Debug, PartialEq)]
+                    pub enum Item {
+                        Leaf { value: u64 },
+                        Named { value: String },
+                    }
+                }
+            },
+        )
+        .to_string();
+        assert!(
+            tokens.contains("compile_error"),
+            "a shared name with two types must be rejected at the source: {tokens}"
+        );
+        assert!(
+            tokens.contains("`Leaf`") && tokens.contains("`Named`"),
             "the diagnostic must name both variants: {tokens}"
         );
     }

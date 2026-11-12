@@ -1,6 +1,11 @@
 # Scopes as bindings, types as term entries
 
-**Status:** implemented in `crates/irrigation/examples/stlc_scope_graphs`.
+**Status:** partly superseded by
+[`emission-site-plan.md`](emission-site-plan.md). The type-evaluation and
+ambient-View decisions below still hold; the stage split (`resolve_name` →
+`build_scopes`, `check_all`, `evaluate_now`) does not. The example now has three
+components that emit while they walk, canonical shared type scopes, and no
+`elaborate` or `build_scopes` stage.
 **Scope:** the STLC example's name resolver, type checker, and evaluator.
 **Related:** [`component-authoring-api-plan.md`](component-authoring-api-plan.md),
 [`concurrent-incremental-system-plan.md`](concurrent-incremental-system-plan.md),

@@ -656,6 +656,66 @@ where
         self.stage_edge(edge, EdgeEnds::trusted(from, to), payload, label, &[]);
     }
 
+    /// Defines one node whose identity is the emission expression that runs it.
+    ///
+    /// The identity is [`irrigation_core::ops::emission_id`]: a computation site
+    /// interned per `(invocation scope, expression site)`. A re-execution of the
+    /// same invocation reuses the site, and therefore the entity; a different
+    /// invocation gets a different one. The caller never names the id.
+    ///
+    /// Emit from a statement of its own. A call inside an iterator closure shares
+    /// the enclosing expression's site, so two emissions in one closure would be
+    /// one entity.
+    #[track_caller]
+    pub fn emit_node(&self, payload: N) -> u64 {
+        let node = irrigation_core::ops::emission_id();
+        self.define_node(node, payload);
+        node
+    }
+
+    /// Defines one edge whose identity is the emission expression that runs it.
+    ///
+    /// The checked form: both endpoints were committed by earlier emissions, which
+    /// is the normal shape when a component emits its own node, recurses, and then
+    /// links the child. Use [`Self::emit_edge_trusted`] only when an endpoint is
+    /// staged by the same expression.
+    #[track_caller]
+    pub fn emit_edge(&self, from: u64, to: u64, payload: E) -> u64 {
+        let edge = irrigation_core::ops::emission_id();
+        self.define_edge(edge, from, to, payload);
+        edge
+    }
+
+    /// Defines one edge owned by the emission expression, without endpoint
+    /// requirements.
+    ///
+    /// For an edge whose endpoint is a node the same expression also stages; the
+    /// text and content rules are [`Self::define_edge_trusted`]'s.
+    #[track_caller]
+    pub fn emit_edge_trusted(&self, from: u64, to: u64, payload: E) -> u64 {
+        let edge = irrigation_core::ops::emission_id();
+        self.define_edge_trusted(edge, from, to, payload, "emitted_edge");
+        edge
+    }
+
+    /// Defines a node shared by every invocation that names the same key.
+    ///
+    /// The identity is a root-level site interned by key equality, so the node has
+    /// one owner even though many invocations call this. The payload must be a
+    /// function of the key: the first evaluation stores the value and later
+    /// callers validate it. The node retracts when the last caller stops demanding
+    /// it.
+    #[track_caller]
+    pub fn emit_shared<K>(&self, key: K, payload: N) -> u64
+    where
+        K: std::any::Any + std::hash::Hash + Eq + Send + Sync + std::fmt::Debug + 'static,
+    {
+        let node = irrigation_core::ops::shared_node(key);
+        let id = u64::from(node.0);
+        irrigation_core::ops::eval_node(node, || self.define_node(id, payload));
+        id
+    }
+
     /// Inserts a node that must not already exist.
     ///
     /// The absence is a requirement on the write group rather than a read: the

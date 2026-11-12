@@ -23,10 +23,14 @@
 //! subtree containing a changed token gets a new identity along the ancestor
 //! chain and nowhere else.
 
+use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::lexer::TokenId;
 use crate::text::TextAnchor;
+
+use super::grammar::{FieldId as GrammarFieldId, ProductionId};
 
 /// Error category attached to a recovery node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -58,6 +62,55 @@ pub enum AstValue {
     Text(Arc<str>),
 }
 
+impl AstValue {
+    /// The signed integer, when the payload is one (or an unsigned value that fits).
+    #[must_use]
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            Self::Int(value) => Some(*value),
+            Self::UInt(value) => i64::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+
+    /// The unsigned integer, when the payload is one.
+    #[must_use]
+    pub fn as_uint(&self) -> Option<u64> {
+        match self {
+            Self::UInt(value) => Some(*value),
+            Self::Int(value) => u64::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+
+    /// The float, when the payload is one.
+    #[must_use]
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            Self::Float(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The boolean, when the payload is one.
+    #[must_use]
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The text, when the payload is text.
+    #[must_use]
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
 /// Literal denotation for one token's text.
 ///
 /// Language-agnostic default: integers, floats, and booleans are recognized by
@@ -85,10 +138,38 @@ pub fn literal_value(text: &str) -> AstValue {
 /// Stable identity of an AST rule name.
 ///
 /// Hashing the name keeps identities stable across reparses without a registry
-/// round-trip; `AstMeta::rules` maps the identity back to the name.
+/// round-trip; `AstMeta::rules` maps the identity back to the name. It is a
+/// `const fn`, so a consumer may name a rule in a `const` instead of hashing its
+/// spelling on every comparison.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RuleId(pub u64);
+
+impl RuleId {
+    /// The identity of `name`.
+    #[must_use]
+    pub const fn of(name: &str) -> Self {
+        Self(irrigation::const_hash(name))
+    }
+
+    /// Returns the raw identity word.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl fmt::Display for RuleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Stable identity of an AST rule name, as a plain word.
+///
+/// [`RuleId`] is the typed spelling and is what readers should use.
 #[must_use]
-pub fn rule_id(name: &str) -> u64 {
-    irrigation::const_hash(name)
+pub const fn rule_id(name: &str) -> RuleId {
+    RuleId::of(name)
 }
 
 /// Stable identity of a token leaf.
@@ -97,25 +178,55 @@ pub fn ast_token_id(token: TokenId) -> u64 {
     mix(0x51ED_2701_9E37_79B9, token.0)
 }
 
+/// Stable identity of a rule node that is unique at its first token.
+///
+/// Most rule occurrences are named by the token that starts them: there is one
+/// `Let` per `let`, one `Lam` per `\\`, one `Document` per first token. Those
+/// nodes used the extent, so growing a body at the end re-keyed every ancestor.
+/// The parser offers this short identity first and falls back to the extent when
+/// a second node with the same rule and first token exists (a left-recursive
+/// `App` chain is the real case).
+#[must_use]
+pub fn ast_short_id(rule: RuleId, first: TokenId) -> u64 {
+    mix(mix(0x4F43_4355_5252_454E, rule.0), first.0)
+}
+
+/// Stable identity of a tree root.
+///
+/// A tree has one root. Its identity is the tree's, not its extent's: a root
+/// whose span grows must stay the same node, or every consumer of the tree
+/// restarts its invocation scope on every edit. The parser owns one tree per
+/// AST View, so one constant per schema is enough; a root that a failed parse
+/// has to synthesize (`$error`) keeps the same identity as the root it
+/// replaced, so an error is an edit to the tree rather than a new tree.
+#[must_use]
+pub const fn ast_root_id() -> u64 {
+    0x5452_4545_524F_4F54
+}
+
 /// Stable identity of a rule node: its rule and the tokens it covers.
 ///
 /// The *extent* is the identity, not the structure: a node that still starts and
 /// ends at the same tokens is the same node even when a child in the middle
 /// changed, so its ancestors keep their names and only the changed path is
 /// rewritten. Nodes that only moved keep their identity too, because token
-/// identities survive a shift.
+/// identities survive a shift, and a token that is re-spelled in place keeps its
+/// identity as well, so re-spelling a leaf does not re-key the nodes above it.
+///
+/// The full extent, rather than one boundary, is what separates nested siblings:
+/// `f 2 3` nests an `App` that starts at the same token as its parent.
 ///
 /// A zero-width node has no extent; the tokens around the insertion point
 /// distinguish it from its siblings.
 #[must_use]
-pub fn ast_rule_id(
-    rule: u64,
+pub fn ast_node_id(
+    rule: RuleId,
     first: Option<TokenId>,
     last: Option<TokenId>,
     prev: Option<TokenId>,
     next: Option<TokenId>,
 ) -> u64 {
-    let id = mix(0x2545_F491_4F6C_DD1D, rule);
+    let id = mix(0x2545_F491_4F6C_DD1D, rule.0);
     match (first, last) {
         (Some(first), Some(last)) => mix(mix(id, first.0), last.0),
         _ => mix(
@@ -136,8 +247,15 @@ pub struct AstNodeRecord {
     pub id: u64,
     /// Constructor or grammar rule name.
     pub kind: String,
-    /// Stable rule identity for rule nodes, `0` for token/error nodes.
-    pub rule: u64,
+    /// Stable rule identity for rule nodes, [`RuleId::default`] for token and
+    /// recovery nodes.
+    pub rule: RuleId,
+    /// The production that built this node, for a rule node.
+    ///
+    /// Two alternatives of one rule share a rule id, so they can build different
+    /// declared tree variants; the production is the only key that tells them
+    /// apart.
+    pub production: Option<ProductionId>,
     /// Start anchor in the version the node's source was produced from.
     pub span_start: TextAnchor,
     /// End anchor in the version the node's source was produced from.
@@ -154,8 +272,12 @@ pub struct AstNodeRecord {
     pub ignored: bool,
     /// Semantic value of this node, when it denotes a literal.
     pub value: Option<AstValue>,
-    /// Named field-to-child IDs.
-    pub fields: Vec<(String, u64)>,
+    /// Each declared field, and the slice of [`Self::children`] it names.
+    ///
+    /// Recorded only for productions that declare a field or build a declared
+    /// tree node. A single child is a one-element range; a repetition is the
+    /// whole run, which a flat child list cannot recover on its own.
+    pub fields: Vec<(GrammarFieldId, Range<usize>)>,
 }
 
 impl AstNodeRecord {

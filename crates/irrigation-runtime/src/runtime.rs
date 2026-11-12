@@ -394,6 +394,15 @@ impl Runtime {
         self.inner.unit_versions(units)
     }
 
+    /// Whether each unit's cell was retracted.
+    ///
+    /// The runtime keeps a retracted cell so its subscribers can observe the
+    /// removal; a board row backed by one is `removed`, not `changed`.
+    #[must_use]
+    pub fn unit_retired(&self, units: &[irrigation_core::descriptor::UnitKey]) -> Vec<bool> {
+        self.inner.unit_retired(units)
+    }
+
     /// Every registered View's metadata at the current revision.
     ///
     /// Read-only: it never demands a View.

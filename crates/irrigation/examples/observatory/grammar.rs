@@ -3,7 +3,8 @@
 //! A line per statement: an assignment (`name := value`) or a print
 //! (`print(value, ...)`). Expressions are names, integers, and calls. The
 //! grammar is deliberately tiny; the board's interest is in the pipeline, not
-//! the language.
+//! the language. Every production that builds a node names the tree variant it
+//! builds (`@tree`), and every child it feeds is named (`name: ident`).
 
 use irrigation_syntax::{Grammar, TextDocument};
 
@@ -46,15 +47,14 @@ pub fn grammar() -> Grammar {
                 }
             }
             parser {
-                Program = Statement* @ast(Program);
+                Program = items: Statement* @tree(Document::Program);
                 Statement = Assign | Print;
-                Assign = name: ident ":=" value: Expression @ast(Assign { name: 0, value: 2 });
-                Print = "print" "(" Values? ")" @ast(Print);
-                Values = Expression ("," Expression)*;
+                Assign = name: ident ":=" value: Expression @tree(Statement::Assign);
+                Print = "print" "(" args: (Expression ("," Expression)*)? ")" @tree(Statement::Print);
                 Expression = Call | Number | Name;
-                Call = callee: ident "(" Values? ")" @ast(Call { callee: 0 });
-                Number = number;
-                Name = ident;
+                Call = callee: ident "(" args: (Expression ("," Expression)*)? ")" @tree(Expression::Call);
+                Number = value: number @tree(Expression::Number);
+                Name = name: ident @tree(Expression::Name);
             }
         }
         "#,

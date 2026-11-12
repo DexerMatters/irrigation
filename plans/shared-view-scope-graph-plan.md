@@ -6,6 +6,12 @@ from committed content (`Inner::refresh_structure`), so a writer cannot publish 
 subgraph manifest that survives another writer's commit. The landed shape uses
 the content topology and kind tags, and states the resolver cut-off honestly.
 
+**The example no longer carries kind tags.** Shared writers and the one-graph
+rule still hold, but the STLC host now uses framework-owned emission identity
+and an interned shared type site, so it writes no tag bits or host keys. See
+[`emission-site-plan.md`](emission-site-plan.md); the fixture
+(`crates/irrigation-observe/tests/shared_scope_graph.rs`) is unchanged.
+
 Landed in this change:
 
 - `define_edge` checks endpoint **membership** ports instead of the whole

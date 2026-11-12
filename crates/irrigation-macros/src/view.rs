@@ -821,9 +821,19 @@ fn expand_inner(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
                 }
                 FieldShape::List(elem) => {
                     if derived {
+                        let ids = format_ident!("{}_ids", ident);
+                        let key = format_ident!("{}_key", ident);
                         quote! {
                             #vis fn #ident(&self) -> Vec<#elem> {
                                 self.content.#ident.to_vec()
+                            }
+                            /// Element identity sequence.
+                            #vis fn #ids(&self) -> irrigation::PSeq<u64> {
+                                self.content.#ident.ids()
+                            }
+                            /// Reads one element by identity.
+                            #vis fn #key(&self, id: u64) -> Option<#elem> {
+                                self.content.#ident.get(id).cloned()
                             }
                         }
                     } else {

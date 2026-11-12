@@ -6,6 +6,7 @@
 //! runtime-side knowledge of what it does.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use irrigation::{
@@ -16,6 +17,8 @@ use irrigation::{
 
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{LexConfig, ModeId, Token, TokenId, TokenStream};
+use crate::mapping::TreeMapping;
+use crate::parser::ast::{AstNodeRecord, RuleId};
 use crate::parser::engine::AstParser;
 use crate::parser::state::{AstState, AstTable};
 use crate::text::TextDocument;
@@ -29,14 +32,28 @@ use crate::views::{
 pub struct ParserComponentState {
     ast: AstState,
     diagnostics: HashSet<DiagnosticId>,
-    rules: HashSet<u64>,
+    rules: HashSet<RuleId>,
+    /// The generic parse tree.
     storage: TreeStorage,
+    /// The declared tree, when this parser publishes one.
+    typed: Option<TreeStorage>,
+}
+
+/// Where the declared tree goes and how its nodes are built.
+#[derive(Clone, Debug)]
+struct TypedTree {
+    descriptor: &'static ViewDescriptor,
+    mapping: TreeMapping,
 }
 
 /// Parser component: reads `Tokens`, owns the AST Views.
+///
+/// With [`ParserComponent::with_tree`] it also publishes a tree the grammar maps
+/// onto, from the same parse records and with the same node identities.
 #[derive(Clone, Debug)]
 pub struct ParserComponent {
     parser: AstParser,
+    tree: Option<TypedTree>,
 }
 
 /// One revision's token input.
@@ -53,7 +70,39 @@ impl ParserComponent {
     pub fn new(grammar: crate::Grammar) -> Self {
         Self {
             parser: AstParser::new(grammar),
+            tree: None,
         }
+    }
+
+    /// Builds a parser that also publishes the declared tree `S`.
+    ///
+    /// The grammar's `@tree` productions are resolved against `S::LAYOUT` and
+    /// every mismatch is reported here, before a revision is parsed: a grammar
+    /// that cannot fill the declaration is a construction error, not a missing
+    /// child a reader discovers later.
+    ///
+    /// # Errors
+    ///
+    /// Returns the mapping failures, one per line.
+    pub fn with_tree<S: irrigation::TreeSchema>(grammar: crate::Grammar) -> Result<Self> {
+        let mapping = grammar.map_tree(S::LAYOUT).map_err(|errors| {
+            let mut message = format!(
+                "the grammar does not map onto `{}`: {} mismatch(es)",
+                <S as ViewSchema>::DESCRIPTOR.name,
+                errors.len()
+            );
+            for error in &errors {
+                let _ = write!(message, "\n  - {error}");
+            }
+            irrigation::ComputeError::internal(message)
+        })?;
+        Ok(Self {
+            parser: AstParser::new(grammar),
+            tree: Some(TypedTree {
+                descriptor: <S as ViewSchema>::DESCRIPTOR,
+                mapping,
+            }),
+        })
     }
 
     /// Reads the token stream, reusing previous tokens outside the delta.
@@ -114,8 +163,9 @@ impl ParserComponent {
     #[allow(clippy::too_many_arguments)]
     fn publish(
         cx: &mut GeneralCx,
+        grammar: &crate::Grammar,
         previous: Option<&AstTable>,
-        rules: &mut HashSet<u64>,
+        rules: &mut HashSet<RuleId>,
         diagnostics: &mut HashSet<DiagnosticId>,
         errors: &mut HashSet<u64>,
         added: &[crate::AstNodeRecord],
@@ -153,7 +203,7 @@ impl ParserComponent {
         diagnostics.extend(current);
 
         for record in added {
-            if record.rule != 0 && rules.insert(record.rule) {
+            if record.rule != RuleId::default() && rules.insert(record.rule) {
                 cx.write(AstMeta::RULES)
                     .entry(record.rule)
                     .set(Arc::<str>::from(record.kind.as_str()));
@@ -179,32 +229,41 @@ impl ParserComponent {
             if record.category.is_some() {
                 errors.insert(record.id);
             }
-            for (field, child) in &record.fields {
-                cx.write(AstMeta::FIELDS)
-                    .entry((record.id, field.clone()))
-                    .set(*child);
+            if let Some(child) = wrapped_child(grammar, record) {
+                cx.write(AstMeta::WRAPS).entry(record.id).set(child);
                 written += 2;
             }
         }
+        for record in added {
+            // A rebuilt node keeps its identity, so metadata the previous
+            // record carried and this one does not would survive as a stale
+            // unit: a field that named an optional child, a wrap that the new
+            // production does not declare, a value a token used to have.
+            let Some(previous) = previous
+                .and_then(|nodes| nodes.get(&record.id))
+                .map(|meta| &meta.record)
+            else {
+                continue;
+            };
+            if previous.token.is_some() && record.token.is_none() {
+                cx.write(AstMeta::TOKENS).entry(record.id).retract();
+            }
+            if previous.value.is_some() && record.value.is_none() {
+                cx.write(AstMeta::VALUES).entry(record.id).retract();
+            }
+            if wrapped_child(grammar, previous).is_some()
+                && wrapped_child(grammar, record).is_none()
+            {
+                cx.write(AstMeta::WRAPS).entry(record.id).retract();
+            }
+        }
         for id in removed {
-            let fields: Vec<String> = previous
-                .and_then(|nodes| nodes.get(id))
-                .map(|meta| {
-                    meta.record
-                        .fields
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
             cx.write(AstMeta::SPAN_STARTS).entry(*id).retract();
             cx.write(AstMeta::SPAN_ENDS).entry(*id).retract();
             cx.write(AstMeta::TOKENS).entry(*id).retract();
             cx.write(AstMeta::VALUES).entry(*id).retract();
+            cx.write(AstMeta::WRAPS).entry(*id).retract();
             errors.remove(id);
-            for field in fields {
-                cx.write(AstMeta::FIELDS).entry((*id, field)).retract();
-            }
         }
         // The recovery set is one value per revision, so it is written as one.
         // Stated per node it cost one membership write per added node and one
@@ -244,6 +303,26 @@ impl GeneralComponent for ParserComponent {
         DependencyUpdates::Incremental
     }
 
+    /// A parser that publishes a declared tree owns one more View.
+    ///
+    /// The trait documents construction-chosen outputs for exactly this case;
+    /// the identity is mixed with the tree's so a plain and a typed parser can
+    /// live in one runtime without colliding.
+    fn output_views(&self) -> Vec<&'static ViewDescriptor> {
+        let mut views = Self::OUTPUT_VIEWS.to_vec();
+        if let Some(tree) = &self.tree {
+            views.push(tree.descriptor);
+        }
+        views
+    }
+
+    fn component_id(&self) -> ComponentId {
+        match &self.tree {
+            None => Self::ID,
+            Some(tree) => ComponentId(irrigation::hash_one(&(Self::NAME, tree.descriptor.id))),
+        }
+    }
+
     fn initialize(&self, cx: &mut GeneralCx) -> Result<(Self::State, Self::Output)> {
         let input = Self::read_tokens(cx, None)?;
         let text = Arc::clone(input.document.snapshot());
@@ -264,7 +343,7 @@ impl GeneralComponent for ParserComponent {
             .iter()
             .map(|(_, meta)| meta.record.clone())
             .collect::<Vec<_>>();
-        let tree_nodes = tree_nodes(&added, state.root, &TreeStorage::default());
+        let (tree_nodes, parents) = tree_nodes(&added, state.root, &TreeStorage::default());
         let stats = StatsSnapshot {
             bytes_relexed: text.len() as u64,
             tokens_relexed: state.significant.len() as u64,
@@ -280,6 +359,7 @@ impl GeneralComponent for ParserComponent {
         let mut storage = TreeStorage::default();
         Self::publish(
             cx,
+            self.parser.grammar(),
             None,
             &mut rules,
             &mut diagnostics,
@@ -292,12 +372,28 @@ impl GeneralComponent for ParserComponent {
             state.root,
             &tree_nodes,
         );
+        let mut typed = None;
+        publish_typed(
+            cx,
+            self.parser.grammar(),
+            self.tree.as_ref(),
+            None,
+            &added,
+            &[],
+            &TreeStorage::default(),
+            &parents,
+            state.root,
+            true,
+            false,
+            &mut typed,
+        );
         Ok((
             ParserComponentState {
                 ast: state,
                 diagnostics,
                 rules,
                 storage,
+                typed,
             },
             (),
         ))
@@ -322,12 +418,18 @@ impl GeneralComponent for ParserComponent {
                 .update(&state.ast, Arc::clone(&input.tokens), Arc::clone(&text))
             {
                 Some(next) => next,
-                None => self
-                    .parser
-                    .initial(Arc::clone(&input.tokens), Arc::clone(&text))
-                    .ok_or_else(|| {
-                        irrigation::ComputeError::internal("the incremental parse found no tree")
-                    })?,
+                None => {
+                    if std::env::var_os("IRRIGATION_PARSER_DEBUG").is_some() {
+                        eprintln!("[parser] incremental update returned no tree");
+                    }
+                    self.parser
+                        .initial(Arc::clone(&input.tokens), Arc::clone(&text))
+                        .ok_or_else(|| {
+                            irrigation::ComputeError::internal(
+                                "the incremental parse found no tree",
+                            )
+                        })?
+                }
             };
         let built = next.stats;
         let root = next.root;
@@ -369,6 +471,14 @@ impl GeneralComponent for ParserComponent {
             );
         }
 
+        if !consistent && std::env::var_os("IRRIGATION_PARSER_DEBUG").is_some() {
+            eprintln!(
+                "[parser] inconsistent incremental tree: added={} removed={} significant={}",
+                added.len(),
+                removed.len(),
+                ast.significant.len()
+            );
+        }
         let mut rebuilt_all = false;
         let (ast, removed, added, root, parse_stats, parse_diagnostics) = if consistent {
             (ast, removed, added, root, built, diagnostics_in)
@@ -408,7 +518,12 @@ impl GeneralComponent for ParserComponent {
                 window_bytes(&ast, parse_stats.token_start, parse_stats.token_end) as u64
             },
             nodes_built: parse_stats.nodes_built as u64,
-            nodes_added: added.len() as u64,
+            // A rebuilt node can keep its identity, so "added" counts the ids
+            // that are genuinely new, not the records this revision rewrote.
+            nodes_added: added
+                .iter()
+                .filter(|record| state.ast.nodes.get(&record.id).is_none())
+                .count() as u64,
             nodes_removed: removed.len() as u64,
             token_units_read: input.units_read as u64,
             // The published numbers describe the tree that was published. On
@@ -417,15 +532,21 @@ impl GeneralComponent for ParserComponent {
             adopted_suffix: u64::from(parse_stats.adopted_suffix),
             ..StatsSnapshot::default()
         };
-        let (patch_nodes, added_for_meta) = if rebuilt_all {
+        let (patch_nodes, added_for_meta, parents, generic_previous) = if rebuilt_all {
             let all: Vec<crate::AstNodeRecord> = ast
                 .nodes
                 .iter()
                 .map(|(_, meta)| meta.record.clone())
                 .collect();
-            (tree_nodes(&all, root, &TreeStorage::default()), all)
+            // The full parse rebuilt every record, but the tree's *previous*
+            // content is still the honest baseline: applying the patch against
+            // an empty storage would mark every node changed and recreate the
+            // whole tree even when the ids and payloads are identical.
+            let (nodes, parents) = tree_nodes(&all, root, &state.storage);
+            (nodes, all, parents, state.storage.clone())
         } else {
-            (tree_nodes(&added, root, &state.storage), added.clone())
+            let (nodes, parents) = tree_nodes(&added, root, &state.storage);
+            (nodes, added, parents, state.storage.clone())
         };
         let added = added_for_meta;
         let mut rules = state.rules.clone();
@@ -437,13 +558,10 @@ impl GeneralComponent for ParserComponent {
             .filter(|(_, meta)| meta.record.category.is_some())
             .map(|(id, _)| *id)
             .collect();
-        let mut storage = if rebuilt_all {
-            TreeStorage::default()
-        } else {
-            state.storage.clone()
-        };
+        let mut storage = state.storage.clone();
         Self::publish(
             cx,
+            self.parser.grammar(),
             Some(&state.ast.nodes),
             &mut rules,
             &mut diagnostics,
@@ -456,15 +574,226 @@ impl GeneralComponent for ParserComponent {
             root,
             &patch_nodes,
         );
+        let mut typed = state.typed.clone();
+        let recovered = ast
+            .nodes
+            .iter()
+            .any(|(_, meta)| meta.record.category.is_some())
+            || parse_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.starts_with("parse."));
+        publish_typed(
+            cx,
+            self.parser.grammar(),
+            self.tree.as_ref(),
+            Some(&state.ast.nodes),
+            &added,
+            &removed,
+            &generic_previous,
+            &parents,
+            root,
+            false,
+            recovered,
+            &mut typed,
+        );
         Ok((
             ParserComponentState {
                 ast,
                 diagnostics,
                 rules,
                 storage,
+                typed,
             },
             (),
         ))
+    }
+}
+
+/// Everything one typed publication resolves names against.
+struct TypedSource<'a> {
+    grammar: &'a crate::Grammar,
+    mapping: &'a TreeMapping,
+    added: HashMap<u64, &'a AstNodeRecord>,
+    previous: Option<&'a AstTable>,
+    /// The generic tree before this revision's patch: its parent links name the
+    /// ancestors this revision does not rewrite.
+    generic: &'a TreeStorage,
+    /// Parent links from this revision's own records.
+    parents: &'a HashMap<u64, u64>,
+}
+
+impl TypedSource<'_> {
+    fn record(&self, id: u64) -> Option<&AstNodeRecord> {
+        self.added.get(&id).copied().or_else(|| {
+            self.previous
+                .and_then(|nodes| nodes.get(&id))
+                .map(|meta| &meta.record)
+        })
+    }
+
+    /// The typed identity of `id`: the node itself when its production builds a
+    /// declared variant, or the payload it hands over when it is a wrapper.
+    fn typed_id(&self, id: u64) -> Option<u64> {
+        let mut current = id;
+        for _ in 0..64 {
+            let record = self.record(current)?;
+            let production = self.grammar.productions().get(record.production?)?;
+            if production.wrap.is_some() {
+                current = wrapped_child(self.grammar, record)?;
+                continue;
+            }
+            return self.mapping.build(production.id).map(|_| current);
+        }
+        None
+    }
+
+    fn generic_parent(&self, id: u64) -> Option<u64> {
+        self.parents
+            .get(&id)
+            .copied()
+            .or_else(|| self.generic.nodes.get(&id).and_then(|node| node.parent))
+    }
+
+    /// The nearest ancestor that has a typed identity of its own.
+    ///
+    /// A wrapper's typed identity is its payload, so a node under a wrapper sees
+    /// that payload as its parent — unless it *is* the payload, in which case the
+    /// walk continues, so a node never parents itself.
+    fn typed_ancestor(&self, id: u64) -> Option<u64> {
+        let mut cursor = self.generic_parent(id);
+        for _ in 0..256 {
+            let parent = cursor?;
+            if let Some(typed) = self.typed_id(parent) {
+                if typed != id {
+                    return Some(typed);
+                }
+            }
+            cursor = self.generic_parent(parent);
+        }
+        None
+    }
+}
+
+/// The typed patch for one revision, and its root when the parse reached one.
+fn typed_patch(
+    source: &TypedSource<'_>,
+    added: &[AstNodeRecord],
+    root: u64,
+) -> (Option<u64>, Vec<TreePatchNode>) {
+    let mut nodes = Vec::new();
+    for record in added {
+        let Some(production) = record
+            .production
+            .and_then(|id| source.grammar.productions().get(id))
+        else {
+            continue;
+        };
+        let Some(build) = source.mapping.build(production.id) else {
+            continue;
+        };
+        let variant = build.variant_layout;
+        let mut leaves = vec![TreeValue::Unit; variant.leaves.len()];
+        let mut children: Vec<ChildSlot> = vec![ChildSlot::None; variant.children.len()];
+        for (field, feed) in &build.feeds {
+            let Some((_, range)) = record.fields.iter().find(|(declared, _)| declared == field)
+            else {
+                continue;
+            };
+            match feed {
+                crate::mapping::Feed::Leaf { slot, kind } => {
+                    let child = record.children.get(range.start).copied();
+                    leaves[usize::from(*slot)] = leaf_value(source, child, *kind);
+                }
+                crate::mapping::Feed::Child { slot, cardinality } => {
+                    let ids: Vec<u64> = record.children[range.clone()]
+                        .iter()
+                        .filter_map(|child| source.typed_id(*child))
+                        .collect();
+                    let index = usize::from(*slot);
+                    children[index] = match cardinality {
+                        irrigation::Cardinality::One => {
+                            ids.first().copied().map_or(ChildSlot::None, ChildSlot::One)
+                        }
+                        irrigation::Cardinality::Optional => {
+                            ChildSlot::Optional(ids.first().copied())
+                        }
+                        irrigation::Cardinality::Many => ChildSlot::Many(ids),
+                    };
+                }
+            }
+        }
+        nodes.push(TreePatchNode {
+            id: record.id,
+            parent: source.typed_ancestor(record.id),
+            type_index: build.type_index,
+            variant: build.variant,
+            fields: leaves,
+            children,
+        });
+    }
+    (source.typed_id(root), nodes)
+}
+
+/// One leaf slot's payload, read from the token the field names.
+fn leaf_value(
+    source: &TypedSource<'_>,
+    child: Option<u64>,
+    kind: irrigation::LeafKind,
+) -> TreeValue {
+    use irrigation::LeafKind;
+    let Some(record) = child.and_then(|id| source.record(id)) else {
+        return TreeValue::Unit;
+    };
+    match kind {
+        LeafKind::Text => record
+            .text
+            .as_deref()
+            .map_or(TreeValue::Unit, |text| TreeValue::Text(text.to_owned())),
+        LeafKind::Int => record
+            .value
+            .as_ref()
+            .and_then(crate::AstValue::as_int)
+            .or_else(|| record.text.as_deref().and_then(|text| text.parse().ok()))
+            .map_or(TreeValue::Unit, TreeValue::Int),
+        LeafKind::UInt => record
+            .value
+            .as_ref()
+            .and_then(crate::AstValue::as_uint)
+            .or_else(|| record.text.as_deref().and_then(|text| text.parse().ok()))
+            .map_or(TreeValue::Unit, TreeValue::UInt),
+        LeafKind::Float => record
+            .value
+            .as_ref()
+            .and_then(crate::AstValue::as_float)
+            .or_else(|| record.text.as_deref().and_then(|text| text.parse().ok()))
+            .map_or(TreeValue::Unit, TreeValue::Float),
+        LeafKind::Bool => record
+            .value
+            .as_ref()
+            .and_then(crate::AstValue::as_bool)
+            .or(match record.text.as_deref() {
+                Some("true") => Some(true),
+                Some("false") => Some(false),
+                _ => None,
+            })
+            .map_or(TreeValue::Unit, TreeValue::Bool),
+    }
+}
+
+/// The child that stands in for one record, when its production is a `@wrap`.
+///
+/// A wrapper names exactly one field, and a parse publishes that field's child
+/// run. The relation is derived from the record, never stored twice.
+fn wrapped_child(grammar: &crate::Grammar, record: &AstNodeRecord) -> Option<u64> {
+    let production = grammar.productions().get(record.production?)?;
+    let field = production.wrap?;
+    let (_, range) = record
+        .fields
+        .iter()
+        .find(|(declared, _)| *declared == field)?;
+    match range.len() {
+        1 => record.children.get(range.start).copied(),
+        _ => None,
     }
 }
 
@@ -485,18 +814,21 @@ fn window_bytes(state: &AstState, start: usize, end: usize) -> usize {
 }
 
 /// Tree nodes for a set of records, with parent links resolved.
+///
+/// The parent map is returned because a second publisher of the same records
+/// needs it: the typed tree's ancestors are the same ones.
 fn tree_nodes(
     added: &[crate::AstNodeRecord],
     _root: u64,
     previous: &TreeStorage,
-) -> Vec<TreePatchNode> {
+) -> (Vec<TreePatchNode>, HashMap<u64, u64>) {
     let mut parents: HashMap<u64, u64> = HashMap::new();
     for record in added {
         for child in &record.children {
             parents.insert(*child, record.id);
         }
     }
-    added
+    let nodes = added
         .iter()
         .map(|record| {
             let (variant, fields) = if let Some(category) = record.category {
@@ -519,7 +851,7 @@ fn tree_nodes(
                 (
                     0u16,
                     vec![
-                        TreeValue::UInt(record.rule),
+                        TreeValue::UInt(record.rule.raw()),
                         TreeValue::Text(record.kind.clone()),
                     ],
                 )
@@ -541,7 +873,66 @@ fn tree_nodes(
                 },
             }
         })
-        .collect()
+        .collect();
+    (nodes, parents)
+}
+
+/// Publishes the declared tree, when this parser has one.
+#[allow(clippy::too_many_arguments)]
+fn publish_typed(
+    cx: &mut GeneralCx,
+    grammar: &crate::Grammar,
+    tree: Option<&TypedTree>,
+    previous: Option<&AstTable>,
+    added: &[AstNodeRecord],
+    removed: &[u64],
+    generic: &TreeStorage,
+    parents: &HashMap<u64, u64>,
+    root: u64,
+    reset: bool,
+    keep: bool,
+    storage: &mut Option<TreeStorage>,
+) {
+    let Some(tree) = tree else {
+        return;
+    };
+    // A parse with a recovery node has no faithful typed tree to publish. Keep
+    // the last well-formed one and let the diagnostics carry the error: the
+    // stages above read the typed tree, and replacing it with a fragment would
+    // retract and re-create every unit they emitted for a transient keystroke.
+    // A later error-free parse publishes the new tree normally.
+    if std::env::var_os("IRRIGATION_TYPED_DEBUG").is_some() {
+        eprintln!(
+            "[typed] keep={keep} reset={reset} storage={} added={} removed={}",
+            storage.is_some(),
+            added.len(),
+            removed.len()
+        );
+    }
+    if keep && storage.is_some() {
+        return;
+    }
+    let source = TypedSource {
+        grammar,
+        mapping: &tree.mapping,
+        added: added.iter().map(|record| (record.id, record)).collect(),
+        previous,
+        generic,
+        parents,
+    };
+    let (typed_root, nodes) = typed_patch(&source, added, root);
+    if reset {
+        *storage = Some(TreeStorage::default());
+    }
+    let typed = storage.get_or_insert_with(TreeStorage::default);
+    let patch = TreePatch {
+        root: typed_root,
+        nodes,
+        removed: removed.to_vec(),
+    };
+    *typed = cx
+        .tree_output(tree.descriptor.id)
+        .apply_patch(typed, &patch);
 }
 
 /// Root consumer for the AST.

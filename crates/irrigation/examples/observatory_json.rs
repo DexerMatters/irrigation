@@ -10,9 +10,9 @@
 //! projection knows: a component, the Views it reads, the Views it defines.
 //!
 //! Edit the document in place. The lexer relexes the edit window, the parser
-//! resumes from a checkpoint, and the sink rewrites only the paths whose value
+//! resumes from a checkpoint, and the sink rewrites only the leaves whose value
 //! moved — every row on the board cites its own unit, so the plate says which
-//! paths changed and leaves the rest alone.
+//! leaves changed and leaves the rest alone.
 
 use std::sync::{Arc, Mutex};
 
@@ -46,16 +46,58 @@ fn grammar() -> irrigation_syntax::Grammar {
                 }
             }
             parser {
-                Document = Value @ast(JsonDocument { value: 0 });
-                Value = Object | Array | string | number | ident;
-                Object = "{" (Pair ("," Pair)*)? "}" @ast(JsonObject);
-                Pair = key: string ":" value: Value @ast(JsonPair { key: 0, value: 2 });
-                Array = "[" (Value ("," Value)*)? "]" @ast(JsonArray);
+                Document = value: Value @tree(JsonDocument::JsonDocument);
+                Value = Object | Array | Str | Num | Word;
+                Object = "{" pairs: (Pair ("," Pair)*)? "}" @tree(JsonValue::JsonObject);
+                Pair = key: string ":" value: Value @tree(JsonPair::JsonPair);
+                Array = "[" values: (Value ("," Value)*)? "]" @tree(JsonValue::JsonArray);
+                Str = text: string @tree(JsonValue::JsonString);
+                Num = value: number @tree(JsonValue::JsonNumber);
+                Word = word: ident @tree(JsonValue::JsonLiteral);
             }
         }
         "#,
     )
     .expect("grammar")
+}
+
+// ------------------------------------------------------------- the declared tree
+
+/// The JSON document, declared once.
+///
+/// The grammar says which production builds which variant; the parser publishes
+/// this tree from the same parse records as the raw AST, with the same identities.
+#[allow(dead_code)]
+#[irrigation::tree_view(kind = derived, root = JsonDocument, view = JsonSyntax)]
+pub mod json_ast {
+    /// A parsed document.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum JsonDocument {
+        /// The document's single value.
+        JsonDocument { value: JsonValue },
+    }
+
+    /// One JSON value.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum JsonValue {
+        /// An object and its members, in source order.
+        JsonObject { pairs: Vec<JsonPair> },
+        /// An array and its elements, in source order.
+        JsonArray { values: Vec<JsonValue> },
+        /// A string literal.
+        JsonString { text: String },
+        /// An integer literal.
+        JsonNumber { value: i64 },
+        /// A keyword (`true`, `false`, `null`).
+        JsonLiteral { word: String },
+    }
+
+    /// One object member.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum JsonPair {
+        /// A key and its value.
+        JsonPair { key: String, value: JsonValue },
+    }
 }
 
 // ------------------------------------------------------------------- the sink
@@ -73,134 +115,95 @@ pub struct JsonPath {
 
 /// The sink's output: one row per leaf, in document order.
 ///
-/// A list, not a map: a list replaces its identities on every run, so deleting a
-/// key from the document deletes its row. Every row has its own identity, so an
-/// edit to one value rewrites one unit.
+/// A row is keyed by the leaf's AST occurrence, not by its path: the path is
+/// what the leaf is called, and a rename changes that without replacing the
+/// leaf. Keying by the occurrence is what makes a value edit update one row and
+/// a deleted leaf retract its own.
 #[irrigation::view(derived)]
 pub struct JsonPaths(List<JsonPath>);
-
-/// A stable identity for one path: FNV-1a, so the same path keeps its unit.
-fn path_id(path: &str) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in path.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    hash
-}
 
 /// The sink: it reads the published tree and writes the leaf table.
 ///
 /// Nothing here is incremental by hand. The tree is a tree View, so each node's
-/// structure and each token's payload are separate units; the walk reads the ones
-/// it needs and the runtime decides what that means for the next revision. The
-/// table is published with one identity per path, so only the paths whose value
-/// moved are rewritten.
+/// structure, each child slot, and each leaf payload are separate units; the walk
+/// reads the ones it needs and the runtime decides what that means for the next
+/// revision. The table is published with one identity per declared leaf, so only
+/// the row whose value (or path) moved is rewritten. There is no rule-name table
+/// and no payload table to materialize: the variant *is* the kind, and the leaf
+/// accessor reads one unit.
 #[irrigation::irrigation]
 mod sink {
-    use super::{JsonPath, JsonPaths, path_id};
-    use irrigation_syntax::{AstMeta, AstNodeRef, AstTree, Tokens};
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use super::json_ast::{JsonDocumentRef, JsonValueKind, JsonValueRef};
+    use super::{JsonPath, JsonPaths};
 
     #[component]
-    pub fn json_sink(ast: &AstTree, meta: &AstMeta, tokens: &Tokens) -> usize {
-        let leaves = leaves(ast, meta, tokens);
-        JsonPaths.define_keyed(
-            leaves
-                .iter()
-                .map(|leaf| (path_id(&leaf.path), leaf.clone())),
-        );
+    pub fn json_sink(tree: &super::json_ast::JsonSyntax) -> usize {
+        let leaves = match tree.root() {
+            Some(document) => leaves(&document),
+            None => Vec::new(),
+        };
+        JsonPaths.define_keyed(leaves.iter().map(|(id, leaf)| (*id, leaf.clone())));
         leaves.len()
     }
 
     /// Every scalar in the document, in order, under its path.
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "the View API hands these zero-sized handles out by reference"
-    )]
-    fn leaves(ast: &AstTree, meta: &AstMeta, tokens: &Tokens) -> Vec<JsonPath> {
-        let Some(root) = ast.root() else {
-            return Vec::new();
-        };
-        let payloads: HashMap<u64, Arc<str>> = tokens
-            .payloads()
-            .to_vec()
-            .into_iter()
-            .map(|(id, payload)| (id.0, Arc::clone(&payload.text)))
-            .collect();
-        let rules: HashMap<u64, Arc<str>> = meta.rules().to_vec().into_iter().collect();
+    fn leaves(document: &JsonDocumentRef) -> Vec<(u64, JsonPath)> {
         let mut out = Vec::new();
-        walk(&root, String::from("$"), &payloads, &rules, &mut out);
+        if let Some(value) = document.value() {
+            walk(&value, String::from("$"), &mut out);
+        }
         out
     }
 
-    /// Walks one node, appending a leaf per scalar.
-    fn walk(
-        node: &AstNodeRef,
-        path: String,
-        payloads: &HashMap<u64, Arc<str>>,
-        rules: &HashMap<u64, Arc<str>>,
-        out: &mut Vec<JsonPath>,
-    ) {
-        let children = node.children();
-        if children.is_empty() {
-            if let Some(token) = node.token_id() {
-                let raw = payloads
-                    .get(&token)
-                    .map_or_else(String::new, std::string::ToString::to_string);
-                out.push(JsonPath {
-                    kind: token_kind(&raw).to_owned(),
-                    value: unquote(&raw),
+    /// Walks one value, appending `(identity, row)` per scalar.
+    ///
+    /// The identity is the declared leaf's node, which is the parser's node, so a
+    /// re-spelling or a rename keeps the row and changes what it says.
+    fn walk(value: &JsonValueRef, path: String, out: &mut Vec<(u64, JsonPath)>) {
+        match value.kind() {
+            Some(JsonValueKind::JsonObject) => {
+                for pair in value.pairs() {
+                    let Some(child) = pair.value() else {
+                        continue;
+                    };
+                    let name = pair
+                        .key()
+                        .map_or_else(|| format!("#{}", pair.raw()), |key| unquote(&key));
+                    walk(&child, format!("{path}.{name}"), out);
+                }
+            }
+            Some(JsonValueKind::JsonArray) => {
+                for (index, child) in value.values().into_iter().enumerate() {
+                    walk(&child, format!("{path}[{index}]"), out);
+                }
+            }
+            Some(JsonValueKind::JsonString) => out.push((
+                value.raw(),
+                JsonPath {
+                    kind: String::from("string"),
+                    value: unquote(&value.text().unwrap_or_default()),
                     path,
-                });
-            }
-            return;
-        }
-        let rule = node
-            .rule()
-            .and_then(|rule| rules.get(&rule))
-            .map(std::convert::AsRef::as_ref);
-        match rule {
-            // An object is a run of pairs between the braces; a pair is a key
-            // token, a colon, and a value.
-            Some("JsonObject") => {
-                for child in &children {
-                    let pair = child
-                        .rule()
-                        .and_then(|rule| rules.get(&rule))
-                        .is_some_and(|name| name.as_ref() == "JsonPair");
-                    if !pair {
-                        continue;
-                    }
-                    let parts = child.children();
-                    let Some(key) = parts.first() else { continue };
-                    let Some(value) = parts.get(2) else { continue };
-                    let name = key
-                        .token_id()
-                        .and_then(|token| payloads.get(&token))
-                        .map_or_else(|| format!("#{}", key.raw()), |text| unquote(text));
-                    walk(value, format!("{path}.{name}"), payloads, rules, out);
-                }
-            }
-            // An array is a run of values between the brackets; the brackets and
-            // the commas themselves carry no identity.
-            Some("JsonArray") => {
-                let mut index = 0usize;
-                for child in &children {
-                    if child.token_id().is_some() {
-                        continue;
-                    }
-                    walk(child, format!("{path}[{index}]"), payloads, rules, out);
-                    index += 1;
-                }
-            }
-            // A wrapper or a transparent group: keep the path it holds.
-            _ => {
-                for child in &children {
-                    walk(child, path.clone(), payloads, rules, out);
-                }
-            }
+                },
+            )),
+            Some(JsonValueKind::JsonNumber) => out.push((
+                value.raw(),
+                JsonPath {
+                    kind: String::from("number"),
+                    value: value.value().unwrap_or_default().to_string(),
+                    path,
+                },
+            )),
+            Some(JsonValueKind::JsonLiteral) => out.push((
+                value.raw(),
+                JsonPath {
+                    kind: String::from("keyword"),
+                    value: value.word().unwrap_or_default(),
+                    path,
+                },
+            )),
+            // A recovery node builds no declared variant; the parse diagnostics
+            // already explain it.
+            None => {}
         }
     }
 
@@ -210,18 +213,6 @@ mod sink {
             .and_then(|rest| rest.strip_suffix('"'))
             .unwrap_or(raw)
             .to_owned()
-    }
-
-    /// The leaf's kind, as the lexer named it.
-    fn token_kind(raw: &str) -> &'static str {
-        let first = raw.chars().next().unwrap_or(' ');
-        if raw.starts_with('"') {
-            "string"
-        } else if first.is_ascii_digit() || first == '-' {
-            "number"
-        } else {
-            "keyword"
-        }
     }
 }
 
@@ -236,7 +227,10 @@ fn main() -> std::io::Result<()> {
         .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
         .expect("lexer component");
     runtime
-        .install_general_producer(ParserComponent::new(grammar))
+        .install_general_producer(
+            ParserComponent::with_tree::<json_ast::JsonSyntax>(grammar)
+                .expect("the grammar maps onto the declared tree"),
+        )
         .expect("parser component");
     runtime.install(sink::JsonSink).expect("sink");
 
@@ -275,4 +269,161 @@ fn main() -> std::io::Result<()> {
             },
         )
         .serve()
+}
+
+#[cfg(test)]
+mod tests {
+    use irrigation::{Runtime, ViewSchema};
+    use irrigation_syntax::{
+        LexerComponent, ParserComponent, SourceFile, Text, TextComponent, TextDocument, Tokens,
+    };
+
+    use super::JsonPaths;
+
+    /// A board with the syntax pipeline and the sink, over `text`.
+    fn board(text: &str) -> Runtime {
+        let runtime = Runtime::new();
+        let grammar = super::grammar();
+        runtime.register_view(<Text as ViewSchema>::DESCRIPTOR);
+        runtime.register_view(<Tokens as ViewSchema>::DESCRIPTOR);
+        runtime
+            .install_general_producer(TextComponent)
+            .expect("text component");
+        runtime
+            .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
+            .expect("lexer component");
+        runtime
+            .install_general_producer(
+                ParserComponent::with_tree::<super::json_ast::JsonSyntax>(grammar)
+                    .expect("the grammar maps onto the declared tree"),
+            )
+            .expect("parser component");
+        runtime.install(super::sink::JsonSink).expect("sink");
+        runtime
+            .edit(|edit| {
+                edit.view::<SourceFile>()
+                    .set_document(TextDocument::new(text))
+            })
+            .expect("seed");
+        let _ = runtime.read_outputs::<super::sink::JsonSink>();
+        runtime
+    }
+
+    fn edit(runtime: &Runtime, text: &str) {
+        let current = {
+            let snapshot = runtime.read().expect("snapshot");
+            snapshot.view::<SourceFile>().document()
+        };
+        let next = current.replace_with(text).unwrap_or(current);
+        runtime
+            .edit(|edit| edit.view::<SourceFile>().set_document(next))
+            .expect("edit");
+        let _ = runtime.read_outputs::<super::sink::JsonSink>();
+    }
+
+    /// `(row identity, row)` pairs, in document order.
+    fn rows(runtime: &Runtime) -> Vec<(u64, super::JsonPath)> {
+        let snapshot = runtime.read().expect("snapshot");
+        let paths = snapshot.view::<JsonPaths>();
+        paths
+            .field0_ids()
+            .iter()
+            .copied()
+            .map(|id| (id, paths.field0_key(id).expect("row")))
+            .collect()
+    }
+
+    fn paths(runtime: &Runtime) -> Vec<String> {
+        rows(runtime).into_iter().map(|(_, row)| row.path).collect()
+    }
+
+    #[test]
+    fn a_value_edit_keeps_the_row() {
+        let runtime = board(super::source());
+        let before = rows(&runtime);
+        let text = runtime
+            .read()
+            .expect("snapshot")
+            .view::<SourceFile>()
+            .document()
+            .text()
+            .to_owned();
+        let at = text.find("\"version\": 3").expect("the version") + "\"version\": ".len();
+        let edit_text = format!("{}{}{}", &text[..at], "4", &text[at + 1..]);
+        edit(&runtime, &edit_text);
+
+        let after = rows(&runtime);
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            before.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            "a value edit must not replace the row"
+        );
+        assert!(
+            after
+                .iter()
+                .any(|(_, row)| row.path == "$.version" && row.value == "4"),
+            "{after:?}"
+        );
+        assert!(!after.iter().any(|(_, row)| row.value == "3"));
+    }
+
+    #[test]
+    fn a_rename_keeps_the_row_and_moves_its_path() {
+        let runtime = board(super::source());
+        let before = rows(&runtime);
+        let text = {
+            let snapshot = runtime.read().expect("snapshot");
+            snapshot.view::<SourceFile>().document().text().to_owned()
+        };
+        let renamed = text.replace("\"name\"", "\"title\"");
+        assert_ne!(renamed, text);
+        edit(&runtime, &renamed);
+
+        let after = rows(&runtime);
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            before.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            "a key rename must not replace the value's row"
+        );
+        let moved = after
+            .iter()
+            .find(|(_, row)| row.path == "$.title")
+            .expect("the renamed path");
+        let source = after
+            .iter()
+            .find(|(_, row)| row.value == "observatory")
+            .expect("the value");
+        assert_eq!(moved.0, source.0, "the same leaf, addressed differently");
+        assert_eq!(moved.1.value, "observatory");
+    }
+
+    #[test]
+    fn a_deleted_leaf_retracts_its_row() {
+        let runtime = board(super::source());
+        let before = rows(&runtime);
+        let text = {
+            let snapshot = runtime.read().expect("snapshot");
+            snapshot.view::<SourceFile>().document().text().to_owned()
+        };
+        let deleted = text.replace(",\n  \"limits\": { \"rows\": 64, \"depth\": 8 }", "");
+        assert_ne!(deleted, text);
+        edit(&runtime, &deleted);
+
+        let after = rows(&runtime);
+        assert!(
+            after.len() < before.len(),
+            "the deleted leaves retire their rows"
+        );
+        assert!(
+            after
+                .iter()
+                .all(|(id, _)| before.iter().any(|(old, _)| old == id)),
+            "a deletion removes identities, it does not move them into new ones"
+        );
+        assert!(
+            !paths(&runtime)
+                .iter()
+                .any(|path| path.starts_with("$.limits"))
+        );
+    }
 }

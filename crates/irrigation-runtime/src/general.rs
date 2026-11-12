@@ -15,6 +15,13 @@
 //! * the replacement state, output value, dependency trace, and any staged
 //!   definitions commit atomically, so an observer never sees a half-updated
 //!   algorithm;
+//! * **identity is yours.** The View content this component writes is keyed by
+//!   the units it defines, and the framework cannot derive those keys from the
+//!   data: a producer that keys an entity by its spelling re-creates it on every
+//!   rename. Key by the source occurrence instead (the input's `TreeNodeId`,
+//!   `TokenId`, or `AstNodeRef`), or publish a whole value when the elements
+//!   have no identity of their own. [`ChangeBatch`] then names exactly the units
+//!   that moved, which is what lets the rest stand;
 //! * the default [`DependencyUpdates::Reset`] policy reinitializes instead of
 //!   calling `update`, which is always sound;
 //! * old state stays valid if evaluation fails or is cancelled.

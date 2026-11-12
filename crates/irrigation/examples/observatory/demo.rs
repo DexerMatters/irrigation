@@ -5,11 +5,65 @@
 //! The lexer and parser are on the board like every other stage — the board has
 //! no idea what they are — and only the source document is editable.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashSet;
 
 use irrigation::view;
-use irrigation_syntax::{AstMeta, AstNodeRef, AstTree, Tokens};
+
+/// The demo program, declared as a tree.
+///
+/// The grammar's `@tree` annotations say which production builds which variant,
+/// so the parser publishes this tree from the same records as the raw AST and a
+/// component walks `StatementRef`/`ExpressionRef` instead of matching rule names
+/// and child indices.
+#[allow(dead_code)]
+#[irrigation::tree_view(kind = derived, root = Document, view = Syntax)]
+pub mod ast {
+    /// A parsed program.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Document {
+        /// The program and its statements, in source order.
+        Program { items: Vec<Statement> },
+    }
+
+    /// One statement.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Statement {
+        /// A binding.
+        Assign {
+            /// The bound name.
+            name: String,
+            /// The bound expression.
+            value: Expression,
+        },
+        /// A print, with its arguments.
+        Print {
+            /// The printed expressions.
+            args: Vec<Expression>,
+        },
+    }
+
+    /// One expression.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Expression {
+        /// A call.
+        Call {
+            /// The callee's name.
+            callee: String,
+            /// The arguments.
+            args: Vec<Expression>,
+        },
+        /// An integer literal.
+        Number {
+            /// The literal's payload.
+            value: i64,
+        },
+        /// A name reference.
+        Name {
+            /// The spelled name.
+            name: String,
+        },
+    }
+}
 
 /// The symbol table, as a whole-value list.
 #[view(derived)]
@@ -61,196 +115,68 @@ impl irrigation::Reduction for Sum {
 #[view(derived)]
 pub struct Total(Reduced<Sum>);
 
-/// Reads the published Views and walks the parser's tree.
-///
-/// Everything here is a tracked read: the helper functions are called inside a
-/// component, so the units they touch are exactly the ones the component owns.
-struct Source<'a> {
-    rules: &'a HashMap<u64, Arc<str>>,
-    payloads: &'a HashMap<u64, Arc<str>>,
-}
-
-impl<'a> Source<'a> {
-    fn rule(&self, node: &AstNodeRef) -> Option<&str> {
-        node.rule()
-            .and_then(|rule| self.rules.get(&rule))
-            .map(std::convert::AsRef::as_ref)
-    }
-
-    fn text(&self, node: &AstNodeRef) -> Option<&str> {
-        node.token_id()
-            .and_then(|token| self.payloads.get(&token))
-            .map(std::convert::AsRef::as_ref)
-    }
-
-    /// A wrapper rule with one meaningful child is transparent. The parser
-    /// keeps `Statement` and `Expression` so the grammar reads well; a walker
-    /// should see what they wrap.
-    fn unwrap(&self, node: &AstNodeRef) -> AstNodeRef {
-        let mut current = node.clone();
-        for _ in 0..8 {
-            if !matches!(self.rule(&current), Some("Statement" | "Expression")) {
-                return current;
-            }
-            let Some(child) = current
-                .children()
-                .into_iter()
-                .find(|child| child.token_id().is_none())
-            else {
-                return current;
-            };
-            current = child;
-        }
-        current
-    }
-
-    fn child_tokens(node: &AstNodeRef) -> Vec<AstNodeRef> {
-        node.children()
-            .into_iter()
-            .filter(|child| child.token_id().is_some())
-            .collect()
-    }
-
-    fn statements(&self, root: &AstNodeRef) -> Vec<AstNodeRef> {
-        root.children()
-            .into_iter()
-            .filter(|child| child.token_id().is_none())
-            .map(|child| self.unwrap(&child))
-            .collect()
-    }
-
-    /// The expression children of a node, with the `Values` wrapper and the
-    /// punctuation tokens removed.
-    fn expressions(&self, node: &AstNodeRef) -> Vec<AstNodeRef> {
-        let mut out = Vec::new();
-        for child in node.children() {
-            if child.token_id().is_some() {
-                continue;
-            }
-            let child = self.unwrap(&child);
-            if matches!(
-                self.rule(&child),
-                Some("Values" | "Print" | "Assign" | "Program")
-            ) {
-                out.extend(self.expressions(&child));
-                continue;
-            }
-            out.push(child);
-        }
-        out
-    }
-
-    fn assign_name(&self, node: &AstNodeRef) -> Option<String> {
-        Self::child_tokens(node)
-            .into_iter()
-            .find(|token| self.text(token) != Some(":="))
-            .and_then(|token| self.text(&token).map(std::string::ToString::to_string))
-    }
-
-    fn name(&self, node: &AstNodeRef) -> Option<String> {
-        Self::child_tokens(node)
-            .into_iter()
-            .find_map(|token| self.text(&token).map(std::string::ToString::to_string))
-    }
-}
-
-fn rules() -> HashMap<u64, Arc<str>> {
-    AstMeta.rules().to_vec().into_iter().collect()
-}
-
-fn payloads() -> HashMap<u64, Arc<str>> {
-    Tokens
-        .payloads()
-        .to_vec()
-        .into_iter()
-        .map(|(id, payload)| -> (u64, Arc<str>) { (id.0, Arc::clone(&payload.text)) })
-        .collect()
-}
-
 /// Every bound name in source order.
+///
+/// The tree's accessors read one unit each: the name of a statement is one leaf,
+/// and the list of statements is one child slot. There is no rule table and no
+/// payload table to materialize, so this component is woken by the names it
+/// reads rather than by every token in the document.
 fn bound_names() -> Vec<String> {
-    let Some(root) = AstTree.root() else {
+    let Some(document) = ast::Syntax.root() else {
         return Vec::new();
     };
-    let rules = rules();
-    let payloads = payloads();
-    let source = Source {
-        rules: &rules,
-        payloads: &payloads,
-    };
-    source
-        .statements(&root)
-        .iter()
-        .filter(|statement| source.rule(statement) == Some("Assign"))
-        .filter_map(|statement| source.assign_name(statement))
+    document
+        .items()
+        .into_iter()
+        .filter_map(|statement| statement.name())
         .collect()
 }
 
 /// Every unresolved reference, in source order.
 fn unresolved_names() -> Vec<String> {
-    let Some(root) = AstTree.root() else {
+    let Some(document) = ast::Syntax.root() else {
         return Vec::new();
     };
-    let rules = rules();
-    let payloads = payloads();
-    let source = Source {
-        rules: &rules,
-        payloads: &payloads,
-    };
-    let defined: HashSet<String> = source
-        .statements(&root)
-        .iter()
-        .filter(|statement| source.rule(statement) == Some("Assign"))
-        .filter_map(|statement| source.assign_name(statement))
-        .collect();
+    let defined: HashSet<String> = bound_names().into_iter().collect();
     let mut messages = Vec::new();
-    for statement in source.statements(&root) {
-        match source.rule(&statement) {
-            Some("Assign") => {
-                if let Some(value) = source.expressions(&statement).first() {
-                    unresolved_in(&source, value, &defined, &mut messages);
-                }
-            }
-            Some("Print") => {
-                for value in source.expressions(&statement) {
-                    unresolved_in(&source, &value, &defined, &mut messages);
-                }
-            }
-            _ => {}
+    for statement in document.items() {
+        for expression in arguments(&statement) {
+            unresolved_in(&expression, &defined, &mut messages);
         }
     }
     messages
 }
 
+/// The expressions one statement evaluates.
+fn arguments(statement: &ast::StatementRef) -> Vec<ast::ExpressionRef> {
+    match statement.kind() {
+        Some(ast::StatementKind::Assign) => statement.value().into_iter().collect(),
+        Some(ast::StatementKind::Print) => statement.args(),
+        None => Vec::new(),
+    }
+}
+
+/// Reports every `Name` in `expression` that `defined` does not bind.
 fn unresolved_in(
-    source: &Source<'_>,
-    node: &AstNodeRef,
+    expression: &ast::ExpressionRef,
     defined: &HashSet<String>,
     out: &mut Vec<String>,
 ) {
-    let node = source.unwrap(node);
-    match source.rule(&node) {
-        Some("Name") => {
-            let Some(name) = source.name(&node) else {
-                return;
-            };
-            if !defined.contains(&name) {
-                out.push(format!("unresolved name `{name}`"));
+    match expression.kind() {
+        Some(ast::ExpressionKind::Name) => {
+            if let Some(name) = expression.name() {
+                if !defined.contains(&name) {
+                    out.push(format!("unresolved name `{name}`"));
+                }
             }
         }
-        Some("Call") => {
-            for argument in source.expressions(&node) {
-                unresolved_in(source, &argument, defined, out);
+        Some(ast::ExpressionKind::Call) => {
+            for argument in expression.args() {
+                unresolved_in(&argument, defined, out);
             }
         }
-        Some("Number") => {}
-        // A wrapper this walker does not know: descend into it rather than
-        // pretend there was nothing inside.
-        _ => {
-            for child in source.expressions(&node) {
-                unresolved_in(source, &child, defined, out);
-            }
-        }
+        Some(ast::ExpressionKind::Number) => {}
+        None => {}
     }
 }
 

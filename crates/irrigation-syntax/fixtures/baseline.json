@@ -1,38 +1,38 @@
 {
-  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down, except when a correctness fix makes a unit honest about its presence: `invalidations` is the reverse-dependency cone (E_v), and `14632c9` made `tree_contains` answer `true` for the slots `tree_get` already read, so six dependents that were never recorded now are. `backspace`, `typing-end` and `typing-mid` moved 10 -> 16 for that reason, and the bound records the corrected cone rather than the one a wrongly-absent unit produced. `content_commits` counts whole-content values that were actually published, one per field a write group really moved. It is 6-9 for every script regardless of how much the edit touches (it was 7,051 for one byte and 6,518 for a deleted region), which is the property the plan asks for.",
+  "note": "Upper bounds of work per script, recorded from the implementation. They may only go down, except when a correctness fix makes a unit honest about its presence: the invalidations entry is the reverse-dependency cone (E_v); making tree_contains answer true for the slots tree_get already read once recorded six dependents that had never been recorded. The identity fix (plans/identity-plan.md) tightened the table again and is the reason the value is now the recorded one: an in-place re-spelling keeps every token and node id, so those scripts add no identity and invalidate fewer units. content_commits counts whole-content values that were actually published, one per field a write group really moved. The declared-tree work removed the per-node field map, which nothing read: meta_units_written fell by one unit pair per published field and the bounds were re-recorded.",
   "scripts": {
     "backspace": {
       "tokens_relexed": 1,
       "tokens_reparsed": 3,
-      "nodes_added": 10,
-      "meta_units_written": 62,
+      "nodes_added": 0,
+      "meta_units_written": 52,
       "token_units_read": 4,
-      "invalidations": 16,
-      "content_commits": 9
+      "invalidations": 9,
+      "content_commits": 6
     },
     "delete-member": {
       "tokens_relexed": 22,
-      "tokens_reparsed": 23,
-      "nodes_added": 41,
-      "meta_units_written": 282,
-      "token_units_read": 25,
-      "invalidations": 52,
+      "tokens_reparsed": 17,
+      "nodes_added": 4,
+      "meta_units_written": 192,
+      "token_units_read": 3,
+      "invalidations": 31,
       "content_commits": 9
     },
     "delete": {
       "tokens_relexed": 182,
-      "tokens_reparsed": 200,
-      "nodes_added": 306,
-      "meta_units_written": 2178,
-      "token_units_read": 185,
-      "invalidations": 185,
+      "tokens_reparsed": 177,
+      "nodes_added": 264,
+      "meta_units_written": 1796,
+      "token_units_read": 179,
+      "invalidations": 178,
       "content_commits": 9
     },
     "paste": {
       "tokens_relexed": 177,
       "tokens_reparsed": 177,
-      "nodes_added": 272,
-      "meta_units_written": 1934,
+      "nodes_added": 264,
+      "meta_units_written": 1796,
       "token_units_read": 179,
       "invalidations": 9,
       "content_commits": 6
@@ -40,29 +40,29 @@
     "rename-key": {
       "tokens_relexed": 1,
       "tokens_reparsed": 2,
-      "nodes_added": 8,
-      "meta_units_written": 50,
+      "nodes_added": 0,
+      "meta_units_written": 44,
       "token_units_read": 4,
-      "invalidations": 10,
-      "content_commits": 9
+      "invalidations": 9,
+      "content_commits": 6
     },
     "typing-end": {
       "tokens_relexed": 1,
       "tokens_reparsed": 3,
-      "nodes_added": 10,
-      "meta_units_written": 62,
+      "nodes_added": 0,
+      "meta_units_written": 52,
       "token_units_read": 4,
-      "invalidations": 16,
-      "content_commits": 9
+      "invalidations": 9,
+      "content_commits": 6
     },
     "typing-mid": {
       "tokens_relexed": 1,
       "tokens_reparsed": 3,
-      "nodes_added": 10,
-      "meta_units_written": 62,
+      "nodes_added": 0,
+      "meta_units_written": 52,
       "token_units_read": 4,
-      "invalidations": 16,
-      "content_commits": 9
+      "invalidations": 9,
+      "content_commits": 6
     }
   }
 }

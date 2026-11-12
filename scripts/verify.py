@@ -18,9 +18,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# The workspace ran 48 suites when this floor was set. A drop means targets vanished, not that
-# they passed -- raise the floor when suites are added, never lower it.
-SUITE_FLOOR = 46
+# The workspace ran 54 suites when this floor was set (the declared-tree work added the
+# generic-tree readers, the grammar mapping, and the layout reflection). A drop means targets
+# vanished, not that they passed -- raise the floor when suites are added, never lower it.
+SUITE_FLOOR = 52
 
 
 def run(command: list[str], label: str) -> tuple[bool, str]:
@@ -69,6 +70,7 @@ def main() -> int:
 
     if not args.quick:
         ok &= run(["python3", "scripts/check-md-links.py"], "markdown links")[0]
+        ok &= run(["python3", "blog/diagrams/build.py", "--check"], "blog diagrams")[0]
         ok &= run(["python3", "scripts/check-doc-comments.py"], "doc comments")[0]
         ok &= run(
             ["cargo", "clippy", "-p", "irrigation-runtime", "--no-default-features", "--all-targets",

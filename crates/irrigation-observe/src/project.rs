@@ -104,6 +104,7 @@ fn resolve(
 ) -> (Vec<RowFacts>, bool) {
     let keys: Vec<UnitKey> = claims.iter().flatten().map(Claim::key).collect();
     let mut versions = runtime.unit_versions(&keys).into_iter();
+    let mut retired = runtime.unit_retired(&keys).into_iter();
     let mut inconsistent = false;
     let rows = claims
         .iter()
@@ -111,6 +112,14 @@ fn resolve(
             let Some(claim) = claim else {
                 return (None, RowState::Display);
             };
+            let is_retired = retired.next().unwrap_or(false);
+            if is_retired {
+                // The cell still answers with its retirement version, but the
+                // row's content is gone. Marking it changed would make a
+                // removal look like a new value every time it is drawn.
+                let _ = versions.next();
+                return (None, RowState::Removed);
+            }
             match versions.next().flatten() {
                 Some(version) => (
                     Some(UnitWire {

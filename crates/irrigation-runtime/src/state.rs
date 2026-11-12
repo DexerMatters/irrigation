@@ -84,6 +84,14 @@ pub struct NodeRecord {
     /// revision that changed the value, and the readers that ask "did this change
     /// at the current revision" compare it with one.
     pub changed_at: Revision,
+    /// Revision at which this cell's payload was retracted.
+    ///
+    /// A retracted cell keeps its node (subscribers hold the id and compare
+    /// versions), but it no longer holds a live unit: the observer must not
+    /// count it among a field's rows, and it must not report its removal as a
+    /// content change every revision afterwards. An install clears the marker,
+    /// so a re-published unit is live again.
+    pub retired_at: Revision,
     /// Monotonic value version. Unlike `changed_at`, this advances even when a
     /// value changes inside one revision, and it does not advance for an equal
     /// redefinition.
@@ -171,6 +179,7 @@ impl NodeRecord {
             component: None,
             value: None,
             changed_at: 0,
+            retired_at: 0,
             value_version: 0,
             verified_at: 0,
             routing_at: 0,
@@ -263,6 +272,7 @@ impl NodeRecord {
         self.value = payload;
         self.value_version = value_version;
         self.changed_at = revision;
+        self.retired_at = 0;
         self.state = NodeState::Ready;
         self.failure = None;
         self.suspect_at = 0;
@@ -280,6 +290,7 @@ impl NodeRecord {
         self.value = None;
         self.value_version = value_version;
         self.changed_at = revision;
+        self.retired_at = revision;
         self.content_stale = false;
     }
 
@@ -323,6 +334,7 @@ impl NodeRecord {
         self.value = payload;
         self.value_version = value_version;
         self.changed_at = changed_at;
+        self.retired_at = 0;
         self.state = NodeState::Ready;
         self.failure = None;
         self.suspect_at = 0;

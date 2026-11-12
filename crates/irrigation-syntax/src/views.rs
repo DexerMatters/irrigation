@@ -7,7 +7,9 @@
 //! * `AstTree` (the generated View in [`ast_tree`]) — the AST *structure*: what
 //!   each node is and which children it has;
 //! * [`AstMeta`] — everything about an AST node that is not structure: spans,
-//!   token identity, semantic value, named fields, diagnostics.
+//!   token identity, semantic value, the wrapper relation, rule names, and
+//!   diagnostics. Named fields are not here: the grammar compiles them into the
+//!   tree it maps onto.
 //!
 //! Splitting structure from metadata is what makes an edit local: an insertion
 //! rewrites the structure of one path and leaves every span unit alone, while a
@@ -19,6 +21,7 @@ use std::sync::Arc;
 
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenFlags, TokenId, TokenKindId};
+use crate::parser::ast::RuleId;
 use crate::text::{TextAnchor, TextDocument, TextRange};
 
 /// Stable diagnostic identity: code plus source span.
@@ -195,6 +198,99 @@ pub mod ast_tree {
     }
 }
 
+/// Readers over the published parse.
+///
+/// Each method reads exactly the unit it names, so calling one inside a
+/// component records one dependency and a caller that reads nothing else is not
+/// woken by an edit that missed it. Every read is ambient: these methods must be
+/// called from inside a computation (a component body, a general component, or a
+/// demand), exactly like `AstTree::root`.
+impl ast_tree::AstNodeRef {
+    /// The node's rule, when it is a rule node.
+    ///
+    /// Reads the node's rule slot (one unit). Token and recovery leaves have no
+    /// rule and answer `None`.
+    #[must_use]
+    pub fn rule_id(&self) -> Option<RuleId> {
+        self.rule().map(RuleId)
+    }
+
+    /// The token occurrence, when this node is a token leaf.
+    ///
+    /// Reads the node's token slot (one unit).
+    #[must_use]
+    pub fn token(&self) -> Option<TokenId> {
+        self.token_id().map(TokenId)
+    }
+
+    /// The literal payload the parser published for this node.
+    ///
+    /// One unit in `AstMeta::values`; only token leaves carry one. This is the
+    /// payload the lexer's text denotes, already classified, so a reader does
+    /// not re-parse a spelling.
+    #[must_use]
+    pub fn value(&self) -> Option<crate::AstValue> {
+        AstMeta.values().get(&self.raw())
+    }
+
+    /// The literal payload as a signed integer.
+    #[must_use]
+    pub fn integer(&self) -> Option<i64> {
+        self.value().and_then(|value| value.as_int())
+    }
+
+    /// The literal payload as a boolean.
+    #[must_use]
+    pub fn boolean(&self) -> Option<bool> {
+        self.value().and_then(|value| value.as_bool())
+    }
+
+    /// The child that stands in for this node, when the grammar declared it a
+    /// wrapper (`@wrap(field)`).
+    ///
+    /// One unit in `AstMeta::wraps`, so a non-wrapper answers `None` and records
+    /// a negative dependency on that node alone.
+    #[must_use]
+    pub fn wrapped(&self) -> Option<Self> {
+        AstMeta
+            .wraps()
+            .get(&self.raw())
+            .map(|child| Self::from_tree(self.tree().child(child)))
+    }
+
+    /// The node this one means, after skipping wrappers.
+    ///
+    /// Parentheses, a single-program wrapper, and grouping rules add no meaning;
+    /// the tree keeps them, and this walks to what they stand for. The chain is
+    /// finite because a wrapper's payload is always a strictly deeper child; the
+    /// bound only guards a corrupted publication.
+    #[must_use]
+    pub fn semantic(&self) -> Self {
+        let mut current = self.clone();
+        for _ in 0..64 {
+            let Some(inner) = current.wrapped() else {
+                break;
+            };
+            current = inner;
+        }
+        current
+    }
+
+    /// This node's source range, resolved into `document`.
+    ///
+    /// Reads the two span units. The anchors are versioned, so a node whose
+    /// source did not change resolves through the edit chain instead of being
+    /// re-keyed.
+    #[must_use]
+    pub fn range_in(&self, document: &TextDocument) -> Option<std::ops::Range<usize>> {
+        let start = AstMeta.span_starts().get(&self.raw())?;
+        let end = AstMeta.span_ends().get(&self.raw())?;
+        document
+            .snapshot()
+            .resolve_range(TextRange::new(start, end))
+    }
+}
+
 /// Source-correlation and semantic metadata for the AST.
 #[irrigation::view(derived)]
 pub struct AstMeta {
@@ -210,10 +306,16 @@ pub struct AstMeta {
     pub errors: Set<u64>,
     /// AST parse diagnostics.
     pub diagnostics: Map<DiagnosticId, Diagnostic>,
-    /// Named AST field mappings.
-    pub fields: Map<(u64, String), u64>,
+    /// Wrapper node to the child that stands in for it.
+    ///
+    /// A rule declared `@wrap(field)` adds no meaning of its own: parentheses,
+    /// a single-program wrapper, a grouping rule. The tree keeps the node — the
+    /// structure and the identity are the parse's — and this relation says what
+    /// it stands for. One unit per wrapper node, so a reader that skips a
+    /// wrapper watches exactly the nodes on the chain it walks.
+    pub wraps: Map<u64, u64>,
     /// Rule identity to rule name.
-    pub rules: Map<u64, Arc<str>>,
+    pub rules: Map<RuleId, Arc<str>>,
 }
 
 /// One pipeline counter.

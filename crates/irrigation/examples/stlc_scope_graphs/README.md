@@ -2,8 +2,8 @@
 
 A worked example of the framework: a small language front end whose name
 analysis is scope-graph resolution, whose type checker and evaluator run as
-per-term components, and whose whole analysis is observed on the Observatory
-board while you type.
+components, and whose whole analysis is observed on the Observatory board while
+you type.
 
 ```sh
 cargo run --example stlc_scope_graphs -p irrigation --features observatory
@@ -28,171 +28,194 @@ f 2
 
 The seed proves lexical scoping: the `x` inside `f` resolves to the **first**
 `x`, even though a second `x` is declared later. A name-environment walk would
-get this wrong; the scope graph follows the parent edge out of the lambda's
-scope and stops at the nearest binding. The second `x` is a legal shadowing
-binding and is reported as such.
+get this wrong; the resolver follows the binder's scope chain and stops at the
+nearest binding. The second `x` is a legal shadowing binding and is reported as
+such.
 
-## The pipeline
+## The pipeline: four components
 
 ```text
-elaborate     -> Terms
-resolve_name  -> ScopeGraph: binding nodes, targets, name errors
-check_term    -> ScopeGraph.types / type_errors, one entry per term
-evaluate      -> Evaluation, from per-term evaluator invocations
+resolve(term, scope, chain)   -> scope graph: scopes, term/binding nodes, P/D/R/child
+check(term)                   -> scope graph: type scopes + T edges, types/errors
+evaluate(term, env, depth)    -> Evaluation: one row per invocation + the summary
+lower(term, chain, at)        -> Machine: one MIPS row per instruction, in order
 ```
 
-Every stage is an ordinary component. `Terms` and `ScopeGraph` are singleton
-Views: their handles are zero-sized and their accessors are ambient tracked
-reads, so **no component takes `&Terms` or `&ScopeGraph`**. The signatures are
-only `elaborate()`, `resolve_name()`, `check_term(term)`,
-`eval_term(term, env, depth)`, and `evaluate()`. The root returns the View
-handles for registration:
+There is **no elaboration stage and no `Terms` View**: the typed tree is a
+`#[tree_view]` declaration, and the parser publishes it from the same records as
+the raw AST, so `resolve` walks a `TermRef` directly. The grammar says which
+production builds which variant (`@tree(Term::Lam)`) and which child feeds which
+field (`body: Term`); a rule that adds no meaning (`Parens`, a parenthesised type)
+is declared a wrapper (`@wrap(inner)`), and the tree simply does not contain it.
+
+`syntax.rs` is the whole declaration plus one conversion: the annotation's
+`TyRef` to the example's own `Type`. There is no classifier function, no rule-id
+comparison, no child index, and no token or literal plumbing.
+
+Every stage emits **while it walks**. There is no draft, no scope builder, and no
+whole-table publisher: each emission is its own unit, written at the expression
+that performs it. `lower` follows the same rule with rows: an arm writes the
+instructions it contributes at the row it was given and recurses into its
+children at the offsets it computes, so a rename re-publishes nothing and a
+literal edit re-versions one row. The root only composes:
 
 ```rust
 #[component(root)]
-pub fn stlc() -> (Terms, ScopeGraph, Evaluation) {
-    let terms = elaborate();
-    let scope = resolve_name();
-    if let Some(root) = Terms.root() {
-        let _ = check_term(root);
-    }
-    let evaluation = evaluate();
-    (terms, scope, evaluation)
+pub fn stlc() -> (ScopeGraph, Evaluation, Machine) {
+    /* the shell: .data, .text, main:, the heap pointer */
+    let end = match syntax::root() {
+        Some(root) => {
+            let module = ScopeGraph.graph().emit_node(ScopeNode::Scope { label: "module".into() });
+            let _ = resolve(root.clone(), module, Vec::new());
+            let _ = check(root.clone());
+            let outcome = evaluate(root.clone(), Vec::new(), 0);
+            Evaluation.define_result(Line(outcome.text()));
+            machine::lower(root, Vec::new(), machine::SHELL)
+        }
+        None => machine::SHELL + 1,
+    };
+    /* the exit: print $v0, then halt */
+    (ScopeGraph, Evaluation, Machine)
 }
 ```
 
-## Bindings as scopes
+The two trees are on the board: `AstTree` is the raw parse the parser always
+publishes (rule nodes, token leaves, recovery nodes), and `Syntax` is the
+declared tree, drawn with the variant names this file declares.
 
-`resolve_name` has two units of work:
+## Identity without keys
 
-* `build_scopes()` reads `Terms.root/nodes/names` and writes the graph: scopes,
-  term nodes, one **binding node** per lambda/let, `P` parent edges,
-  `D` declaration edges to binding nodes, `R` reference edges, and `child`
-  edges.
-* `resolve_term(term)` is a separate invocation per term. A variable follows
-  its `R` edge, walks `P` edges, inspects `D` edges, and writes
-  `targets[term]` or `name_errors[term]`. A lambda/let checks its outer
-  declarations and writes/removes the shadowing notice keyed by its binding
-  node.
-
-The binding node carries only `{ binder, value, kind }`. It deliberately has
-no name, annotation, body, or type:
-
-* a rename changes the `D` edge name, not the binding payload;
-* a type annotation edit does not touch it;
-* a lambda/let body edit does not touch it;
-* only a let-value structural edit changes `value`.
-
-The resolver never reads `Terms.annotations` or `Terms.literals`, so a type or
-literal edit cannot invalidate it.
-
-## Types as term entries
-
-There is **no `TypeEnv`, no `binding_type`, and no `type_scope`**. A term's type
-is a map entry:
+The example never names an entity. The framework gives every lowered expression a
+computation site, interned per `(invocation scope, site)`, and that site is the
+identity of the unit the expression writes:
 
 ```rust
-pub struct ScopeGraph {
-    pub graph: Graph<ScopeNode, ScopeEdge>, // scope/term/binding; P/D/R/child
-    pub targets: Map<u64, u64>,             // reference -> binding node
-    pub name_errors: Map<u64, Line>,
-    pub types: Map<u64, Type>,              // term -> type
-    pub type_errors: Map<u64, Line>,
-}
+let node = graph.emit_node(payload);        // identity: this expression, in this invocation
+let edge = graph.emit_edge(from, to, payload);
 ```
 
-`check_term(term)` derives a variable's binding type inline:
+* two invocations are two scopes, so their entities are distinct;
+* re-executing one invocation reuses the site, so the entity is reused;
+* a site that leaves the trace retracts the units it wrote.
 
-* a lambda binding's type is the binder's annotation;
-* a let binding's type is the type of its value term, obtained by
-  `check_term(value)`;
-* the result is written to `types[term]` and the error to
-  `type_errors[term]`.
+A **shared** entity is interned by its value instead:
+`graph.emit_shared(key, payload)` roots one site per key, so every `check`
+invocation that derives `Int` writes (or validates) the same type node. The node
+has one owner, stays alive while any caller demands it, and retracts when the
+last one stops.
 
-Each term owns exactly its key; different check invocations write disjoint map
-entries. Equal types are equal `Type` values, not one shared type scope. That is
-the deliberate trade for dropping the type-scope owner: shared type nodes would
-need a single writer; per-term entries need none.
+## Bindings as scopes, types as shared scopes
 
-The let value is checked even when unused. A variable referencing a let reuses
-the same `check_term(value)` invocation.
+`resolve` has no graph read-back. A binder's body is resolved under a `Vec<Frame>`
+carried as an argument — the graph is the *witness*, not the query surface. The
+reason is the runtime's write rule: reading a declaration that the enclosing
+invocation has staged but not committed waits on that invocation's own claim.
+Carrying the chain keeps the traversal honest and is why there is no `bind`-style
+helper stage.
+
+The binding payload is `{ kind, label }`: a rename changes the `D` edge name and
+the label, never a term's identity. A reference writes `targets[term]`, keyed by
+the parser's term identity; the later stages read that one map instead of
+re-resolving.
+
+`check` derives a variable's type from the binding it resolved to — a lambda
+binding's type is its annotation, a `let` binding's is its value's type. There is
+no `TypeEnv`. Every distinct rendered type gets one shared `Type` node and a `T`
+edge from each typed term, so equal types are one scope and every term keeps its
+own `types[term]` entry.
 
 ## Evaluation
 
-The evaluator keeps a dynamic value environment because values, unlike types,
-are not derivable from syntax: a lambda parameter's value comes from the
-application and a closure captures its environment.
+`evaluate(term, env, depth)` keeps a dynamic environment because values, unlike
+types, are not derivable from syntax: a lambda parameter's value comes from the
+application and a closure captures its environment. The environment is an
+ordinary argument, keyed by the binding term's parser identity. One row per
+invocation lands in `Evaluation.outcomes`; the root writes the summary.
 
-```rust
-#[component(callable)]
-pub fn eval_term(term: u64, env: ValueEnv, depth: u32) -> EvalOutcome { ... }
+## The graph
 
-#[component(callable)]
-pub fn evaluate() -> Evaluation { ... }
+```text
+ScopeNode::Scope { label }                   a lexical scope
+ScopeNode::Term  { kind, binding, label }    a term; binders carry their kind
+ScopeNode::Type  { label }                   one shared scope per rendered type
+
+P        scope -> enclosing scope
+D name   scope -> declared binding term
+R name   scope -> referencing variable term
+child#N  term  -> field N
+T        term  -> its type scope
 ```
 
-`ValueEnv` is keyed by binding nodes, never names or types. `eval_term` is per
-`(term, environment, depth)`; `evaluate` writes the one `Evaluation` summary
-(result, kind, steps, diagnostics). `depth` is part of the invocation identity
-so divergent recursion is bounded; a shared fuel budget is a follow-up.
+`ScopeGraph` also holds `terms` (term -> node), `targets` (reference -> binding
+term), `types` (term -> `Type`), and the name/type diagnostics.
 
 ## Reactivity
 
-| Edit | Resolver | `check_term` | `eval_term` |
-|---|---|---|---|
-| Lambda annotation | not run | lambda + variables reading that annotation | not run |
-| Let value type | not run | value + references to that let | not run |
-| Rename | run (names/D edges) | not run (targets are binding ids) | not run |
-| Literal | not run | not run (no literal reads) | literal path |
-| Lambda body structural | run | body terms | body terms |
-| Let body structural | run | let + body terms | let + body terms |
-| Let value structural | run | value + let shape + references | value + environment |
+What the design guarantees:
 
-The resolver's per-term split means a local scope change does not rerun every
-reference. The type checker's per-term split means a local type change reruns
-only the affected path. The evaluator is per `(term, env, depth)`, so a literal
-edit reruns the literal and its consumers.
+* a demand at the same revision executes nothing (warm reads are free);
+* a re-spelling is a payload change. The token keeps its identity, so every AST
+  node whose extent is unchanged keeps its identity, so every component argument
+  is unchanged, so the scope graph keeps **every node and edge identity** — the
+  literal-edit test asserts exactly that, payloads included;
+* a rename is a payload change too, because a frame carries the binder's
+  occurrence rather than its name;
+* a structural edit re-keys only the constructs whose extent changed, and a
+  deleted subtree retracts its nodes, edges, targets, and type rows.
 
-The remaining term-shape unit is `Terms.nodes`: a let-value structural edit
-also re-runs the let's `check_term`/`resolve_term`; the body checks stay cached.
-Splitting child identities further is a later refinement.
+What it does not guarantee, and why:
+
+* **Structural growth re-identifies the constructs whose extent changed.** The
+  extent is the only identity that separates nested siblings sharing a boundary
+  (`f 2 3` nests an `App` that starts at `f`) without a host-written key.
+* **Evaluation rows whose environment changed are new rows.** A row is "this
+  term evaluated in this environment", and the environment is part of what is
+  being evaluated. The scope graph is untouched by such an edit.
+
+| Edit | Behaviour |
+|---|---|
+| Literal re-spelling | the graph is unchanged; the literal's row keeps its key and reports the new value |
+| Rename | the graph is unchanged; labels and `D`/`R` names update in place; `targets` is unchanged |
+| Lambda annotation | that lambda and the terms that read its type are re-checked |
+| Structural | the changed extents re-key; untouched subtrees keep their identities |
+| No edit | nothing executes |
 
 ## What the board shows
 
-- **SourceFile** — the only editable plate. Double click, type, and the host
-  commits one edit; a parse error names a line and a column and leaves the last
-  good tree in place.
-- **Text**, **Tokens**, **AstTree**, **AstMeta**, **PipelineStats** — the
-  framework pipeline.
-- **Terms** — the lowered term table.
-- **ScopeGraph** — the binding graph plus the `targets`, `name_errors`,
-  `types`, and `type_errors` maps.
-- **Evaluation** — `result`, `kind`, `steps`, and stuck diagnostics.
+- **SourceFile** — the only editable plate.
+- **Text**, **Tokens**, **AstTree**, **AstMeta** — the framework pipeline.
+- **Syntax** — the declared tree: one `Term` variant per node, with the
+  annotation under each lambda and the literal's payload on its leaf. It is
+  derived, so it is drawn, not edited.
+- **ScopeGraph** — the graph plus `terms`, `targets`, `name_errors`, `types`,
+  `type_errors`.
+- **Evaluation** — `result`, `kind`, `steps`, diagnostics, and one row per
+  `evaluate` invocation.
+- **Machine** — the MIPS listing: one row per instruction, in program order,
+  ready for SPIM or MARS. A rename leaves every row as it was; a literal edit
+  moves one.
 
 ## Tests
 
-The example's end-to-end tests cover:
-
-- the seed resolves and evaluates to `1 : Int`;
-- binding nodes/declarations are in the graph and types are term-keyed entries;
-- equal types are equal entries, not one node;
-- a type annotation edit re-runs `check_term`, not `resolve_name` or `evaluate`;
-- a literal edit re-runs only `evaluate`, not the resolver or checker;
-- a consistent rename re-runs `resolve_name`, keeps `targets` equal, and does
-  not run the checker/evaluator;
-- a structural edit retracts stale type entries (`Bool` disappears when the
-  program stops using it);
-- an ill-typed program reports `type_errors` and still has type entries;
-- an unresolved name has no target and a name error;
-- a parse error leaves the last good tree;
-- every analysis View is on the board.
-
-Run them:
+The example's end-to-end tests cover the seed (`1 : Int`), lexical scoping and
+shadowing, term/binding/type nodes, one canonical type scope per type, a rename
+that keeps the program resolved, a literal edit that evaluates the new literal,
+an annotation edit that re-checks, stale type retraction, ill-typed and
+unresolved programs, parse errors, a warm read that executes nothing, the four
+stage components, and every analysis View on the board. The lowering is gated
+twice: by the rows it writes (a rename changes none, a literal edit changes one,
+an annotation edit changes none) and by running the listing in a small simulator
+and comparing what it prints with what `evaluate` says.
 
 ```sh
 cargo test --example stlc_scope_graphs -p irrigation --features observatory
-cargo test -p irrigation-observe --test shared_scope_graph
+cargo test -p irrigation --test emission
+cargo test -p irrigation-syntax --test declared_tree   # grammar -> tree, and the gates
 ```
+
+The framework gates are in `crates/irrigation/tests/emission.rs`: one expression
+owns one entity, a re-execution reuses it, different invocations do not collide,
+and a shared node retracts with its last caller.
 
 ## Collected pointers
 
@@ -208,13 +231,24 @@ cargo test -p irrigation-observe --test shared_scope_graph
 
 ## What this is not
 
-- **No shared type scopes.** Types are term-keyed values; equal types are not
-  one graph node. The graph is a name/binding graph, and that is the price of
-  removing the type-scope owner.
-- **No imports or type-dependent resolution.** Only `P` edges take part in
-  resolution.
+- **No host-authored identity.** An entity is the expression that emitted it, and
+  a construct keeps that identity exactly while its occurrence (a token, an
+  extent, a binder) survives the edit.
+- **No imports or type-dependent resolution.** Only lexical scopes take part.
 - **No subtyping or polymorphism.** Type equality is structural value equality.
 - **Evaluation is untyped.** It can run an ill-typed term and report a stuck
   application; the type maps are the authority on well-typedness.
-- **The term table is not a second syntax tree.** It is a semantic,
-  identity-stable projection of the parser's tree, and it is not editable.
+- **No graph-query resolution.** Resolution reads the chain, not the graph it is
+  writing; a derived graph's adjacency is one whole-topology unit.
+- **No surface syntax beyond this language.** The tree declares what the grammar
+  can build; a construct the grammar grows and the tree does not declare fails at
+  parser construction (`Grammar::map_tree`), not at read time.
+- **The backend is a listing, not an assembler.** It targets 32-bit words, has no
+  garbage collection (a bump allocator over 64 KiB), and leaves values untagged:
+  the type maps are the authority on well-typedness, so the code assumes them. A
+  literal that does not fit a word lowers to zero with a comment. The suite runs
+  the emitted subset in `sim.rs` and compares the printed word with `evaluate`;
+  SPIM and MARS compatibility is by construction, not by a CI step.
+- **A listing's identity is its order.** The rows are positions, so an insertion
+  re-places what follows it. Per-term blocks plus a placement pass would keep
+  code identity independent of layout; nothing here needs it.

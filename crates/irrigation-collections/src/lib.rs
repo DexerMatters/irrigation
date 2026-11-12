@@ -23,6 +23,7 @@ pub mod graph;
 mod key_set;
 pub use key_set::KeySet;
 pub mod join;
+pub mod layout;
 pub mod list;
 pub mod map;
 pub mod reduce;
@@ -38,6 +39,10 @@ pub use field::{
 };
 pub use graph::{EdgeKey, EdgePayload, Graph, GraphEditor, GraphRef, GraphTopology, NodeKey};
 pub use join::{EquiJoin, FieldJoinState, Join, JoinSpec};
+pub use layout::{
+    Cardinality, ChildLayout, LeafKind, LeafLayout, TreeLayout, TreeSchema, TypeLayout,
+    VariantLayout,
+};
 pub use list::{
     DerivedList, DerivedListRef, List, ListOutputExt, SourceList, SourceListEditor, SourceListRef,
 };

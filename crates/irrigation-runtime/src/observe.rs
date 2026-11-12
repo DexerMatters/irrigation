@@ -328,6 +328,8 @@ pub struct FieldFacts {
     pub content_version: Version,
     /// Units whose value changed at the current revision.
     pub changed_units: u32,
+    /// Units retracted at the current revision.
+    pub retracted_units: u32,
 }
 
 /// One entity of a field, as a generic drawing needs it.
@@ -384,6 +386,8 @@ pub struct ViewFacts {
     pub provider_node: Option<NodeId>,
     /// Units changed at the current revision, across fields.
     pub changed_units: u32,
+    /// Units retracted at the current revision, across fields.
+    pub retracted_units: u32,
 }
 
 /// What kind of component a node belongs to.

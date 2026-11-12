@@ -35,7 +35,12 @@ pub struct TokenKind {
     pub error: bool,
 }
 
-/// Identity of a token. Reused tokens keep their id across revisions.
+/// Identity of one token occurrence.
+///
+/// The identity names the occurrence, not the spelling: an edit that re-spells
+/// the token at a position keeps its id and changes only the payload. That is
+/// what lets the parser keep a node whose extent still covers the same tokens,
+/// and what keeps every entity emitted above the AST stable across an edit.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenId(pub u64);
 

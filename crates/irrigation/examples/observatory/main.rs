@@ -36,7 +36,10 @@ fn main() -> std::io::Result<()> {
         .install_general_producer(LexerComponent::new(grammar.lexer().clone()))
         .expect("lexer component");
     runtime
-        .install_general_producer(ParserComponent::new(grammar))
+        .install_general_producer(
+            ParserComponent::with_tree::<demo::ast::Syntax>(grammar)
+                .expect("the grammar maps onto the declared tree"),
+        )
         .expect("parser component");
     runtime
         .install(resolve::ResolveProgram)
@@ -181,7 +184,10 @@ mod tests {
             .install_general_producer(LexerComponent::new(compiled.lexer().clone()))
             .expect("lexer component");
         runtime
-            .install_general_producer(ParserComponent::new(compiled))
+            .install_general_producer(
+                ParserComponent::with_tree::<demo::ast::Syntax>(compiled)
+                    .expect("the grammar maps onto the declared tree"),
+            )
             .expect("parser component");
         runtime
             .install(resolve::ResolveProgram)

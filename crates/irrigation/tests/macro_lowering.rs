@@ -626,7 +626,7 @@ mod shadowing {
 }
 
 #[test]
-fn a_match_arm_binding_does_not_observe_the_shadowed_local() {
+fn a_match_arm_binding_observes_its_scrutinee_not_the_shadowed_local() {
     let runtime = Runtime::new();
     runtime.install(shadowing::MatchArm).expect("install");
     runtime
@@ -643,13 +643,49 @@ fn a_match_arm_binding_does_not_observe_the_shadowed_local() {
         11
     );
     // The arm body is the third lowered expression site: the `wide` read, the
-    // match scrutinee, then `_n + 1`. Its trace must be empty: the `_n` it reads
-    // is the pattern binding, not the tracked local.
+    // match scrutinee, then `_n + 1`. The `_n` it reads is the pattern binding,
+    // so the body observes the scrutinee -- the value the binding projects --
+    // and never the shadowed local of the same name.
     let body = site_node(&runtime, 2);
+    let scrutinee = site_node(&runtime, 1);
     let explanation = runtime.explain_node(body);
-    assert!(
-        explanation.dependencies.is_empty(),
-        "an arm binding shadowed a tracked local: {explanation:?}"
+    let observed: Vec<NodeId> = explanation
+        .dependencies
+        .iter()
+        .map(|dependency| dependency.node)
+        .collect();
+    assert_eq!(
+        observed,
+        vec![scrutinee],
+        "an arm binding must observe the scrutinee, not the shadowed local: {explanation:?}"
+    );
+
+    // Changing the value the binding projects re-runs the body.
+    runtime
+        .edit(|edit| edit.view::<Shadowed>().set_narrow(20))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<shadowing::MatchArm>()
+            .expect("outputs"),
+        21
+    );
+
+    // Changing the shadowed local it does not read does not.
+    let executed = runtime.explain_node(body).executed_at;
+    runtime
+        .edit(|edit| edit.view::<Shadowed>().set_wide(2))
+        .expect("edit");
+    assert_eq!(
+        runtime
+            .read_outputs::<shadowing::MatchArm>()
+            .expect("outputs"),
+        21
+    );
+    assert_eq!(
+        runtime.explain_node(body).executed_at,
+        executed,
+        "the body reads the scrutinee, so the shadowed local must not wake it"
     );
 }
 

@@ -78,6 +78,12 @@ fn splice_diagnostics(
 }
 
 /// Keeps token identities where the lexeme is unchanged.
+///
+/// This is the fallback for a relex with no edit history to map positions
+/// through (the version gap is too wide to replay). With an edit history the
+/// occurrence rule in [`Continuation`] decides identity instead: a re-spelling
+/// keeps its token, which is what keeps the AST, and everything emitted above
+/// it, stable.
 pub(crate) fn reconcile_tokens(new: &TokenStream, old: &TokenStream) -> TokenStream {
     let mut prefix = 0usize;
     while prefix < new.len()
@@ -119,6 +125,125 @@ pub(crate) fn reconcile_tokens(new: &TokenStream, old: &TokenStream) -> TokenStr
         tokens.push(Arc::new(token));
     }
     TokenStream::new(tokens)
+}
+
+/// Decides which old token an edited stream continued, by position.
+///
+/// A token's identity is the occurrence, not the lexeme: an edit that re-spells
+/// the token at a position continues that token, and only its payload changes.
+/// Comparing lexemes is what used to make a re-spelled token look new, and with
+/// it every AST extent, every invocation argument, and every emitted entity
+/// above it.
+struct Continuation<'a> {
+    previous: &'a TextSnapshot,
+    current: &'a TextSnapshot,
+    edits: &'a [TextEdit],
+}
+
+impl<'a> Continuation<'a> {
+    fn new(previous: &'a TextSnapshot, current: &'a TextSnapshot, edits: &'a [TextEdit]) -> Self {
+        Self {
+            previous,
+            current,
+            edits,
+        }
+    }
+
+    /// Where one old token starts in the current document.
+    fn old_start(&self, token: &Token) -> Option<usize> {
+        let offset = self.previous.resolve(token.range.start)?;
+        let shift: isize = self
+            .edits
+            .iter()
+            .filter(|edit| edit.range.end <= offset)
+            .map(|edit| edit.new_len() as isize - edit.old_len() as isize)
+            .sum();
+        usize::try_from(offset as isize + shift).ok()
+    }
+
+    /// Where one produced token starts in the current document.
+    fn start(&self, token: &Token) -> Option<usize> {
+        self.current.resolve(token.range.start)
+    }
+
+    /// Assigns every token in `region` the identity of the occurrence it continues.
+    ///
+    /// `old[candidates]` is the span the relex replaced. A token takes the id of
+    /// the old token that starts at the same position and has the same kind;
+    /// when an edit collapses two old starts onto one position (deleting the
+    /// `x` of `x = 1`), the kind selects the occurrence that survived and the
+    /// lexeme breaks a tie between two candidates of that kind. Everything else
+    /// is fresh, above every id the old stream used, so a reused id can never
+    /// collide with a fresh one.
+    ///
+    /// A zero-width token has no extent to continue — two tokens can share its
+    /// start — so it never claims an old identity.
+    fn reconcile(
+        &self,
+        tokens: &mut [Arc<Token>],
+        region: std::ops::Range<usize>,
+        old: &[Arc<Token>],
+        candidates: std::ops::Range<usize>,
+    ) {
+        let mut by_start: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for index in candidates {
+            let token = &old[index];
+            if zero_width(token) {
+                continue;
+            }
+            if let Some(start) = self.old_start(token) {
+                by_start.entry(start).or_default().push(index);
+            }
+        }
+        let mut used: std::collections::HashSet<TokenId> = tokens
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !region.contains(index))
+            .map(|(_, token)| token.id)
+            .collect();
+        let mut next_fresh = old
+            .iter()
+            .chain(tokens.iter())
+            .map(|token| token.id.0)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        for index in region {
+            let token = Arc::clone(&tokens[index]);
+            let continued = if zero_width(&token) {
+                None
+            } else {
+                self.start(&token).and_then(|start| {
+                    by_start.get(&start).and_then(|options| {
+                        options
+                            .iter()
+                            .map(|index| &old[*index])
+                            .filter(|old| !used.contains(&old.id) && old.kind == token.kind)
+                            .min_by_key(|old| u64::from(old.text != token.text))
+                            .map(|old| old.id)
+                    })
+                })
+            };
+            let id = continued.unwrap_or_else(|| {
+                let id = TokenId(next_fresh);
+                next_fresh = next_fresh.saturating_add(1);
+                id
+            });
+            used.insert(id);
+            if token.id != id {
+                tokens[index] = Arc::new(Token {
+                    id,
+                    ..(*token).clone()
+                });
+            }
+        }
+    }
+}
+
+/// Whether one token covers no text.
+fn zero_width(token: &Token) -> bool {
+    token.range.start == token.range.end
 }
 
 impl Lexer {
@@ -169,10 +294,10 @@ impl Lexer {
                     replaced_tokens: 0..0,
                 };
             }
-            return self.relex_all(current, &previous.tokens);
+            return self.relex_all(current, previous, None);
         }
         let Some(edits) = current.edits_since(previous.text.version()) else {
-            return self.relex_all(current, &previous.tokens);
+            return self.relex_all(current, previous, None);
         };
         if edits.is_empty() {
             return LexOutput {
@@ -193,7 +318,7 @@ impl Lexer {
                 eprintln!("[syntax] incremental lex did not cover the document");
             }
         }
-        self.relex_all(current, &previous.tokens)
+        self.relex_all(current, previous, Some(&edits))
     }
 
     /// Relexes the whole document, keeping token identities that survive.
@@ -202,13 +327,30 @@ impl Lexer {
     /// still exists at the same relation to unchanged neighbours must not look
     /// like a new token, or every splice candidate would belong to the wrong
     /// subtree.
-    fn relex_all(&self, current: Arc<TextSnapshot>, previous: &TokenStream) -> LexOutput {
-        let mut output = self.lex_snapshot(current);
-        let tokens = reconcile_tokens(&output.tokens, previous);
-        let len = tokens.len();
+    fn relex_all(
+        &self,
+        current: Arc<TextSnapshot>,
+        previous: &LexState,
+        edits: Option<&[TextEdit]>,
+    ) -> LexOutput {
+        let mut output = self.lex_snapshot(Arc::clone(&current));
+        let len = output.tokens.len();
+        let tokens = match edits {
+            Some(edits) => {
+                let mut tokens: Vec<Arc<Token>> = output.tokens.iter().cloned().collect();
+                Continuation::new(&previous.text, &current, edits).reconcile(
+                    &mut tokens,
+                    0..len,
+                    previous.tokens.as_slice(),
+                    0..previous.tokens.len(),
+                );
+                TokenStream::new(tokens)
+            }
+            None => reconcile_tokens(&output.tokens, &previous.tokens),
+        };
         output.tokens = Arc::new(tokens);
         output.relexed_tokens = 0..len;
-        output.replaced_tokens = 0..previous.len();
+        output.replaced_tokens = 0..previous.tokens.len();
         output
     }
 
@@ -225,6 +367,7 @@ impl Lexer {
             None
         };
         let old_tokens = previous.tokens.as_slice();
+        let continuation = Continuation::new(&previous.text, current, edits);
         // The previous document's end, in the same coordinates as the edits.
         let text_end = previous.text.len();
         // Where an old token starts in the new document: its own offset plus the
@@ -520,6 +663,12 @@ impl Lexer {
                 let produced_len = produced.len();
                 let replaced = first..boundary;
                 produced.extend(old_tokens[boundary..].iter().cloned());
+                continuation.reconcile(
+                    &mut produced,
+                    first..produced_len,
+                    old_tokens,
+                    first..boundary,
+                );
                 let tokens = TokenStream::new(produced);
                 if std::env::var_os("IRRIGATION_SYNTAX_TRACE").is_some() {
                     eprintln!(
@@ -549,9 +698,15 @@ impl Lexer {
 
         let produced_len = produced.len();
         let replaced_tokens = first..old_tokens.len();
-        // Relexing to the end still keeps every lexeme that did not change; the
-        // identities are reconciled so a consumer's tree survives the edit.
-        let tokens = reconcile_tokens(&TokenStream::new(produced), &previous.tokens);
+        // Relexing to the end keeps every occurrence that survived: identity is
+        // the position a token starts at, never the lexeme it spells.
+        continuation.reconcile(
+            &mut produced,
+            first..produced_len,
+            old_tokens,
+            first..old_tokens.len(),
+        );
+        let tokens = TokenStream::new(produced);
         if std::env::var_os("IRRIGATION_SYNTAX_TRACE").is_some() {
             eprintln!(
                 "[syntax] relex range={}..{} chars={} tokens={}",

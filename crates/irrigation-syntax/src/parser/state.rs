@@ -518,6 +518,16 @@ impl AstParser {
                 continue;
             };
             if !accepted(state, &significant, &result) {
+                if std::env::var_os("IRRIGATION_PARSER_DEBUG").is_some() {
+                    let span = result.build.span(result.root);
+                    eprintln!(
+                        "[parser] rejected level={level} root={} span={:?} significant={} added={}",
+                        result.root,
+                        span.map(|span| (span.first(), span.end())),
+                        significant.len(),
+                        result.build.len()
+                    );
+                }
                 continue;
             }
             let ParseResult {
@@ -604,17 +614,28 @@ pub fn significant_tokens(tokens: &TokenStream) -> Vec<ParseToken> {
 }
 
 /// First changed index and the number of tokens that still match at the end.
+///
+/// Equality is identity **and** content. Identity alone misses a re-spelled
+/// token: a token keeps its id across an in-place edit, so a stream that only
+/// compared ids would claim the tree did not change and keep the old leaf text
+/// and value. Content alone misses the other direction: a token the lexer
+/// re-identifies with the same lexeme must still rebuild its leaf. The two
+/// checks are complementary, not alternatives.
 fn divergence(old: &[ParseToken], new: &[ParseToken]) -> (usize, usize) {
-    // Identity, not text: a token the lexer re-identified has a different leaf,
-    // so the tree must be rebuilt there even when the lexeme is unchanged.
+    let same = |left: &ParseToken, right: &ParseToken| {
+        left.id == right.id
+            && left.kind == right.kind
+            && left.flags == right.flags
+            && (std::sync::Arc::ptr_eq(&left.text, &right.text) || left.text == right.text)
+    };
     let mut first = 0usize;
-    while first < old.len() && first < new.len() && old[first].id == new[first].id {
+    while first < old.len() && first < new.len() && same(&old[first], &new[first]) {
         first += 1;
     }
     let mut suffix = 0usize;
     while suffix < old.len().saturating_sub(first)
         && suffix < new.len().saturating_sub(first)
-        && old[old.len() - 1 - suffix].id == new[new.len() - 1 - suffix].id
+        && same(&old[old.len() - 1 - suffix], &new[new.len() - 1 - suffix])
     {
         suffix += 1;
     }

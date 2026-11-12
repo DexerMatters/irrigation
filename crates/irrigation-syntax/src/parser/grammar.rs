@@ -87,7 +87,12 @@ pub struct Production {
     pub lhs: NonterminalId,
     /// Right-hand side.
     pub rhs: Vec<Symbol>,
-    /// Fields attached to RHS positions.
+    /// Fields declared on this production, by RHS position.
+    ///
+    /// One entry per field name, whether it was declared inline (`body: Term`)
+    /// or in an `@ast` field list (`@ast(Lam { body: 5 })`). The two spellings
+    /// are merged here, and this merge is the only route a field name reaches
+    /// anything downstream.
     pub fields: Vec<(FieldId, usize)>,
     /// Static precedence, if declared.
     pub precedence: Option<u32>,
@@ -98,10 +103,33 @@ pub struct Production {
     /// Whether this is the augmented start production.
     pub augmented: bool,
     /// AST constructor attached to this production.
+    ///
+    /// Its name is the published rule name; its field list is merged into
+    /// [`Self::fields`] and nothing else reads it.
     pub ast_action: Option<AstAction>,
+    /// Declared tree node this production builds (`@tree(Type::Variant)`).
+    pub tree: Option<TreeTarget>,
+    /// Field whose child stands in for this production's node (`@wrap(field)`).
+    ///
+    /// The production still publishes its generic node; the relation is
+    /// semantic and is published as `AstMeta::wraps`.
+    pub wrap: Option<FieldId>,
     /// Whether the production is an invisible wrapper whose children belong to
     /// the parent (`$groupN` and `$repeatN`).
     pub transparent: bool,
+}
+
+/// The declared tree node one production builds.
+///
+/// The names are kept verbatim so a grammar compiles with no tree in scope; they
+/// are resolved against a `#[tree_view]` declaration by
+/// [`Grammar::map_tree`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeTarget {
+    /// Declared tree type name.
+    pub ty: String,
+    /// Variant name inside that type.
+    pub variant: String,
 }
 
 /// AST constructor attached to one production.
@@ -294,6 +322,8 @@ struct RawAlt {
     precedence: Option<String>,
     dynamic: i32,
     ast_action: Option<AstAction>,
+    tree: Option<TreeTarget>,
+    wrap: Option<String>,
 }
 
 enum RawElem {
@@ -497,6 +527,8 @@ impl DslGrammarParser<'_> {
         let mut precedence = None;
         let mut dynamic = 0i32;
         let mut ast_action = None;
+        let mut tree = None;
+        let mut wrap = None;
         loop {
             if self.at_end()
                 || stop.iter().any(|kind| self.peek_kind() == Some(kind))
@@ -525,6 +557,14 @@ impl DslGrammarParser<'_> {
                     "ast" => {
                         ast_action = Some(self.parse_ast_action()?);
                     }
+                    "tree" => {
+                        tree = Some(self.parse_tree_target()?);
+                    }
+                    "wrap" => {
+                        self.expect_symbol('(')?;
+                        wrap = Some(self.expect_ident("field name")?);
+                        self.expect_symbol(')')?;
+                    }
                     other => {
                         return Err(self.error(format!("unknown parser annotation `@{other}`")));
                     }
@@ -538,7 +578,20 @@ impl DslGrammarParser<'_> {
             precedence,
             dynamic,
             ast_action,
+            tree,
+            wrap,
         })
+    }
+
+    /// Parses `@tree(Type::Variant)`.
+    fn parse_tree_target(&mut self) -> Result<TreeTarget, GrammarError> {
+        self.expect_symbol('(')?;
+        let ty = self.expect_ident("tree type name")?;
+        self.expect_symbol(':')?;
+        self.expect_symbol(':')?;
+        let variant = self.expect_ident("tree variant name")?;
+        self.expect_symbol(')')?;
+        Ok(TreeTarget { ty, variant })
     }
 
     fn parse_ast_action(&mut self) -> Result<AstAction, GrammarError> {
@@ -563,7 +616,10 @@ impl DslGrammarParser<'_> {
     }
 
     fn parse_element(&mut self) -> Result<RawElem, GrammarError> {
-        let mut element = if let (
+        // A field names the whole element, including its repetition: `items: X*`
+        // is a field holding the repetition, not a repetition of a field. Only
+        // the former can fill a list-typed tree field.
+        let field = if let (
             Some(DslToken {
                 kind: DslKind::Ident(name),
                 ..
@@ -571,14 +627,13 @@ impl DslGrammarParser<'_> {
             true,
         ) = (self.peek().cloned(), self.peek_n_is_symbol(1, ':'))
         {
-            let field = name;
             self.bump();
             self.expect_symbol(':')?;
-            let inner = self.parse_primary()?;
-            RawElem::Field(field, Box::new(inner))
+            Some(name)
         } else {
-            self.parse_primary()?
+            None
         };
+        let mut element = self.parse_primary()?;
         while let Some(c) = self.peek_char() {
             if c == '*' || c == '+' || c == '?' {
                 self.bump();
@@ -587,7 +642,10 @@ impl DslGrammarParser<'_> {
                 break;
             }
         }
-        Ok(element)
+        Ok(match field {
+            Some(field) => RawElem::Field(field, Box::new(element)),
+            None => element,
+        })
     }
 
     fn parse_primary(&mut self) -> Result<RawElem, GrammarError> {
@@ -919,6 +977,8 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
         label: "$accept".to_string(),
         augmented: true,
         ast_action: None,
+        tree: None,
+        wrap: None,
         transparent: false,
     });
 
@@ -931,7 +991,7 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
     for rule in &raw.rules {
         let lhs = by_name[&rule.name];
         for alternative in &rule.alternatives {
-            let (rhs, fields) = lower_sequence(
+            let (rhs, declared) = lower_sequence(
                 &alternative.elements,
                 &by_name,
                 &terminal_by_kind,
@@ -949,12 +1009,46 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
                     })
                 })
                 .transpose()?;
+            // An inline `f: Element` and an `@ast` field list name the same
+            // fields; a grammar may spell a field either way, and a field it
+            // spells both ways must mean the same position. Only the merged
+            // list is published, so the two spellings cannot drift.
+            let fields = merge_fields(
+                declared,
+                alternative.ast_action.as_ref(),
+                &rhs,
+                &mut fields,
+                &mut field_by_name,
+            )
+            .map_err(|message| GrammarError::spec(message, 0))?;
+            let wrap = match &alternative.wrap {
+                None => None,
+                Some(name) => Some(resolve_wrap(
+                    name,
+                    &fields,
+                    &rhs,
+                    &nonterminals,
+                    &field_by_name,
+                )?),
+            };
             // A production that is nothing but another nonterminal adds no
             // structure: it is transparent, so the tree contains the rule that
-            // actually produced something.
+            // actually produced something. A production that builds a declared
+            // tree node is never transparent, because the node is the point.
             let transparent = rhs.len() == 1
                 && matches!(rhs[0], Symbol::Nonterminal(_))
-                && alternative.ast_action.is_none();
+                && alternative.ast_action.is_none()
+                && alternative.tree.is_none();
+            if transparent && alternative.wrap.is_some() {
+                return Err(GrammarError::spec(
+                    format!(
+                        "`@wrap` on `{}` is redundant: a rule that adds only another rule \
+                         already publishes no node",
+                        rule.name
+                    ),
+                    0,
+                ));
+            }
             productions.push(Production {
                 id: productions.len(),
                 lhs,
@@ -965,6 +1059,8 @@ fn lower(lexer: LexerSpec, raw: DslGrammar) -> Result<Grammar, GrammarError> {
                 label: rule.name.clone(),
                 augmented: false,
                 ast_action: alternative.ast_action.clone(),
+                tree: alternative.tree.clone(),
+                wrap,
                 transparent,
             });
         }
@@ -1092,6 +1188,116 @@ fn visit(
 /// The symbols of one lowered sequence, and where its named fields sit in it.
 type LoweredSequence = (Vec<Symbol>, Vec<(FieldId, usize)>);
 
+/// Interns one field name, returning its identity.
+fn intern_field(
+    name: &str,
+    fields: &mut Vec<Field>,
+    field_by_name: &mut FxHashMap<String, FieldId>,
+) -> FieldId {
+    if let Some(field) = field_by_name.get(name).copied() {
+        return field;
+    }
+    let id = fields.len();
+    fields.push(Field {
+        id,
+        name: name.to_string(),
+    });
+    field_by_name.insert(name.to_string(), id);
+    id
+}
+
+/// Merges inline field positions with an `@ast` field list.
+///
+/// A field may be spelled either way; spelling it both ways must mean the same
+/// position, and a position must exist. The result is the one list
+/// [`Production::fields`] publishes.
+fn merge_fields(
+    declared: Vec<(FieldId, usize)>,
+    action: Option<&AstAction>,
+    rhs: &[Symbol],
+    fields: &mut Vec<Field>,
+    field_by_name: &mut FxHashMap<String, FieldId>,
+) -> Result<Vec<(FieldId, usize)>, String> {
+    let mut merged = declared;
+    if let Some(action) = action {
+        for (name, position) in &action.fields {
+            let id = intern_field(name, fields, field_by_name);
+            match merged.iter().find(|(existing, _)| *existing == id) {
+                Some((_, existing)) if existing == position => {}
+                Some((_, existing)) => {
+                    return Err(format!(
+                        "field `{name}` is at position {existing} in the rule body and at \
+                         position {position} in the `@ast` list"
+                    ));
+                }
+                None => merged.push((id, *position)),
+            }
+        }
+    }
+    for (id, position) in &merged {
+        if *position >= rhs.len() {
+            return Err(format!(
+                "field `{}` names position {position}, but the rule has {} symbol(s)",
+                fields[*id].name,
+                rhs.len()
+            ));
+        }
+    }
+    Ok(merged)
+}
+
+/// Resolves the field named by `@wrap(field)`.
+///
+/// The field must be declared on this production and must name a single child: a
+/// terminal is not a rule, and a repetition or alternative group can contribute
+/// any number of children, so neither can be a pass-through payload.
+fn resolve_wrap(
+    name: &str,
+    fields: &[(FieldId, usize)],
+    rhs: &[Symbol],
+    nonterminals: &[Nonterminal],
+    field_by_name: &FxHashMap<String, FieldId>,
+) -> Result<FieldId, GrammarError> {
+    let Some(id) = field_by_name.get(name).copied() else {
+        return Err(GrammarError::spec(
+            format!("`@wrap` names unknown field `{name}`"),
+            0,
+        ));
+    };
+    let Some((_, position)) = fields.iter().find(|(field, _)| *field == id) else {
+        return Err(GrammarError::spec(
+            format!(
+                "`@wrap({name})` needs `{name}` declared on this production \
+                 (`{name}: Rule`, or an `@ast` field list naming it)"
+            ),
+            0,
+        ));
+    };
+    match rhs.get(*position) {
+        Some(Symbol::Nonterminal(nonterminal))
+            if !nonterminals[*nonterminal].name.starts_with('$') =>
+        {
+            Ok(id)
+        }
+        Some(Symbol::Nonterminal(nonterminal)) => Err(GrammarError::spec(
+            format!(
+                "`@wrap({name})` must name a single rule, but position {position} is the \
+                 internal `{}` (a repetition or alternative group)",
+                nonterminals[*nonterminal].name
+            ),
+            0,
+        )),
+        Some(Symbol::Terminal(_)) => Err(GrammarError::spec(
+            format!("`@wrap({name})` must name a rule, but position {position} is a token"),
+            0,
+        )),
+        None => Err(GrammarError::spec(
+            format!("`@wrap({name})` names position {position}, which the rule does not have"),
+            0,
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_sequence(
     elements: &[RawElem],
@@ -1154,17 +1360,7 @@ fn lower_element(
                 GrammarError::spec(format!("no lexer token matches literal `{value}`"), *offset)
             }),
         RawElem::Field(name, inner) => {
-            let field = if let Some(field) = field_by_name.get(name).copied() {
-                field
-            } else {
-                let id = fields.len();
-                fields.push(Field {
-                    id,
-                    name: name.clone(),
-                });
-                field_by_name.insert(name.clone(), id);
-                id
-            };
+            let field = intern_field(name, fields, field_by_name);
             let (symbol, _nested, productions) = lower_element(
                 inner,
                 by_name,
@@ -1203,6 +1399,8 @@ fn lower_element(
                     label: format!("$group{id}"),
                     augmented: false,
                     ast_action: None,
+                    tree: None,
+                    wrap: None,
                     transparent: true,
                 });
             }
@@ -1234,6 +1432,8 @@ fn lower_element(
                     label: format!("$repeat{id}"),
                     augmented: false,
                     ast_action: None,
+                    tree: None,
+                    wrap: None,
                     transparent: true,
                 });
             };
