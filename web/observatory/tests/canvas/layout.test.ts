@@ -9,8 +9,8 @@ import {
   edgePath,
   layoutBoard,
   viewNode,
-} from "./layout";
-import type { ComponentWire, ViewRender, ViewWire } from "../state/types";
+} from "../../src/canvas/layout";
+import type { ComponentWire, ViewRender, ViewWire } from "../../src/state/types";
 
 function view(key: string, name: string, rows: number): ViewWire {
   return {

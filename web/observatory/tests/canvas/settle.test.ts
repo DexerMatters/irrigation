@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Placement } from "../state/types";
-import { type Board, componentNode, viewNode } from "./layout";
-import { type Settled, settleBoard } from "./settle";
+import type { Placement } from "../../src/state/types";
+import { type Board, componentNode, viewNode } from "../../src/canvas/layout";
+import { type Settled, settleBoard } from "../../src/canvas/settle";
 
 /** A board stated as `id, x, y, width, height` — the parts a test cares about. */
 type Spot = [string, number, number, number, number];

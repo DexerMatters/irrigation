@@ -6,7 +6,7 @@ const host: Record<string, unknown> = {};
 vi.stubGlobal("location", new URL("http://127.0.0.1:7777/observatory/"));
 vi.stubGlobal("window", host);
 
-const store = await import("./store");
+const store = await import("../../src/state/store");
 
 /// The handle the store publishes on `window`, which is how the page exposes its state.
 const snapshot = () =>

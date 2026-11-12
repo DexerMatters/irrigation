@@ -5,8 +5,8 @@ import {
   atNewestOf,
   shownRevisionOf,
   type RevisionState,
-} from "./revision";
-import type { RevisionWire } from "./types";
+} from "../../src/state/revision";
+import type { RevisionWire } from "../../src/state/types";
 
 function record(revision: number): RevisionWire {
   return {

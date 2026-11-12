@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyBookkeeping, reduceFrame, upsertRevision } from "./reduce";
-import type { EventsWire, RevisionWire } from "./types";
+import { emptyBookkeeping, reduceFrame, upsertRevision } from "../../src/state/reduce";
+import type { EventsWire, RevisionWire } from "../../src/state/types";
 
 const transaction = (
   revision: number,
