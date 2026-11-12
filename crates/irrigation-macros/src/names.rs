@@ -17,11 +17,5 @@ pub fn pascal_case(name: &str) -> Ident {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pascal_case_handles_snake_case() {
-        assert_eq!(pascal_case("analyze_types").to_string(), "AnalyzeTypes");
-    }
-}
+#[path = "../tests/unit/names/tests.rs"]
+mod tests;

@@ -249,9 +249,20 @@ cargo run --release --example parallel -p irrigation
 cargo run --example name_resolver -p irrigation   # AST tree view -> symbols + diagnostics
 cargo test -p irrigation-syntax --test declared_tree   # grammar -> declared tree
 cargo test -p irrigation --test tree_layout            # the declaration as data
-cargo test --example stlc_scope_graphs -p irrigation --features observatory
 cargo run --example stlc_scope_graphs -p irrigation --features observatory  # STLC + scope graphs on the page
 ```
+
+Tests live in each crate's `tests/` directory, never in the module they cover:
+
+- `crates/<crate>/tests/*.rs` are integration tests: they use the crate the way
+  a consumer does.
+- `crates/<crate>/tests/unit/<module>/<name>.rs` are the unit tests that need the
+  module's private items. The module declares them once with `#[path]`
+  (`#[cfg(test)] #[path = "../../tests/unit/..."] mod tests;`), so they still run
+  inside the library target and keep their `super::` paths, while the source
+  file holds no test code.
+- Examples carry no tests and no test-only scaffolding. An example demonstrates
+  the public surface; it is built, not asserted.
 
 The gates CI holds, and the ones to run before a change lands:
 

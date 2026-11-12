@@ -50,49 +50,9 @@ impl Producer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renamed_dependency_components_install_and_read() {
-        let runtime = Runtime::new();
-        runtime.install(Analyze).expect("root");
-        runtime
-            .edit(|edit| edit.view::<Input>().values().push(3))
-            .expect("edit");
-        let _ = runtime.read_outputs::<Analyze>().expect("demand");
-        assert_eq!(
-            runtime
-                .snapshot()
-                .view::<Output>()
-                .field0()
-                .into_iter()
-                .collect::<Vec<_>>(),
-            vec![(3, 6)]
-        );
-    }
-}
+#[path = "../tests/unit/lib/renamed_dependency_runtime_tests.rs"]
+mod renamed_dependency_runtime_tests;
 
 #[cfg(test)]
-mod renamed_dependency_runtime_tests {
-    use super::*;
-
-    /// The callable path runs under a renamed facade too.
-    ///
-    /// Compiling proves the macros emit `irr::`, not that the emitted paths work; this drives the
-    /// callable's generated spec and args, which is the macro family whose expansion differs most
-    /// from a component's.
-    #[test]
-    fn a_callable_runs_under_a_renamed_dependency() {
-        let runtime = Runtime::new();
-        runtime
-            .edit(|edit| edit.view::<Input>().values().push(5))
-            .expect("edit");
-        assert_eq!(
-            runtime
-                .call::<First>(FirstArgs { input: Input })
-                .expect("callable"),
-            Some(5)
-        );
-    }
-}
+#[path = "../tests/unit/lib/tests.rs"]
+mod tests;

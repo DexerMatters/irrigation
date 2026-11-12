@@ -196,41 +196,6 @@ pub struct FieldRender {
     pub truncated: bool,
 }
 
-impl FieldRender {
-    /// Builds a render with an explicit pre-cap total.
-    #[cfg(test)]
-    #[must_use]
-    pub fn capped(field: FieldId, model: RenderModel, total: usize) -> Self {
-        Self {
-            field,
-            truncated: total > model.len(),
-            total,
-            model,
-        }
-    }
-
-    /// Applies a row cap, keeping an exact total.
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_cap(mut self, cap: usize) -> Self {
-        let total = self.total.max(self.model.len());
-        match &mut self.model {
-            RenderModel::Tree(rows) => rows.truncate(cap),
-            RenderModel::List(rows) => rows.truncate(cap),
-            RenderModel::Map(rows) => rows.truncate(cap),
-            RenderModel::Set(members) => members.truncate(cap),
-            RenderModel::Scalar(rows) => rows.truncate(cap),
-            RenderModel::Reduced { sample, .. } => sample.truncate(cap.min(50)),
-            RenderModel::Graph { nodes, edges } => {
-                nodes.truncate(cap);
-                let kept: std::collections::HashSet<&str> =
-                    nodes.iter().map(|node| node.id.as_str()).collect();
-                edges.retain(|edge| kept.contains(edge.from.as_str()));
-                self.total = nodes.len();
-            }
-        }
-        self.truncated = total > self.model.len() || self.truncated;
-        self.total = total;
-        self
-    }
-}
+#[cfg(test)]
+#[path = "../tests/unit/render/support.rs"]
+mod support;
